@@ -170,7 +170,7 @@ class PerisaccadicVisualResponses():
         n_fictive_probes=300,
         hanning_window_length=11,
         figsize=(4, 8),
-        ylim='dynamic',
+        ylim=(-1.1, 1.1),
         modulation_index_version=2,
         **psth_kwargs
         ):
@@ -330,39 +330,54 @@ class PerisaccadicVisualResponses():
             # Fictive probes
             # ==============
 
+            # Timestamps for all saccades
             saccade_onset_timestamps = np.concatenate([
                 session.saccade_onset_timestamps['ipsi'],
                 session.saccade_onset_timestamps['contra'],
             ])
-            probe_onset_timestamps = np.full((n_fictive_probes,), np.nan)
+
+            # Create a sample for computing Ro
+            fictive_probe_sample = np.full((n_fictive_probes,), np.nan)
             iprobe = 0
             while True:
+
+                # Check if the sample is full
                 if np.isnan(probe_onset_timestamps).sum() == 0:
                     break
-                saccade_onset_timestamp = np.random.choice(
-                    saccade_onset_timestamps,
-                    size=1
+
+                #
+                probe_onset_timestamp = np.random.choice(
+                    np.linspace(0, unit.timestamps.max(), size=1)
                 ).item()
-                sample = np.around(np.linspace(
-                    saccade_onset_timestamp + window[0],
-                    saccade_onset_timestamp + window[1],
-                    1000
-                ), 3)
-                probe_onset_timestamp = np.random.choice(sample, size=1).item()
-                coincident = helpers.create_coincidence_mask(
+
+                # Make sure the fictive probe is outside the perisaccadic
+                # window and not coincident with any actual probes
+                within_saccadic_window = helpers.create_coincidence_mask(
                     np.array([probe_onset_timestamp]),
-                    np.array(probe_onset_timestamps),
-                    window=(-0.5, 0.5)
+                    saccade_onset_timestamps,
+                    window=window
                 ).item()
-                if coincident:
+
+                coincident_with_probes = helpers.create_coincidence_mask(
+                    np.array([probe_onset_timestamp]),
+                    np.concatenate([
+                        np.array(fictive_probe_sample),
+                        session.probe_onset_timestamps['low'],
+                        session.probe_onset_timestamps['medium'],
+                        session.probe_onset_timestamps['high'],
+                    ]),
+                    window=(-1, 1)
+                ).item()
+
+                if within_saccadic_window or coincident_with_probes:
                     continue
                 else:
-                    probe_onset_timestamps[iprobe] = probe_onset_timestamp
+                    fictive_probe_sample[iprobe] = probe_onset_timestamp
                     iprobe += 1
 
             #
             t, M = tk.psth(
-                probe_onset_timestamps,
+                fictive_probe_sample,
                 unit.timestamps,
                 window=psth_kwargs_['window'],
                 binsize=psth_kwargs_['binsize']
@@ -378,6 +393,56 @@ class PerisaccadicVisualResponses():
                 Ro = average_visual_response[response_window_mask].max()
             elif metric == 'count':
                 Ro = average_visual_response[response_window_mask].sum()
+
+            # Create a sample for computing Rso
+
+            probe_onset_timestamps = np.full((n_fictive_probes,), np.nan)
+            iprobe = 0
+            while True:
+
+                # Check if the sample is full
+                if np.isnan(probe_onset_timestamps).sum() == 0:
+                    break
+
+                # Choose a random saccade
+                saccade_onset_timestamp = np.random.choice(
+                    saccade_onset_timestamps,
+                    size=1
+                ).item()
+
+                # Choose a random timestamp around the saccade
+                sample = np.around(np.linspace(
+                    saccade_onset_timestamp + window[0],
+                    saccade_onset_timestamp + window[1],
+                    1000
+                ), 3)
+                probe_onset_timestamp = np.random.choice(sample, size=1).item()
+
+                # Make sure the fictive probe timestamp isn't around the time of
+                # other actual and fictive probes
+                coincident = helpers.create_coincidence_mask(
+                    np.array([probe_onset_timestamp]),
+                    np.concatenate([
+                        np.array(probe_onset_timestamps),
+                        session.probe_onset_timestamps['low'],
+                        session.probe_onset_timestamps['medium'],
+                        session.probe_onset_timestamps['high']
+                    ]),
+                    window=(-0.25, 0.25)
+                ).item()
+                if coincident:
+                    continue
+                else:
+                    probe_onset_timestamps[iprobe] = probe_onset_timestamp
+                    iprobe += 1
+
+            #
+            t, M = tk.psth(
+                probe_onset_timestamps,
+                unit.timestamps,
+                window=psth_kwargs_['window'],
+                binsize=psth_kwargs_['binsize']
+            )
 
             for direction, saccade_onset_timestamps in session.saccade_onset_timestamps.items():
 
@@ -469,18 +534,16 @@ class PerisaccadicVisualResponses():
         bin_width = np.unique(np.around(right_edges - left_edges, 3)).item()
         time_points = left_edges + (bin_width / 2)
 
-        for ax, color, marker, (level, dct) in zip(axs, ['C0', 'C1', 'C2'], ['o', 's', '^'], data.items()):
+        for ax, (level, dct) in zip(axs, data.items()):
             for condition, rows in dct.items():
                 if condition == 'actual':
-                    marker = 'o'
                     color ='k'
                 else:
-                    marker = '^'
                     color ='r'
 
                 arr = np.array(rows)
                 if condition == 'actual':
-                    ax.scatter(arr[:, 0], arr[:, 1], color=color, alpha=0.1, s=15, marker=marker)
+                    ax.scatter(arr[:, 0], arr[:, 1], color=color, alpha=0.2, s=15, marker='+')
 
                 bin_heights = list()
                 bin_errors  = list()
@@ -492,21 +555,21 @@ class PerisaccadicVisualResponses():
                         if left_edge <= latency < right_edge:
                             binned_data.append(arr[ipt, 1])
 
-                    bin_heights.append(np.median(binned_data))
+                    bin_heights.append(np.mean(binned_data))
                     bin_errors.append(sem(binned_data))
 
                 bin_heights_smoothed = tk.smooth(np.array(bin_heights), 5)
                 bin_errors_smoothed = tk.smooth(np.array(bin_errors), 5)
                 ax.plot(time_points, bin_heights_smoothed, color=color)
 
-                if condition == 'fictive':
-                    ax.fill_between(
-                        time_points,
-                        bin_heights_smoothed - bin_errors_smoothed,
-                        bin_heights_smoothed + bin_errors_smoothed,
-                        color='r',
-                        alpha=0.1
-                    )
+                # if condition == 'fictive':
+                ax.fill_between(
+                    time_points,
+                    bin_heights_smoothed - bin_errors_smoothed,
+                    bin_heights_smoothed + bin_errors_smoothed,
+                    color=color,
+                    alpha=0.1
+                )
 
         #
         if ylim == 'dynamic':
@@ -526,7 +589,7 @@ class PerisaccadicVisualResponses():
         for ax in axs[1:]:
             ax.set_yticklabels([])
 
-        for label, ax in zip(['\n\nLow', f'Neuron {unit.uid}\n\nMedium', '\n\nhigh'], axs):
+        for label, ax in zip(['Low', f'Medium', 'high'], axs):
             ax.set_title(label)
         axs[0].set_ylabel('Modulation index')
         axs[1].set_xlabel('Time from saccade onset (seconds)')
