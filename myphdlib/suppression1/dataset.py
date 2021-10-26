@@ -284,39 +284,41 @@ class DriftingGratingWithProbeExperiment():
         return container
 
     @property
-    @timestamps(const.TARGET_EVENT_SACCADE, saccade_direction='ipsi')
-    def saccade_onset_ipsi(self):
-        return
+    def binocular_saccade_waveforms(self):
 
-    @property
-    @timestamps(const.TARGET_EVENT_SACCADE, saccade_direction='ipsi', event_phase='offset')
-    def saccade_offset_ipsi(self):
-        return
+        window = (-0.5, 0.7)
+        start = int(np.floor(window[0] * const.SAMPLING_RATE_CAMERAS))
+        stop = int(np.ceil(window[1] * const.SAMPLING_RATE_CAMERAS))
 
-    @property
-    @timestamps(const.TARGET_EVENT_SACCADE, saccade_direction='contra')
-    def saccade_onset_contra(self):
-        return
+        data = {
+            'contra': {
+                'left' : np.full((self.saccade_onset_timestamps['contra'].size, stop - start), np.nan),
+                'right': np.full((self.saccade_onset_timestamps['contra'].size, stop - start), np.nan)
+            },
+            'ipsi': {
+                'left' : np.full((self.saccade_onset_timestamps['ipsi'].size, stop - start), np.nan),
+                'right': np.full((self.saccade_onset_timestamps['ipsi'].size, stop - start), np.nan)
+            }
+        }
 
-    @property
-    @timestamps(const.TARGET_EVENT_SACCADE, saccade_direction='contra', event_phase='offset')
-    def saccade_offset_contra(self):
-        return
+        #
+        try:
+            mat = np.load(self.folders['analysis'].joinpath('true-saccades-classification-results.npy'))
+        except:
+            return data
 
-    @property
-    @timestamps(const.TARGET_EVENT_PROBE, probe_level='low')
-    def probe_onset_low(self):
-        return
+        for direction in ['contra', 'ipsi']:
+            if direction == 'ipsi':
+                saccade_direction_mask = mat[:, -1] == const.CONJUGATE_SACCADE_DIRECTION_IPSILATERAL
+            else:
+                saccade_direction_mask = mat[:, -1] == const.CONJUGATE_SACCADE_DIRECTION_CONTALATERAL
+            for eye in ['left', 'right']:
+                for irow, saccade_onset_index in enumerate(mat[saccade_direction_mask, 0]):
+                    # start, stop = saccade_onset_index - 25, saccade_onset_index + 12 + 25 + 1
+                    waveform = self.pupil_center_coords[eye, 'pc1'][saccade_onset_index + start: saccade_onset_index + stop]
+                    data[direction][eye][irow, :] = waveform
 
-    @property
-    @timestamps(const.TARGET_EVENT_PROBE, probe_level='medium')
-    def probe_onset_medium(self):
-        return
-
-    @property
-    @timestamps(const.TARGET_EVENT_PROBE, probe_level='high')
-    def probe_onset_high(self):
-        return
+        return data
 
 class WholeDataset():
     def __init__(self, root, exclude_sessions=(('pixel3', '2021-05-27'),)):
