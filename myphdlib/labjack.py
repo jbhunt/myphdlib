@@ -3,8 +3,6 @@ import numpy as np
 import pathlib as pl
 from scipy.signal import find_peaks
 
-from myphdlib.suppression1 import constants as const
-
 # Number of samples in a single LabJack dat file
 NSAMPLES = 12000
 
