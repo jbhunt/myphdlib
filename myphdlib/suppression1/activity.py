@@ -1,3 +1,4 @@
+import pickle
 import numpy as np
 from .. import toolkit as tk
 from . import constants as const
@@ -50,37 +51,41 @@ class SingleUnit():
         all_spike_times = np.load(spike_times_list.pop())
         all_spike_clusters = np.load(spike_clusters_list.pop())
         unit_mask = all_spike_clusters == self.uid
-        self._timestamps = all_spike_times[unit_mask].flatten() / const.SAMPLING_RATE_NEUROPIXELS
+        self._timestamps = np.around(all_spike_times[unit_mask].flatten() / const.SAMPLING_RATE_NEUROPIXELS, 3)
 
         # Load the sorted flag
-        with open(cluster_sorted_list.pop(), 'r') as stream:
+        with open(cluster_info_list[0], 'r') as stream:
             lines = stream.readlines()
         entries = [
             line.rstrip('\n').split('\t')
                 for line in lines[1:]
         ]
         uids = np.array([int(entry[0]) for entry in entries])
-        flags = [entry[1] for entry in entries]
+        flags = [entry[-1] for entry in entries]
 
         flag = flags[np.where(uids == self.uid)[0].item()]
+
         if flag == 'yes':
             self._sorted = True
         else:
             self._sorted = False
 
         # Load the Kilosort label
-        with open(cluster_labels_list.pop(), 'r') as stream:
+        with open(cluster_info_list[0], 'r') as stream:
             lines = stream.readlines()
         entries = [
             line.rstrip('\n').split('\t')
                 for line in lines
         ]
-        labels = [entry[1] for entry in entries]
+        try:
+            labels = [entry[-1] for entry in entries]
 
-        self._label = labels[np.where(uids == self.uid)[0].item()]
+            self._label = labels[np.where(uids == self.uid)[0].item()]
+        except:
+            import pdb; pdb.set_trace()
 
         #
-        with open(cluster_info_list.pop(), 'r') as stream:
+        with open(cluster_info_list[0], 'r') as stream:
             lines = stream.readlines()
 
         entries = [
@@ -91,6 +96,104 @@ class SingleUnit():
         self._position = positions[np.where(uids == self.uid)[0].item()]
 
         return
+
+    def load_stable_spiking_epochs(self):
+        """
+        """
+
+        lst = list(self.session.folders['analysis'].rglob('*stable-spiking-epochs.pkl'))
+        if len(lst) == 0:
+            raise Exception('Missing stable spiking epochs dictionary')
+        else:
+            with open(lst.pop(), 'rb') as stream:
+                dct = pickle.load(stream)
+
+        #
+        if self.uid not in dct.keys():
+            epochs = None,
+            stable = {
+                'probes': self.session.probe_onset_timestamps,
+                'saccades': self.session.saccade_onset_timestamps
+            }
+            return epochs, stable
+            raise Exception('Unit is unstable')
+        else:
+            epochs = np.array(dct[self.uid])
+
+        #
+        stable = {
+            'probes': {
+                level: list()
+                    for level in ['low', 'medium', 'high']
+            },
+            'saccades': {
+                direction: list()
+                    for direction in ['ipsi', 'contra']
+            }
+        }
+
+        for start, stop in epochs:
+            for direction, timestamps in self.session.saccade_onset_timestamps.items():
+                mask = np.logical_and(
+                    timestamps >= start,
+                    timestamps <= stop,
+                )
+                stable['saccades'][direction] += timestamps[mask].tolist()
+
+        for start, stop in epochs:
+            for level, timestamps in self.session.probe_onset_timestamps.items():
+                mask = np.logical_and(
+                    timestamps >= start,
+                    timestamps <= stop,
+                )
+                stable['probes'][level] += timestamps[mask].tolist()
+
+        for event, dct in stable.items():
+            for k, v in dct.items():
+                stable[event][k] = np.array(v)
+                stable[event][k].sort()
+
+        return epochs, stable
+
+    def estimate_baseline_activity(self, binsize=0.01, window=(-1, -0.5), stable_spiking_epochs=True):
+        """
+        """
+
+        #
+        if stable_spiking_epochs:
+            epochs, stable = self.load_stable_spiking_epochs()
+            event_onset_timestamps = np.concatenate([
+                stable['saccades']['ipsi'],
+                stable['saccades']['contra'],
+                stable['probes']['low'],
+                stable['probes']['medium'],
+                stable['probes']['high']
+            ])
+
+        #
+        else:
+            event_onset_timestamps = np.concatenate([
+                self.session.saccade_onset_timestamps['ipsi'],
+                self.session.saccade_onset_timestamps['contra'],
+                self.session.probe_onset_timestamps['low'],
+                self.session.probe_onset_timestamps['medium'],
+                self.session.probe_onset_timestamps['high'],
+            ])
+
+        #
+        event_onset_timestamps.sort()
+
+        #
+        edges, M = tk.psth(
+            event_onset_timestamps,
+            self.timestamps,
+            window=window,
+            binsize=binsize
+        )
+
+        mu, sigma = M.flatten().mean() / binsize, M.flatten().std() / binsize
+
+        return mu, sigma
 
     @property
     def uid(self):
@@ -124,28 +227,27 @@ class Population():
         """
         """
 
-        cluster_group_list = list(session.folders['neuropixels'].rglob('*cluster_group.tsv'))
-        if len(cluster_group_list) != 1:
-            raise EphysError('Could not locate cluster_group.tsv file')
+        cluster_info_list = list(session.folders['neuropixels'].rglob('*cluster_info.tsv'))
+        if len(cluster_info_list) != 1:
+            raise EphysError('Could not locate cluster_info.tsv file')
 
-        with open(cluster_group_list.pop(), 'r') as stream:
+        with open(cluster_info_list.pop(), 'r') as stream:
             lines = stream.readlines()
 
-        uids, labels = list(), list()
-        for line in lines[1:]:
-            uid, label = line.rstrip('\n').split('\t')
-            uids.append(int(uid))
-            labels.append(label)
-
-        #
         self._units = list()
-        for uid in uids:
-            unit = SingleUnit(uid, session)
-            if unit.label not in labels:
-                continue
-            if exclude_unsorted_units and unit.sorted is False:
-                continue
-            self._units.append(unit)
+        for line in lines[1:]:
+
+            #
+            elements = line.rstrip('\n').split('\t')
+            uid = int(elements[0])
+            label = elements[3]
+            sorted = True if elements[-1] == 'yes' else False
+
+            #
+            if label in labels and sorted is True:
+                # print(f'Loading unit {uid} ...')
+                unit = SingleUnit(uid, session)
+                self._units.append(unit)
 
         return
 

@@ -27,54 +27,11 @@ class timestamp():
     def __call__(self):
         return
 
-def timestamps(event_code, event_phase='onset', saccade_direction='ipsi', probe_level='low'):
+class SuppressionSession():
     """
     """
 
-    def callable(method):
-
-        @wraps(method)
-        def wrapped(self):
-
-            #
-            try:
-                mat = np.load(self.folders['analysis'].joinpath('event-metadata-and-timestamps.npy'))
-            except FileNotFoundError:
-                return np.array([])
-
-            #
-            event_mask = mat[:, 0] == event_code
-
-            #
-            if event_code == const.TARGET_EVENT_SACCADE:
-                if saccade_direction == 'ipsi':
-                    direction_mask = mat[event_mask, 1] == const.CONJUGATE_SACCADE_DIRECTION_IPSILATERAL
-                    timestamps = mat[event_mask][direction_mask, 2 if event_phase == 'onset' else 3]
-                elif saccade_direction == 'contra':
-                    direction_mask = mat[event_mask, 1] == const.CONJUGATE_SACCADE_DIRECTION_CONTALATERAL
-                    timestamps = mat[event_mask][direction_mask, 2 if event_phase == 'onset' else 3]
-            elif event_code == const.TARGET_EVENT_PROBE:
-                if probe_level == 'low':
-                    level_mask = mat[event_mask, 1] == const.PROBE_CONTRAST_LOW
-                    timestamps = mat[event_mask][level_mask, 2 if event_phase == 'onset' else 3]
-                elif probe_level == 'medium':
-                    level_mask = mat[event_mask, 1] == const.PROBE_CONTRAST_MEDIUM
-                    timestamps = mat[event_mask][level_mask, 2 if event_phase == 'onset' else 3]
-                else:
-                    level_mask = mat[event_mask, 1] == const.PROBE_CONTRAST_HIGH
-                    timestamps = mat[event_mask][level_mask, 2 if event_phase == 'onset' else 3]
-
-            return timestamps
-
-        return wrapped
-
-    return callable
-
-class DriftingGratingWithProbeExperiment():
-    """
-    """
-
-    def __init__(self, root, load_neural_data=False):
+    def __init__(self, root, load_neural_data=True):
         """
         keywords
         --------
@@ -142,6 +99,7 @@ class DriftingGratingWithProbeExperiment():
             for eye, score in zip(['left', 'right'], [left_eye_score, right_eye_score]):
                 scorer = re.findall('DLC*\w+.csv', score).pop().rstrip('.csv')
                 df = pd.read_csv(score, index_col=0, header=list(range(4)))
+                df = df.sort_index(level=1, axis=1)
                 coords = pd.concat([
                     df[scorer, 'pupil-c', 'x'],
                     df[scorer, 'pupil-c', 'y']],
@@ -184,6 +142,8 @@ class DriftingGratingWithProbeExperiment():
                 r, p = stats.pearsonr(PC1, y)
                 if r < 0:
                     PCs *= -1
+
+            #
 
             data = np.hstack([
                 left_pupil_coords,
@@ -284,6 +244,111 @@ class DriftingGratingWithProbeExperiment():
         return container
 
     @property
+    def grating_onset_timestamps(self):
+        """
+        """
+
+        container = {
+            'cw': {
+                'static': list(),
+                'motion': list(),
+            },
+            'ccw': {
+                'static': list(),
+                'motion': list(),
+            }
+        }
+
+        #
+        try:
+            mat = np.load(self.folders['analysis'].joinpath('event-metadata-and-timestamps.npy'))
+        except FileNotFoundError:
+            return container
+
+        motion_event_mask = mat[:, 0] == const.TARGET_EVENT_MOTION
+        appearance_event_mask = mat[:, 0] == const.TARGET_EVENT_GRATING
+
+        #
+        for start, direction in zip([0, 1], ['cw', 'ccw']):
+
+            grating_motion_onset_timestamps = mat[motion_event_mask, 2][start::2]
+            container[direction]['motion'] = grating_motion_onset_timestamps
+
+            grating_appearance_onset_timestamps = mat[appearance_event_mask, 2][start::2]
+            container[direction]['static'] = grating_appearance_onset_timestamps
+
+        return container
+
+    @property
+    def grating_onset_timestamps(self):
+        """
+        """
+
+        data = {
+            'ipsi': list(),
+            'contra': list()
+        }
+
+        #
+        try:
+            mat = np.load(self.folders['analysis'].joinpath('event-metadata-and-timestamps.npy'))
+        except FileNotFoundError:
+            return container
+
+        target_event_mask = mat[:, 0] == const.TARGET_EVENT_GRATING
+
+        for start, direction in zip([0, 1], ['ipsi', 'contra']):
+            data[direction] = mat[target_event_mask, 2][start::2]
+
+        return data
+
+    @property
+    def grating_motion_timestamps(self):
+        """
+        """
+
+        data = {
+            'ipsi': list(),
+            'contra': list()
+        }
+
+        #
+        try:
+            mat = np.load(self.folders['analysis'].joinpath('event-metadata-and-timestamps.npy'))
+        except FileNotFoundError:
+            return container
+
+        target_event_mask = mat[:, 0] == const.TARGET_EVENT_MOTION
+
+        for start, direction in zip([0, 1], ['ipsi', 'contra']):
+            data[direction] = mat[target_event_mask, 2][start::2]
+
+        return data
+
+    @property
+    def grating_offset_timestamps(self):
+        """
+        """
+
+        data = {
+            'ipsi': list(),
+            'contra': list()
+        }
+
+        #
+        try:
+            mat = np.load(self.folders['analysis'].joinpath('event-metadata-and-timestamps.npy'))
+        except FileNotFoundError:
+            return container
+
+        target_event_mask = mat[:, 0] == const.TARGET_EVENT_STOP
+
+        for start, direction in zip([0, 1], ['ipsi', 'contra']):
+            data[direction] = mat[target_event_mask, 2][start::2]
+
+        return data
+
+    @property
     def binocular_saccade_waveforms(self):
 
         window = (-0.5, 0.7)
@@ -293,11 +358,13 @@ class DriftingGratingWithProbeExperiment():
         data = {
             'contra': {
                 'left' : np.full((self.saccade_onset_timestamps['contra'].size, stop - start), np.nan),
-                'right': np.full((self.saccade_onset_timestamps['contra'].size, stop - start), np.nan)
+                'right': np.full((self.saccade_onset_timestamps['contra'].size, stop - start), np.nan),
+                'indices': np.full(self.saccade_onset_timestamps['contra'].size, np.nan)
             },
             'ipsi': {
                 'left' : np.full((self.saccade_onset_timestamps['ipsi'].size, stop - start), np.nan),
-                'right': np.full((self.saccade_onset_timestamps['ipsi'].size, stop - start), np.nan)
+                'right': np.full((self.saccade_onset_timestamps['ipsi'].size, stop - start), np.nan),
+                'indices': np.full(self.saccade_onset_timestamps['ipsi'].size, np.nan)
             }
         }
 
@@ -317,28 +384,121 @@ class DriftingGratingWithProbeExperiment():
                     # start, stop = saccade_onset_index - 25, saccade_onset_index + 12 + 25 + 1
                     waveform = self.pupil_center_coords[eye, 'pc1'][saccade_onset_index + start: saccade_onset_index + stop]
                     data[direction][eye][irow, :] = waveform
+                    data[direction]['indices'][irow] = saccade_onset_index
+
+        #
+        for direction in ['ipsi', 'contra']:
+            data[direction]['indices'] = data[direction]['indices'].astype(int)
 
         return data
 
-class WholeDataset():
-    def __init__(self, root, exclude_sessions=(('pixel3', '2021-05-27'),)):
-        if type(root) != pl.Path:
-            root = pl.Path(root)
-        dirs = list()
-        for date in root.iterdir():
-            if date.name == 'Supplement':
-                continue
-            for animal in date.iterdir():
-                exclude = False
-                for animal_, date_ in exclude_sessions:
-                    if animal_ == animal.name and date_ == date.name:
-                        exclude = True
-                if exclude:
-                    continue
-                dirs.append(str(animal))
+    @property
+    def perisaccadic(self):
+        """
+        """
 
-        self.sessions = [
-            DriftingGratingWithProbeExperiment(dir)
-                for dir in dirs
-        ]
+        # Get all saccade onset timestamps
+        saccadeOnsetTimestamps = np.concatenate([
+            self.saccade_onset_timestamps['ipsi'],
+            self.saccade_onset_timestamps['contra']
+        ])
+        saccadeOnsetTimestamps.sort()
+
+        #
+        perisaccadic = {
+            'low': np.zeros(self.probe_onset_timestamps['low'].size).astype(bool),
+            'medium': np.zeros(self.probe_onset_timestamps['medium'].size).astype(bool),
+            'high': np.zeros(self.probe_onset_timestamps['high'].size).astype(bool)
+        }
+
+        #
+        for level in ['low', 'medium', 'high']:
+            probeOnsetTimestamps = self.probe_onset_timestamps[level]
+            for index, probeOnsetTimestamp in enumerate(probeOnsetTimestamps):
+                latencies = probeOnsetTimestamp - saccadeOnsetTimestamps
+                closest = np.argmin(abs(latencies))
+                latency = latencies[closest]
+                if np.all([latency >= -0.05, latency <= 0.15]):
+                    perisaccadic[level][index] = True
+                else:
+                    perisaccadic[level][index] = False
+
+        return perisaccadic
+
+    @property
+    def extrasaccadic(self):
+        """
+        """
+
+        # Get all saccade onset timestamps
+        saccadeOnsetTimestamps = np.concatenate([
+            self.saccade_onset_timestamps['ipsi'],
+            self.saccade_onset_timestamps['contra']
+        ])
+        saccadeOnsetTimestamps.sort()
+
+        #
+        extrasaccadic = {
+            'low': np.zeros(self.probe_onset_timestamps['low'].size).astype(bool),
+            'medium': np.zeros(self.probe_onset_timestamps['medium'].size).astype(bool),
+            'high': np.zeros(self.probe_onset_timestamps['high'].size).astype(bool)
+        }
+
+        #
+        for level in ['low', 'medium', 'high']:
+            probeOnsetTimestamps = self.probe_onset_timestamps[level]
+            for index, probeOnsetTimestamp in enumerate(probeOnsetTimestamps):
+                latencies = probeOnsetTimestamp - saccadeOnsetTimestamps
+                closest = np.argmin(abs(latencies))
+                latency = latencies[closest]
+                if np.all([latency >= -0.05, latency <= 0.15]):
+                    extrasaccadic[level][index] = False
+                else:
+                    extrasaccadic[level][index] = True
+
+        return extrasaccadic
+
+class SuppressionDataset():
+    """
+    """
+
+    def __init__(self, rootFolder):
+        """
+        """
+
+        self.rootFolderPath = pl.Path(rootFolder)
+
         return
+
+    def getVideoFilenames(self):
+        """
+        """
+
+        result = list()
+
+        for sessionFolder in self.sessionFolders:
+            videos = list(pl.Path(sessionFolder).rglob('*.mp4'))
+            for video in videos:
+                check1 = not bool(re.search('labeled', video.name))
+                check2 = np.any([
+                    bool(re.search('reflected', video.name)),
+                    bool(re.search('rightCam', video.name)) 
+                ])
+                if np.all([check1, check2]):
+                    result.append(str(video))
+
+        return result
+
+    @property
+    def sessionFolders(self):
+        """
+        """
+
+        sessionFolders = list()
+        for date in self.rootFolderPath.iterdir():
+            if re.search('\d{4}-\d{2}-\d{2}', date.name):
+                for animal in date.iterdir():
+                    if bool(re.search('pixel\d{1}', animal.name)):
+                        sessionFolders.append(str(animal))
+
+        return sessionFolders

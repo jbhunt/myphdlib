@@ -1,5 +1,10 @@
+import os
+import sys
 import numpy as np
+import pathlib as pl
+import subprocess as sp
 from decimal import Decimal
+from scipy.stats import pearsonr
 
 def smooth(a, window_size=5, window_type='hanning', axis=1):
     """
@@ -66,7 +71,7 @@ def smooth(a, window_size=5, window_type='hanning', axis=1):
     else:
         raise ValueError('Smoothing not supported for arrays of 3 or more dimensions')
 
-def psth(target_events, relative_events, binsize=0.01, window=(-0.5, 1), edges=None):
+def psth(target_events, relative_events, binsize=0.01, window=(-0.5, 1), edges=None, return_relative_times=False):
     """
     Compute the peri-stimulus (event) time histogram
 
@@ -97,7 +102,7 @@ def psth(target_events, relative_events, binsize=0.01, window=(-0.5, 1), edges=N
     if edges is None:
 
         # Check that the time range is evenly divisible by the binsize
-        start, stop = window
+        start, stop = np.around(window, 2)
         residual = (Decimal(str(stop)) - Decimal(str(start))) % Decimal(str(binsize))
         if residual != 0:
             raise ValueError('Time range must be evenly divisible by binsizes')
@@ -107,11 +112,16 @@ def psth(target_events, relative_events, binsize=0.01, window=(-0.5, 1), edges=N
         nbins = int(range / binsize) + 1
         edges = np.linspace(start, stop, nbins)
 
+        #
+        relative_times = list()
+
         # Create the histogram matrix M
         M = list()
         for iev, target_event in enumerate(target_events):
             referenced = relative_events - target_event
             within_window_mask = np.logical_and(referenced > start, referenced <= stop)
+            for relative_time in referenced[within_window_mask]:
+                relative_times.append(relative_time)
             counts, edges_ = np.histogram(referenced[within_window_mask], bins=edges)
             M.append(counts)
 
@@ -152,23 +162,92 @@ def psth(target_events, relative_events, binsize=0.01, window=(-0.5, 1), edges=N
             if type(edges) != np.ndarray:
                 edges = np.array(edges)
 
-    return edges, M
+    if return_relative_times:
+        return edges, np.array(relative_times)
 
-def stepplot(edges, heights, ax=None, **kwargs):
+    else:
+        return edges, M
+
+def detectThresholdCrossing(a, threshold, timeout=None):
     """
-    Plot the top of a histogram
+    Determine where a threshold was crossing in a time series (agnostic of
+    direction and sign)
     """
 
-    if ax is None:
-        fig, ax = plt.subplots()
+    # Find all threshold crossings
+    crossings = np.diff(a > threshold, prepend=False)
+    crossings[0] = False
+    indices = np.argwhere(crossings).flatten()
 
-    for ibin, (start, stop) in enumerate(zip(edges[:-1], edges[1:])):
+    # Get rid of crossings that happen in the refractory period
+    if timeout != None:
+        while True:
+            intervals = np.diff(indices)
+            sizeBeforeFiltering = indices.size
+            for counter, interval in enumerate(intervals):
+                if interval <= timeout:
+                    indices = np.delete(indices, counter + 1)
+                    break
+            sizeAfterFiltering = indices.size
+            loss = sizeAfterFiltering - sizeBeforeFiltering
+            if loss == 0:
+                break
 
-        # plot horizontal lines
-        ax.plot([start, stop], [heights[ibin], heights[ibin]], **kwargs)
+    return indices
 
-        # Plot vertical lines
-        if ibin + 1 < len(edges) - 1:
-            ax.plot([stop, stop], [heights[ibin], heights[ibin + 1]], **kwargs)
+def interpolate(a, axis=0):
+    """
+    """
 
-    return ax
+    if len(a.shape) == 1:
+        a = a.reshape(1, -1)
+    elif len(a.shape) == 2:
+        pass
+    else:
+        raise Exception('Interpolation of arrays with > 2 dimensions not supported')
+
+    M, N = a.shape
+
+    b = np.copy(a)
+    if axis == 0:
+        for iM in range(M):
+            mask = np.isnan(a[iM, :])
+            x = np.where(mask)[0]
+            xp = np.where(np.invert(mask))[0]
+            fp = a[iM, np.invert(mask)]
+            estimates = np.interp(x, xp, fp)
+            b[iM, mask] = estimates
+    elif axis == 1:
+        for iN in range(N):
+            mask = np.isnan(a[:, iN])
+            x = np.where(mask)[0]
+            xp = np.where(np.invert(mask))[0]
+            fp = a[np.invert(mask), iN]
+            estimates = np.interp(x, xp, fp)
+            b[mask, iN] = estimates
+
+    if b.shape[0] == 1:
+        return b.flatten()
+    else:
+        return b
+
+def resample(a, fs1, fs2):
+    """
+    """
+
+    try:
+        totalTime = 1 / fs1 * a.size
+        N = round(totalTime * fs2)
+        x = np.linspace(0, totalTime, N)
+        xp = np.linspace(0, totalTime, a.size)
+        b = np.interp(x, xp, a)
+    except:
+        import pdb; pdb.set_trace()
+
+    return b
+
+def inrange(value, lowerBound, upperBound):
+    """
+    """
+
+    return np.logical_and(value >= lowerBound, value <= upperBound)

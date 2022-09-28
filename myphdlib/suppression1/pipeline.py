@@ -300,9 +300,12 @@ class IdentifyTrueSaccadesModule(PipelineModule):
             # Combine and randomly order the coordinates across saccades (maybe not necessary)
 
             # Flip the sign of PC1 to match the direction of eye movement
-            pca = dec.PCA(n_components=1).fit(np.array(self.session.pupil_center_coords[side].iloc[:, :2]))
-            pc1 = pca.transform(np.array(self.session.pupil_center_coords[side, 'y']).reshape(-1, 1)).flatten()
-            r, p = stats.pearsonr(pc1, np.array(self.session.pupil_center_coords[side, 'y']))
+            x = np.array(self.session.pupil_center_coords[side].x)
+            y = np.array(self.session.pupil_center_coords[side].y)
+            X = np.hstack([x.reshape(-1, 1), y.reshape(-1, 1)])
+            pca = dec.PCA(n_components=1).fit(X)
+            pc1 = pca.transform(X)[:, 0]
+            r, p = stats.pearsonr(pc1, y)
             if r < 0:
                 coef = -1
             else:
@@ -507,6 +510,12 @@ class ComputeEventTimestampsModule(PipelineModule):
             analog=metadata['signaling']['labjack']['exposure']['analog']
         )
         np_exposure_idxs = lj.convert_labjack_indices(lj_exposure_idxs, lj_sync_idxs, np_sync_idxs, version=2) - self.session.first_ephys_sample
+
+        # Compute timestamps for each frame of the video recording
+        for np_exposure_idx in np_exposure_idxs:
+            exposure_onset_timestamp = np.around(np_exposure_idx / const.SAMPLING_RATE_NEUROPIXELS)
+            row = [const.TARGET_EVENT_EXPOSURE, np.nan, exposure_onset_timestamp, np.nan]
+            output.append(row)
 
         # Compute the timestamp for each saccade (onset and offset)
         for frame_index_onset, frame_index_offset, direction in input:

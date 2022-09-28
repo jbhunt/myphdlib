@@ -2,6 +2,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import MinMaxScaler
 from skimage.measure import EllipseModel
 from matplotlib import pylab as plt
 from matplotlib.patches import Ellipse
@@ -183,3 +184,99 @@ class ModelVisualNeuron():
             raise Exception('Model neuron is not trained')
 
         return self._model.predict(X)
+
+class ModelVisualNeuron2():
+    """
+    """
+
+    def __init__(self, unit, session):
+        """
+        """
+
+        self._unit = unit
+        self._timestamps = unit.timestamps
+        self._session = session
+
+    def fit(self, regressor=LinearRegression, **kwargs_):
+        """
+        """
+
+        #
+        kwargs = {
+            'window': (0.05, 0.15),
+            'binsize': 0.01
+        }
+        kwargs.update(kwargs_)
+
+        #
+        mu, sigma = helpers.estimate_baseline_activity(self._session, self._unit, binsize=kwargs['binsize'])
+        baseline = mu / kwargs['binsize']
+
+        #
+        all_saccade_onset_timestamps = np.concatenate([
+            self._session.saccade_onset_timestamps['ipsi'],
+            self._session.saccade_onset_timestamps['contra']
+        ])
+        n_ipsi_saccades = len(self._session.saccade_onset_timestamps['ipsi'])
+        n_contra_saccades = len(self._session.saccade_onset_timestamps['contra'])
+        saccade_directions = ['ipsi' for i in range(n_ipsi_saccades)] + ['contra' for i in range(n_contra_saccades)]
+
+        #
+        all_grating_onset_timestamps = np.concatenate([
+            self._session.grating_onset_timestamps['cw']['motion'],
+            self._session.grating_onset_timestamps['ccw']['motion']
+        ])
+        n_clockwise_gratings = len(self._session.grating_onset_timestamps['cw']['motion'])
+        n_counterclockwise_gratings = len(self._session.grating_onset_timestamps['ccw']['motion'])
+        grating_directions = ['cw' for i in range(n_clockwise_gratings)] + ['ccw' for i in range(n_counterclockwise_gratings)]
+
+        # Probe level, latency, saccade direction, grating direction
+        X = list()
+        y = list()
+
+        # For each probe ...
+        for level, probe_onset_timestamps in self._session.probe_onset_timestamps.items():
+            for probe_onset_timestamp in probe_onset_timestamps:
+
+                #
+                probe_level_coded = {'low': 1, 'medium': 2, 'high': 3}[level]
+
+                # Find the nearest saccade
+                referenced = probe_onset_timestamp - all_saccade_onset_timestamps
+                imin = np.argmin(np.abs(referenced))
+                latency = referenced[imin]
+                saccade_direction = saccade_directions[imin]
+                saccade_direction_coded = 0 if saccade_direction == 'ipsi' else 1
+
+                # Determine the direction of the grating
+                referenced = probe_onset_timestamp - all_grating_onset_timestamps
+                imin = np.argmin(np.abs(referenced))
+                grating_direction = grating_directions[imin]
+                grating_direction_coded = 0 if grating_direction == 'cw' else 1
+
+                #
+                X.append([probe_level_coded, latency, saccade_direction_coded, grating_direction_coded])
+
+                # Compute the response
+                t, M = toolkit.psth([probe_onset_timestamp], self.timestamps, **kwargs)
+                response = np.mean(M.flatten() / kwargs['binsize']) - baseline
+                y.append([response])
+
+        X = np.array(X)
+        y = np.array(y)
+
+        # Rescale the predictors between -1 and 1
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        X_scaled = np.full_like(X, np.nan)
+        for icol in range(X.shape[1]):
+            X_scaled[:, icol] = scaler.fit_transform(X[:, icol].reshape(-1, 1)).flatten()
+
+        # Fit the model
+        model = regressor()
+        model.fit(X, y)
+
+        return X_scaled, y, model
+
+    @property
+    def timestamps(self):
+        return self._timestamps

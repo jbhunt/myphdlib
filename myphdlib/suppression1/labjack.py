@@ -5,6 +5,12 @@ from scipy.signal import find_peaks
 
 from . import constants as const
 
+# Number of samples in a single LabJack dat file
+NSAMPLES = 12000
+
+# Number of channels sampled by the LabJack
+NCHANNELS = 9
+
 class LabJackError(Exception):
     pass
 
@@ -17,9 +23,10 @@ def read_data_file(dat, line_length_range=(94, 100)):
     with open(dat, 'rb') as stream:
         lines = stream.readlines()
 
+    # Corrupted or empty dat files
     if len(lines) == 0:
-        name = pl.Path(dat).name
-        raise LabJackError(f'LabJack dat file is empty: {dat}')
+        data = np.full((NSAMPLES, NCHANNELS), np.nan)
+        return data
 
     #
     for iline, line in enumerate(lines):
@@ -133,7 +140,7 @@ def extract_labjack_event(
     # offset by 1 (this gives you the first index after the state transition)
     indices += 1
 
-    return event, indices7
+    return event, indices
 
 def parse_stimulus_pulses(data, iev, edge='both', onset_target_size=1120, threshold=0.99):
     """

@@ -1,0 +1,10 @@
+[default]
+name=Default
+runtime=host
+config-opts=
+run-opts=
+prefix=/home/jbhunt/.cache/gnome-builder/install/data/host
+app-id=
+postbuild=
+prebuild=
+default=true

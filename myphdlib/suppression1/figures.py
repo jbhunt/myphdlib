@@ -1,5 +1,7 @@
 import numpy as np
+import itertools as it
 from matplotlib import pylab as plt
+from matplotlib import gridspec as gs
 from decimal import Decimal
 from scipy.interpolate import CubicSpline
 from scipy.stats import sem
@@ -105,7 +107,8 @@ class PopulationHeatmap():
 
                 # Standardize
                 mu, sigma = helpers.estimate_baseline_activity(session, unit, binsize)
-                row = (M1.mean(0) - mu) / sigma
+                fr = M1.mean(0) / binsize
+                row = (fr - mu) / sigma
 
                 #
                 if smooth:
@@ -142,14 +145,375 @@ class PopulationHeatmap():
         left_most_ax.set_xlim(xlim)
 
         # Add a colorbar
-        fig.subplots_adjust(right=0.8)
-        cax = fig.add_axes([0.85, 0.2, 0.05, 0.6])
-        fig.colorbar(mappable, cax=cax)
+        # fig.subplots_adjust(right=0.8)
+        # cax = fig.add_axes([0.85, 0.2, 0.05, 0.6])
+        # fig.colorbar(mappable, cax=cax)
+
         fig.set_figheight(figsize[0])
         fig.set_figwidth(figsize[1])
         fig.show()
 
         return fig, axs, heatmaps
+
+class PerisaccadicVisualResponses2():
+    """
+    """
+
+    def __init__(self, width=4, height=3, ymin=-15, ymax=15):
+        self._figsize = (width, height)
+        self._ylim = (ymin, ymax)
+        return
+
+    @property
+    def figsize(self):
+        return self._figsize
+
+    @figsize.setter
+    def figsize(self, value):
+        self._figsize = value
+
+    @property
+    def ylim(self):
+        return self._ylim
+
+    @ylim.setter
+    def ylim(self, value):
+        self._ylim = value
+
+    def plot(
+        self,
+        unit,
+        session,
+        nbins=14,
+        normalize=True,
+        visual_response_window=( 0.05, 0.15),
+        around_saccades_window=(-1.5,  1.5 ),
+        modulation_index_version=3,
+        **kwargs_
+        ):
+        """
+        """
+
+        # PSTH keyword args
+        kwargs = {
+            'binsize': 0.01,
+            'window' : (-0.1, 0.3),
+            'coincidence': (-1, 1)
+        }
+        kwargs.update(kwargs_)
+
+        # Mask for identifying the visual response
+        edges = np.arange(
+            kwargs['window'][0],
+            kwargs['window'][1] + kwargs['binsize'],
+            kwargs['binsize']
+        )
+        visual_response_filter = np.logical_and(
+            edges[:-1] + kwargs['binsize'] / 2 >= visual_response_window[0],
+            edges[:-1] + kwargs['binsize'] / 2 <= visual_response_window[1]
+        )
+
+        # Baseline FR in spikes / second
+        baseline, variance = helpers.estimate_baseline_activity(
+            session, unit, binsize=kwargs['binsize']
+        )
+
+        # Empty data container
+        data = {
+            level: {'actual': list(), 'fictive': list()}
+                for level in ['low', 'medium', 'high']
+        }
+
+        # Apply stable spiking filter to probes
+        epochs, stable = unit.load_stable_spiking_epochs()
+
+        # Timestamps for all probes (that occur within a stable spiking epoch)
+        all_probe_onset_timestamps = np.concatenate([
+            stable['probes']['low'],
+            stable['probes']['medium'],
+            stable['probes']['high']
+        ])
+
+        # Timestamps for all saccades
+        all_saccade_onset_timestamps = np.concatenate([
+            stable['saccades']['ipsi'],
+            stable['saccades']['contra']
+        ])
+
+        #
+        for level, probe_onset_timestamps in stable['probes'].items():
+
+            # =============
+            # Actual probes
+            # =============
+
+            # Mask for probes that occur outside of the perisaccadic window
+            extrasaccadic = np.invert(helpers.coincident2(
+                probe_onset_timestamps,
+                all_saccade_onset_timestamps,
+                coincidence=kwargs['coincidence']
+            ))
+
+            # Compute the average probe-only response for the target contrast level (Rp)
+            t, M = tk.psth(
+                probe_onset_timestamps[extrasaccadic],
+                unit.timestamps,
+                window=visual_response_window,
+                binsize=kwargs['binsize']
+            )
+
+            # Average and smooth
+            average_actual_visual_response = M.mean(0) / kwargs['binsize']
+            Rp = average_actual_visual_response.mean() - baseline
+
+            # Mask for saccades that occur around the time of probes
+            peristimulus = helpers.coincident2(
+                all_saccade_onset_timestamps,
+                all_probe_onset_timestamps,
+                coincidence=kwargs['coincidence']
+            )
+
+            # Mask for saccades that don't occur around the time of probes
+            extrastimulus = np.invert(peristimulus)
+
+            #
+            for saccade_onset_timestamp in all_saccade_onset_timestamps:
+
+                # Look for probes that appeared within the target window
+                perisaccadic = np.logical_and(
+                    around_saccades_window[0] <= probe_onset_timestamps - saccade_onset_timestamp,
+                    around_saccades_window[1] >= probe_onset_timestamps - saccade_onset_timestamp
+                )
+
+                # Skip if no probes detected within target window
+                if perisaccadic.sum() == 0:
+                    continue
+
+                # For each probe that appears in the target window
+                for probe_onset_timestamp in probe_onset_timestamps[perisaccadic]:
+
+                    # Time from saccade to probe onset
+                    latency = np.around(probe_onset_timestamp - saccade_onset_timestamp, 3)
+
+                    # Compute the single trial visuomotor response (Rsp)
+                    t, M = tk.psth(
+                        [probe_onset_timestamp],
+                        unit.timestamps,
+                        binsize=kwargs['binsize'],
+                        window=visual_response_window
+                    )
+                    single_trial_actual_visual_response = M.flatten() / kwargs['binsize']
+                    Rsp = single_trial_actual_visual_response.mean() - baseline
+
+                    # Compute the response that is attributable to the saccade (Rs)
+                    time_shifted_window = (
+                        float(Decimal(str(visual_response_window[0])) + Decimal(str(latency))),
+                        float(Decimal(str(visual_response_window[1])) + Decimal(str(latency)))
+                    )
+                    t, M = tk.psth(
+                        all_saccade_onset_timestamps[extrastimulus],
+                        unit.timestamps,
+                        binsize=kwargs['binsize'],
+                        window=time_shifted_window
+                    )
+
+                    # Average, subtract baseline, and smooth
+                    average_time_shifted_saccade_only_response = M.mean(0) / kwargs['binsize']
+                    Rs = average_time_shifted_saccade_only_response.mean() - baseline
+
+                    #
+                    if modulation_index_version == 1:
+                        value = (Rsp - (Rp + Rs)) / abs(Rp + Rs)
+                    elif modulation_index_version == 2:
+                        value = (Rsp - (Rs + Rp)) / (Rsp + (Rs + Rp))
+                    elif modulation_index_version == 3:
+                        value = (Rsp - (Rs + Rp))
+
+                    #
+                    if normalize:
+                        value /= baseline
+                    #
+                    data[level]['actual'].append((latency, value))
+
+        return data, list()
+
+        for i in list():
+            # ==============
+            # Fictive probes
+            # ==============
+
+            # Compute the average fictive visual response looking outside of the perisaccadic window
+            stop = unit.timestamps.max() + float(Decimal(str(1.0)) - Decimal(str(unit.timestamps.max() % 1)))
+            fictive_probe_onset_timestamps = np.arange(0, stop, 1)
+            perisaccadic = helpers.coincident2(
+                fictive_probe_onset_timestamps,
+                all_saccade_onset_timestamps,
+                coincidence=(-0.05, 0.11)
+            )
+            peristimulus = helpers.coincident2(
+                fictive_probe_onset_timestamps,
+                all_probe_onset_timestamps,
+                coincidence=(-1, 1)
+            )
+            extraevent = np.invert(np.vstack([
+                perisaccadic,
+                peristimulus
+            ]).any(axis=0))
+            extraevent_fictive_probe_onset_timestamps = fictive_probe_onset_timestamps[extraevent]
+
+            #
+            t, M = tk.psth(
+                extraevent_fictive_probe_onset_timestamps,
+                unit.timestamps,
+                window=kwargs['window'],
+                binsize=kwargs['binsize']
+            )
+
+            # Average and smooth
+            average_fictive_visual_response = M.mean(0) / kwargs['binsize'] - baseline
+
+            # Compute the response magnitude given the target metric
+            Ro = helpers.extract_response_amplitude(
+                average_fictive_visual_response,
+                visual_response_filter,
+                metric='mean'
+            )
+
+            # Sample from across the perisaccadic window excluding actual events
+            perisaccadic_fictive_probe_onset_timestamps = list()
+            for saccade_onset_timestamp in all_saccade_onset_timestamps:
+                start = saccade_onset_timestamp + around_saccades_window[0]
+                stop  = saccade_onset_timestamp + around_saccades_window[1]
+                timestamps = np.arange(start, stop, 0.1)
+                extrastimulus = np.invert(helpers.coincident2(
+                    timestamps,
+                    all_probe_onset_timestamps,
+                    coincidence=(-1, 1)
+                ))
+                perisaccadic_fictive_probe_onset_timestamps += timestamps[extrastimulus].tolist()
+            perisaccadic_fictive_probe_onset_timestamps = np.array(perisaccadic_fictive_probe_onset_timestamps)
+
+            for direction, saccade_onset_timestamps in session.saccade_onset_timestamps.items():
+
+                # Extrastimulus saccades
+                extrastimulus = np.invert(helpers.coincident2(
+                    session.saccade_onset_timestamps[direction],
+                    all_probe_onset_timestamps,
+                    coincidence=(-1, 1)
+                ))
+
+                #
+                for saccade_onset_timestamp in saccade_onset_timestamps:
+
+                    # Look for probes that appeared within the target window
+                    perisaccadic = np.logical_and(
+                        around_saccades_window[0] <= perisaccadic_fictive_probe_onset_timestamps - saccade_onset_timestamp,
+                        around_saccades_window[1] >= perisaccadic_fictive_probe_onset_timestamps - saccade_onset_timestamp
+                    )
+
+                    # Skip if no probes detected within target window
+                    if perisaccadic.sum() == 0:
+                        continue
+
+                    # For each probe that occurs around the time of this saccade ...
+                    for fictive_probe_onset_timestamp in perisaccadic_fictive_probe_onset_timestamps[perisaccadic]:
+
+                        # Time from saccade to probe onset
+                        latency = np.around(fictive_probe_onset_timestamp - saccade_onset_timestamp, 3)
+
+                        # Compute the single trial visuomotor response (Rsp)
+                        t, M = tk.psth(
+                            np.array([fictive_probe_onset_timestamp]),
+                            unit.timestamps,
+                            binsize=kwargs['binsize'],
+                            window=kwargs['window']
+                        )
+                        single_trial_fictive_visual_response = M.flatten() / kwargs['binsize'] - baseline
+
+                        # Compute the response magnitude given the target metric
+                        Rso = helpers.extract_response_amplitude(
+                            single_trial_fictive_visual_response,
+                            visual_response_filter,
+                            metric='mean'
+                        )
+
+                        # Compute the response that is attributable to the saccade (Rs)
+                        time_shifted_window = (
+                            float(Decimal(str(kwargs['window'][0])) + Decimal(str(latency))),
+                            float(Decimal(str(kwargs['window'][1])) + Decimal(str(latency)))
+                        )
+                        t, M = tk.psth(
+                            session.saccade_onset_timestamps[direction][extrastimulus],
+                            unit.timestamps,
+                            binsize=kwargs['binsize'],
+                            window=time_shifted_window
+                        )
+
+                        # Average, subtract baseline, and smooth
+                        average_time_shifted_saccade_only_response = M.mean(0) / kwargs['binsize'] - baseline
+
+                        # Compute the response magnitude given the target metric
+                        Rs = helpers.extract_response_amplitude(
+                            average_time_shifted_saccade_only_response,
+                            visual_response_filter,
+                            metric='mean'
+                        )
+
+                        #
+                        if modulation_index_version == 1:
+                            value = (Rso - (Ro + Rs)) / abs(Ro + Rs)
+                        elif modulation_index_version == 2:
+                            value = (Rso - (Rs + Ro)) / (Rso + (Rs + Ro))
+                        elif modulation_index_version == 3:
+                            value = (Rso - (Rs + Ro)) / baseline
+
+                        #
+                        data[level]['fictive'].append((latency, value))
+
+        # ========
+        # Plotting
+        # ========
+
+        # Setup the sub-figures
+        grid = gs.GridSpec(nrows=100, ncols=1)
+        figures = [plt.figure() for i in range(3)]
+        for level, fig in zip(['low', 'medium', 'high'], figures):
+
+            #
+            actual = np.array(data[level]['actual'])
+            fictive = np.array(data[level]['fictive'])
+
+            #
+            ax1 = fig.add_subplot(grid[:97, :])
+            times, heights, points, binsize = helpers.bin_and_average_data(actual, around_saccades_window, nbins)
+            ax1.plot(times, heights, color='k', lw=1.5)
+
+            #
+            for t, y in zip(times, points):
+                n = len(y)
+                ax1.scatter(np.full(n, t), y, color='k', marker='.', s=70, alpha=0.3, edgecolor='none')
+
+            #
+            ax1.set_xlim(around_saccades_window)
+            ax1.set_xticks([])
+            ax1.spines['bottom'].set_visible(False)
+
+            #
+            ax2 = fig.add_subplot(grid[97:, :])
+            cycler = it.cycle(['k', 'w'])
+            for ibin in range(nbins):
+                x1 = times[ibin] - binsize / 2
+                x2 = x1 + binsize
+                ax2.fill_betweenx([0, 1], x1, x2, color=next(cycler))
+
+            ax2.set_xlim(around_saccades_window)
+            ax2.set_yticks([])
+
+            width, height = self.figsize
+            fig.set_figheight(height)
+            fig.set_figwidth(width)
+
+        return data, figures
 
 class PerisaccadicVisualResponses():
     """
@@ -162,16 +526,19 @@ class PerisaccadicVisualResponses():
         self,
         session,
         unit,
-        metric='auc',
+        metric='mean',
         window=(-2, 2),
-        nbins=15,
+        nbins=20,
         levels=['low', 'medium', 'high'],
-        visual_response_window=(0.05, 0.25),
-        n_fictive_probes=300,
-        hanning_window_length=11,
+        visual_response_window=(0.05, 0.15),
+        modulation_index_version=3,
+        box_and_whiskers=False,
+        hanning_window_length=5,
+        actual_condition_color='k',
+        fictive_condition_color='r',
+        master_line_weight=1.5,
         figsize=(4, 8),
-        ylim=(-1.1, 1.1),
-        modulation_index_version=2,
+        ylim='dynamic',
         **psth_kwargs
         ):
         """
@@ -195,8 +562,22 @@ class PerisaccadicVisualResponses():
             psth_edges[:-1] + psth_kwargs_['binsize'] / 2 <= visual_response_window[1]
         )
 
-        #
+        # Baseline FR in spikes / second
         mu, sigma = helpers.estimate_baseline_activity(session, unit, binsize=psth_kwargs_['binsize'])
+        baseline = mu / psth_kwargs_['binsize']
+
+        # Timestamps for all saccades
+        all_saccade_onset_timestamps = np.concatenate([
+            session.saccade_onset_timestamps['ipsi'],
+            session.saccade_onset_timestamps['contra']
+        ])
+
+        # Timestamps for all probes
+        all_probe_onset_timestamps = np.concatenate([
+            session.probe_onset_timestamps['low'],
+            session.probe_onset_timestamps['medium'],
+            session.probe_onset_timestamps['high']
+        ])
 
         # Empty data container
         data = {
@@ -211,53 +592,42 @@ class PerisaccadicVisualResponses():
             # Actual probes
             # =============
 
-            # Mask for probes that occur around the time of saccades
-            perisaccadic_probes_mask = helpers.create_coincidence_mask(
+            # Mask for probes that occur outside of the perisaccadic window
+            extrasaccadic = np.invert(helpers.create_coincidence_mask(
                 session.probe_onset_timestamps[level],
-                np.concatenate([
-                    session.saccade_onset_timestamps['ipsi'],
-                    session.saccade_onset_timestamps['contra']
-                ]),
-                window=(-1, 1)
-            )
-
-            # Mask for probes that don't occur around the time of saccades
-            extrasaccadic_probes_mask = np.invert(perisaccadic_probes_mask)
+                all_saccade_onset_timestamps,
+                window=(-2, 2)
+            ))
 
             # Compute the average probe-only response for the target contrast level (Rp)
             t, M = tk.psth(
-                session.probe_onset_timestamps[level][extrasaccadic_probes_mask],
+                session.probe_onset_timestamps[level][extrasaccadic],
                 unit.timestamps,
                 window=psth_kwargs_['window'],
                 binsize=psth_kwargs_['binsize']
             )
 
             # Average and smooth
-            average_visual_response = tk.smooth(M.mean(0), hanning_window_length)
+            average_actual_visual_response = M.mean(0) / psth_kwargs_['binsize'] - baseline
 
             # Compute the response magnitude given the target metric
-            if metric == 'auc':
-                Rp = np.trapz(average_visual_response[response_window_mask])
-            elif metric == 'peak':
-                Rp = average_visual_response[response_window_mask].max()
-            elif metric == 'count':
-                Rp = average_visual_response[response_window_mask].sum()
+            Rp = helpers.extract_response_amplitude(
+                average_actual_visual_response,
+                response_window_mask,
+                metric=metric
+            )
 
             for direction, saccade_onset_timestamps in session.saccade_onset_timestamps.items():
 
                 # Mask for saccades that occur around the time of probes
-                peristimulus_saccades_mask = helpers.create_coincidence_mask(
+                peristimulus = helpers.create_coincidence_mask(
                     session.saccade_onset_timestamps[direction],
-                    np.concatenate([
-                        session.probe_onset_timestamps['low'],
-                        session.probe_onset_timestamps['medium'],
-                        session.probe_onset_timestamps['high']
-                    ]),
+                    all_probe_onset_timestamps,
                     window=(-1, 1)
                 )
 
                 # Mask for saccades that don't occur around the time of probes
-                extrastimulus_saccades_mask = np.invert(peristimulus_saccades_mask)
+                extrastimulus = np.invert(peristimulus)
 
                 #
                 for saccade_onset_timestamp in saccade_onset_timestamps:
@@ -284,15 +654,14 @@ class PerisaccadicVisualResponses():
                             unit.timestamps,
                             **psth_kwargs_
                         )
-                        actual_visual_response = tk.smooth(M.flatten(), hanning_window_length)
+                        single_trial_actual_visual_response = M.flatten() / psth_kwargs_['binsize'] - baseline
 
-                        # Compute the response magnitude given the target metric
-                        if metric == 'auc':
-                            Rsp = np.trapz(actual_visual_response[response_window_mask])
-                        elif metric == 'peak':
-                            Rsp = actual_visual_response[response_window_mask].max()
-                        elif metric == 'count':
-                            Rsp = actual_visual_response[response_window_mask].sum()
+                        # Compute the response amplitude for this single trial
+                        Rsp = helpers.extract_response_amplitude(
+                            single_trial_actual_visual_response,
+                            response_window_mask,
+                            metric=metric
+                        )
 
                         # Compute the response that is attributable to the saccade (Rs)
                         time_shifted_window = (
@@ -300,28 +669,29 @@ class PerisaccadicVisualResponses():
                             float(Decimal(str(psth_kwargs_['window'][1])) + Decimal(str(latency)))
                         )
                         t, M = tk.psth(
-                            session.saccade_onset_timestamps[direction][extrastimulus_saccades_mask],
+                            session.saccade_onset_timestamps[direction][extrastimulus],
                             unit.timestamps,
                             binsize=psth_kwargs_['binsize'],
                             window=time_shifted_window
                         )
 
                         # Average, subtract baseline, and smooth
-                        average_motor_activity = tk.smooth(M.mean(0), hanning_window_length)
+                        average_time_shifted_saccade_only_response = M.mean(0) / psth_kwargs_['binsize'] - baseline
 
                         # Compute the response magnitude given the target metric
-                        if metric == 'auc':
-                            Rs = np.trapz(average_motor_activity[response_window_mask])
-                        elif metric == 'peak':
-                            Rs = average_motor_activity[response_window_mask].max()
-                        elif metric == 'count':
-                            Rs = average_motor_activity[response_window_mask].sum()
+                        Rs = helpers.extract_response_amplitude(
+                            average_time_shifted_saccade_only_response,
+                            response_window_mask,
+                            metric=metric
+                        )
 
                         #
                         if modulation_index_version == 1:
-                            value = (Rsp - (Rp + Rs)) / (Rp + Rs)
+                            value = (Rsp - (Rp + Rs)) / abs(Rp + Rs)
                         elif modulation_index_version == 2:
                             value = (Rsp - (Rs + Rp)) / (Rsp + (Rs + Rp))
+                        elif modulation_index_version == 3:
+                            value = (Rsp - (Rs + Rp))
 
                         #
                         data[level]['actual'].append((latency, value))
@@ -330,170 +700,99 @@ class PerisaccadicVisualResponses():
             # Fictive probes
             # ==============
 
-            # Timestamps for all saccades
-            saccade_onset_timestamps = np.concatenate([
-                session.saccade_onset_timestamps['ipsi'],
-                session.saccade_onset_timestamps['contra'],
-            ])
-
-            # Create a sample for computing Ro
-            fictive_probe_sample = np.full((n_fictive_probes,), np.nan)
-            iprobe = 0
-            while True:
-
-                # Check if the sample is full
-                if np.isnan(probe_onset_timestamps).sum() == 0:
-                    break
-
-                #
-                probe_onset_timestamp = np.random.choice(
-                    np.linspace(0, unit.timestamps.max(), size=1)
-                ).item()
-
-                # Make sure the fictive probe is outside the perisaccadic
-                # window and not coincident with any actual probes
-                within_saccadic_window = helpers.create_coincidence_mask(
-                    np.array([probe_onset_timestamp]),
-                    saccade_onset_timestamps,
-                    window=window
-                ).item()
-
-                coincident_with_probes = helpers.create_coincidence_mask(
-                    np.array([probe_onset_timestamp]),
-                    np.concatenate([
-                        np.array(fictive_probe_sample),
-                        session.probe_onset_timestamps['low'],
-                        session.probe_onset_timestamps['medium'],
-                        session.probe_onset_timestamps['high'],
-                    ]),
-                    window=(-1, 1)
-                ).item()
-
-                if within_saccadic_window or coincident_with_probes:
-                    continue
-                else:
-                    fictive_probe_sample[iprobe] = probe_onset_timestamp
-                    iprobe += 1
+            # Compute the average fictive visual response looking outside of the perisaccadic window
+            stop = unit.timestamps.max() + float(Decimal(str(1.0)) - Decimal(str(unit.timestamps.max() % 1)))
+            fictive_probe_onset_timestamps = np.arange(0, stop, 1)
+            perisaccadic = helpers.create_coincidence_mask(
+                fictive_probe_onset_timestamps,
+                all_saccade_onset_timestamps,
+                window=(-2, 2)
+            )
+            peristimulus = helpers.create_coincidence_mask(
+                fictive_probe_onset_timestamps,
+                all_probe_onset_timestamps,
+                window=(-1, 1)
+            )
+            extraevent = np.invert(np.vstack([
+                perisaccadic,
+                peristimulus
+            ]).any(axis=0))
+            extraevent_fictive_probe_onset_timestamps = fictive_probe_onset_timestamps[extraevent]
 
             #
             t, M = tk.psth(
-                fictive_probe_sample,
+                extraevent_fictive_probe_onset_timestamps,
                 unit.timestamps,
                 window=psth_kwargs_['window'],
                 binsize=psth_kwargs_['binsize']
             )
 
             # Average and smooth
-            average_visual_response = tk.smooth(M.mean(0), hanning_window_length)
+            average_fictive_visual_response = M.mean(0) / psth_kwargs_['binsize'] - baseline
 
             # Compute the response magnitude given the target metric
-            if metric == 'auc':
-                Ro = np.trapz(average_visual_response[response_window_mask])
-            elif metric == 'peak':
-                Ro = average_visual_response[response_window_mask].max()
-            elif metric == 'count':
-                Ro = average_visual_response[response_window_mask].sum()
-
-            # Create a sample for computing Rso
-
-            probe_onset_timestamps = np.full((n_fictive_probes,), np.nan)
-            iprobe = 0
-            while True:
-
-                # Check if the sample is full
-                if np.isnan(probe_onset_timestamps).sum() == 0:
-                    break
-
-                # Choose a random saccade
-                saccade_onset_timestamp = np.random.choice(
-                    saccade_onset_timestamps,
-                    size=1
-                ).item()
-
-                # Choose a random timestamp around the saccade
-                sample = np.around(np.linspace(
-                    saccade_onset_timestamp + window[0],
-                    saccade_onset_timestamp + window[1],
-                    1000
-                ), 3)
-                probe_onset_timestamp = np.random.choice(sample, size=1).item()
-
-                # Make sure the fictive probe timestamp isn't around the time of
-                # other actual and fictive probes
-                coincident = helpers.create_coincidence_mask(
-                    np.array([probe_onset_timestamp]),
-                    np.concatenate([
-                        np.array(probe_onset_timestamps),
-                        session.probe_onset_timestamps['low'],
-                        session.probe_onset_timestamps['medium'],
-                        session.probe_onset_timestamps['high']
-                    ]),
-                    window=(-0.25, 0.25)
-                ).item()
-                if coincident:
-                    continue
-                else:
-                    probe_onset_timestamps[iprobe] = probe_onset_timestamp
-                    iprobe += 1
-
-            #
-            t, M = tk.psth(
-                probe_onset_timestamps,
-                unit.timestamps,
-                window=psth_kwargs_['window'],
-                binsize=psth_kwargs_['binsize']
+            Ro = helpers.extract_response_amplitude(
+                average_fictive_visual_response,
+                response_window_mask,
+                metric=metric
             )
+
+            # Sample from across the perisaccadic window excluding actual events
+            perisaccadic_fictive_probe_onset_timestamps = list()
+            for saccade_onset_timestamp in all_saccade_onset_timestamps:
+                start = saccade_onset_timestamp - 2
+                stop  = saccade_onset_timestamp + 2
+                timestamps = np.arange(start, stop, 0.1)
+                extrastimulus = np.invert(helpers.create_coincidence_mask(
+                    timestamps,
+                    all_probe_onset_timestamps,
+                    window=(-1, 1)
+                ))
+                perisaccadic_fictive_probe_onset_timestamps += timestamps[extrastimulus].tolist()
+            perisaccadic_fictive_probe_onset_timestamps = np.array(perisaccadic_fictive_probe_onset_timestamps)
 
             for direction, saccade_onset_timestamps in session.saccade_onset_timestamps.items():
 
-                # Mask for saccades that occur around the time of probes
-                peristimulus_saccades_mask = helpers.create_coincidence_mask(
+                # Extrastimulus saccades
+                extrastimulus = np.invert(helpers.create_coincidence_mask(
                     session.saccade_onset_timestamps[direction],
-                    np.concatenate([
-                        session.probe_onset_timestamps['low'],
-                        session.probe_onset_timestamps['medium'],
-                        session.probe_onset_timestamps['high'],
-                    ]),
+                    all_probe_onset_timestamps,
                     window=(-1, 1)
-                )
-
-                # Mask for saccades that don't occur around the time of probes
-                extrastimulus_saccades_mask = np.invert(peristimulus_saccades_mask)
+                ))
 
                 #
                 for saccade_onset_timestamp in saccade_onset_timestamps:
 
                     # Look for probes that appeared within the target window
                     within_window_mask = np.logical_and(
-                        window[0] <= probe_onset_timestamps - saccade_onset_timestamp,
-                        window[1] >= probe_onset_timestamps - saccade_onset_timestamp
+                        window[0] <= perisaccadic_fictive_probe_onset_timestamps - saccade_onset_timestamp,
+                        window[1] >= perisaccadic_fictive_probe_onset_timestamps - saccade_onset_timestamp
                     )
 
                     # Skip if no probes detected within target window
                     if within_window_mask.sum() == 0:
                         continue
 
-                    #
-                    for probe_onset_timestamp in probe_onset_timestamps[within_window_mask]:
+                    # For each probe that occurs around the time of this saccade ...
+                    for fictive_probe_onset_timestamp in perisaccadic_fictive_probe_onset_timestamps[within_window_mask]:
 
                         # Time from saccade to probe onset
-                        latency = np.around(probe_onset_timestamp - saccade_onset_timestamp, 3)
+                        latency = np.around(fictive_probe_onset_timestamp - saccade_onset_timestamp, 3)
 
                         # Compute the single trial visuomotor response (Rsp)
                         t, M = tk.psth(
-                            np.array([probe_onset_timestamp]),
+                            np.array([fictive_probe_onset_timestamp]),
                             unit.timestamps,
                             **psth_kwargs_
                         )
-                        actual_visual_response = tk.smooth(M.flatten(), hanning_window_length)
+                        single_trial_fictive_visual_response = M.flatten()/ psth_kwargs_['binsize'] - baseline
 
                         # Compute the response magnitude given the target metric
-                        if metric == 'auc':
-                            Rso = np.trapz(actual_visual_response[response_window_mask])
-                        elif metric == 'peak':
-                            Rso = actual_visual_response[response_window_mask].max()
-                        elif metric == 'count':
-                            Rso = actual_visual_response[response_window_mask].sum()
+                        Rso = helpers.extract_response_amplitude(
+                            single_trial_fictive_visual_response,
+                            response_window_mask,
+                            metric=metric
+                        )
 
                         # Compute the response that is attributable to the saccade (Rs)
                         time_shifted_window = (
@@ -501,75 +800,102 @@ class PerisaccadicVisualResponses():
                             float(Decimal(str(psth_kwargs_['window'][1])) + Decimal(str(latency)))
                         )
                         t, M = tk.psth(
-                            session.saccade_onset_timestamps[direction][extrastimulus_saccades_mask],
+                            session.saccade_onset_timestamps[direction][extrastimulus],
                             unit.timestamps,
                             binsize=psth_kwargs_['binsize'],
                             window=time_shifted_window
                         )
 
                         # Average, subtract baseline, and smooth
-                        average_motor_activity = tk.smooth(M.mean(0), hanning_window_length)
+                        average_time_shifted_saccade_only_response = M.mean(0) / psth_kwargs_['binsize'] - baseline
 
                         # Compute the response magnitude given the target metric
-                        if metric == 'auc':
-                            Rs = np.trapz(average_motor_activity[response_window_mask])
-                        elif metric == 'peak':
-                            Rs = average_motor_activity[response_window_mask].max()
-                        elif metric == 'count':
-                            Rs = average_motor_activity[response_window_mask].sum()
+                        Rs = helpers.extract_response_amplitude(
+                            average_time_shifted_saccade_only_response,
+                            response_window_mask,
+                            metric=metric
+                        )
 
                         #
                         if modulation_index_version == 1:
-                            value = (Rso - (Ro + Rs)) / (Ro + Rs)
+                            value = (Rso - (Ro + Rs)) / abs(Ro + Rs)
                         elif modulation_index_version == 2:
                             value = (Rso - (Rs + Ro)) / (Rso + (Rs + Ro))
+                        elif modulation_index_version == 3:
+                            value = (Rso - (Rs + Ro))
 
                         #
                         data[level]['fictive'].append((latency, value))
 
+        # ========
         # Plotting
+        # ========
+
         fig, axs = plt.subplots(ncols=3)
-        left_edges = np.linspace(window[0], window[1], nbins + 1)[:-1]
-        right_edges = np.linspace(window[0], window[1], nbins + 1)[1:]
-        bin_width = np.unique(np.around(right_edges - left_edges, 3)).item()
-        time_points = left_edges + (bin_width / 2)
+        left_bin_edges = np.linspace(window[0], window[1], nbins + 1)[:-1]
+        right_bin_edges = np.linspace(window[0], window[1], nbins + 1)[1:]
+        binsize = np.unique(np.around(right_bin_edges - left_bin_edges, 3)).item()
+        timepoints = left_bin_edges + (binsize / 2)
 
         for ax, (level, dct) in zip(axs, data.items()):
             for condition, rows in dct.items():
-                if condition == 'actual':
-                    color ='k'
-                else:
-                    color ='r'
 
+                # Color
+                color = 'k' if condition == 'actual' else fictive_condition_color
+
+                # Bin the data
                 arr = np.array(rows)
-                if condition == 'actual':
-                    ax.scatter(arr[:, 0], arr[:, 1], color=color, alpha=0.2, s=15, marker='+')
+                all_bins_data = list()
+                all_bins_mean = list()
+                all_bins_error = list()
 
-                bin_heights = list()
-                bin_errors  = list()
-
-                # Bin the scatterplot
-                for left_edge, right_edge in zip(left_edges, right_edges):
-                    binned_data = list()
+                # Bin the data
+                for left_bin_edge, right_bin_edge in zip(left_bin_edges, right_bin_edges):
+                    single_bin_data = list()
                     for ipt, latency in enumerate(arr[:, 0]):
-                        if left_edge <= latency < right_edge:
-                            binned_data.append(arr[ipt, 1])
+                        if left_bin_edge <= latency < right_bin_edge:
+                            single_bin_data.append(arr[ipt, 1])
 
-                    bin_heights.append(np.mean(binned_data))
-                    bin_errors.append(sem(binned_data))
+                    all_bins_data.append(single_bin_data)
+                    all_bins_mean.append(np.mean(single_bin_data))
+                    all_bins_error.append(sem(single_bin_data))
 
-                bin_heights_smoothed = tk.smooth(np.array(bin_heights), 5)
-                bin_errors_smoothed = tk.smooth(np.array(bin_errors), 5)
-                ax.plot(time_points, bin_heights_smoothed, color=color)
+                # Smooth
+                if hanning_window_length is None:
+                    all_bins_mean_smoothed = np.array(all_bins_mean)
+                    all_bins_error_smoothed = np.array(all_bins_error)
+                else:
+                    all_bins_mean_smoothed = tk.smooth(np.array(all_bins_mean), hanning_window_length)
+                    all_bins_error_smoothed = tk.smooth(np.array(all_bins_error), hanning_window_length)
 
-                # if condition == 'fictive':
-                ax.fill_between(
-                    time_points,
-                    bin_heights_smoothed - bin_errors_smoothed,
-                    bin_heights_smoothed + bin_errors_smoothed,
-                    color=color,
-                    alpha=0.1
-                )
+                # Box and whiskers plot
+                if box_and_whiskers:
+                    if condition == 'fictive':
+                        positions = (np.arange(timepoints.size * 2)[::2]) * binsize
+                    else:
+                        positions = (np.arange(timepoints.size * 2)[::2] + 1) * binsize
+                    boxplot = ax.boxplot(all_bins_data, positions=positions, widths=binsize, showfliers=False, patch_artist=True)
+                    for patch in boxplot['boxes']:
+                        patch.set(facecolor=color, alpha=0.3)
+                    for whisker in boxplot['whiskers']:
+                        whisker.set(color='k')
+                    for median in boxplot['medians']:
+                        median.set(color='k')
+                    for cap in boxplot['caps']:
+                        cap.set(color='k')
+
+                # Simple line plot
+                else:
+                    if condition == 'actual':
+                        ax.plot(arr[:, 0], arr[:, 1], color='none', alpha=0.5, ms=4, marker='o', mec='none', mfc=color)
+                    ax.plot(timepoints, all_bins_mean_smoothed, color=color, lw=master_line_weight)
+                    ax.fill_between(
+                        timepoints,
+                        all_bins_mean_smoothed - all_bins_error_smoothed,
+                        all_bins_mean_smoothed + all_bins_error_smoothed,
+                        color=color,
+                        alpha=0.1
+                    )
 
         #
         if ylim == 'dynamic':
@@ -619,6 +945,11 @@ class SingleUnitActivityTable():
         legend_location=1,
         legend_handle_length=1,
         ylim_margin=(0, 0),
+        line_width=2.5,
+        probe_only_color='C0',
+        saccade_only_color='C1',
+        probe_and_saccade_color='C2',
+        alpha=0.7,
         **psth_kwargs
         ):
         """
@@ -811,8 +1142,27 @@ class SingleUnitActivityTable():
                     response = (trials.mean(0) / psth_kwargs_['binsize'])
                 if smooth:
                     response = tk.smooth(response, hanning_window_length)
-                tax.plot(time, response, color='k', alpha=0.7, label=f'n={trials.shape[0]}', lw=2)
+                tax.plot(time, response, color=probe_only_color, alpha=alpha, label=f'n={trials.shape[0]}', lw=line_width)
                 probe_only_responses[level] = response
+
+        # Saccade-only activity
+        saccade_only_responses = {
+            direction: None for direction in ['ipsi', 'contra']
+        }
+        for irow in range(3):
+            for direction, trials in saccade_only_data.items():
+                if direction == 'ipsi':
+                    continue
+                for icol in range(nbins):
+                    tax = axs[irow, icol]
+                    if standardize:
+                        response = (trials.mean(0) - mu) / sigma
+                    else:
+                        response = (trials.mean(0) / psth_kwargs_['binsize'])
+                    if smooth:
+                        response = tk.smooth(response, hanning_window_length)
+                    tax.plot(time, response, color=saccade_only_color, alpha=alpha, label=f'n={trials.shape[0]}', lw=line_width)
+                    saccade_only_responses[direction] = response
 
         # Visuomotor activity
         for irow, level in enumerate(['low', 'medium', 'high']):
@@ -831,9 +1181,9 @@ class SingleUnitActivityTable():
                     if smooth:
                         response = tk.smooth(response, hanning_window_length)
                     if condition == 'actual':
-                        tax.plot(time, response, color='C0', alpha=0.7, label=f'n={len(trials)}', lw=2)
+                        tax.plot(time, response, color=probe_and_saccade_color, alpha=alpha, linestyle='-', label=f'n={len(trials)}', lw=line_width)
                     else:
-                        tax.plot(time, response, color='k', linestyle='dotted', alpha=0.8, lw=2)
+                        tax.plot(time, response, color='k', linestyle='dotted', alpha=alpha, lw=line_width)
                     # tax.legend(handlelength=legend_handle_length, loc=legend_location)
                     # tax.fill_between(time, response, probe_only_responses[level], color='r', alpha=0.2)
 
@@ -842,7 +1192,7 @@ class SingleUnitActivityTable():
         ymax = np.array([ax.get_ylim()[1] for ax in axs.flatten()]).max() + ylim_margin[1]
         for ax in axs.flatten():
             ax.set_ylim([ymin, ymax])
-            ax.fill_betweenx([ymin, ymax], 0, 3 * (1/ 60), color='y', alpha=0.2)
+            ax.fill_betweenx([ymin, ymax], 0, 3 * (1/ 60), color='y', alpha=0.2, edgecolor='none')
 
         #
         for ax in axs[:, 1:].flatten():
