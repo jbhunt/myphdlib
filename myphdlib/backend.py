@@ -1,7 +1,5 @@
 import os
 import re
-
-from requests import session
 import numpy as np
 import pandas as pd
 import pathlib as pl

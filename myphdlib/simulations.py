@@ -1,5 +1,3 @@
-from asyncio import proactor_events
-from os import times
 import numpy as np
 from myphdlib.toolkit import smooth, detectThresholdCrossing
 from sklearn.preprocessing import MinMaxScaler
