@@ -1,0 +1,8 @@
+*.pyc
+myphdlib/choice
+myphdlib/concussion
+myphdlib/muscimol
+myphdlib/sacnet
+myphdlib/suppression1
+myphdlib/suppression2
+myphdlib/alon.py
