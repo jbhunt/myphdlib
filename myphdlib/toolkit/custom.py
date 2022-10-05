@@ -231,18 +231,16 @@ def interpolate(a, axis=0):
     else:
         return b
 
-def resample(a, fs1, fs2):
+def resampleTimeSeries(a, actualSamplingRate, targetSamplingRate):
     """
+    Resampling a time series using a different sampling rate
     """
 
-    try:
-        totalTime = 1 / fs1 * a.size
-        N = round(totalTime * fs2)
-        x = np.linspace(0, totalTime, N)
-        xp = np.linspace(0, totalTime, a.size)
-        b = np.interp(x, xp, a)
-    except:
-        import pdb; pdb.set_trace()
+    totalTime = np.around(1 / actualSamplingRate * a.size, 3)
+    N = round(totalTime * targetSamplingRate)
+    x = np.linspace(0, totalTime, N)
+    xp = np.linspace(0, totalTime, a.size)
+    b = np.interp(x, xp, a)
 
     return b
 
