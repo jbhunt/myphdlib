@@ -12,7 +12,7 @@ NCHANNELS = 9
 class LabJackError(Exception):
     pass
 
-def readDataFile(dat, line_length_range=(94, 100)):
+def readDataFile(dat, line_length_range=(94, np.inf)):
     """
     Read a single labjack dat file into a numpy array
     """
