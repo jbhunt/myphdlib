@@ -11,8 +11,13 @@ except ImportError:
 # Constants
 kilosortInstallFolder = None
 numpyInstallFolder = None
+matlabExecutableFile = None
 
-def locateSoftwareDependencies(matlabAddonsFolder='/home/jbhunt/Code', kilosortVersion='2.0'):
+def locateSoftwareDependencies(
+    matlabAddonsFolder='/home/jbhunt/Code',
+    kilosortVersion='2.0',
+    matlabVersion='2021a'
+    ):
     """
     Identifies the filepaths to the Kilosort and npy-matlab installations
     """
@@ -33,6 +38,17 @@ def locateSoftwareDependencies(matlabAddonsFolder='/home/jbhunt/Code', kilosortV
     else:
         numpyInstallFolder = _numpyInstallFolder
 
+    #
+    global matlabExecutableFile
+
+    _matlabExecutableFile = None
+    if os.name == 'nt':
+        _matlabExecutableFile = pl.Path(f'C:/Program Files/MATLAB/R{matlabVersion}/bin/matlab.exe')
+    elif os.name == 'posix':
+        _matlabExecutableFile = pl.Path(f'/usr/local/bin/matlab')
+    if _matlabExecutableFile is not None and _matlabExecutableFile.exists():
+        matlabExecutableFile = _matlabExecutableFile
+
     return
 
 def generateMatlabScripts(
@@ -48,6 +64,7 @@ def generateMatlabScripts(
     #
     global kilosortInstallFolder
     global numpyInstallFolder
+
     if kilosortInstallFolder is None:
         raise Exception('Kilosort installation folder is undetermined')
     if numpyInstallFolder is None:
@@ -81,11 +98,9 @@ def generateMatlabScripts(
         for line in lines:
 
             #
-            if bool(re.search('%% if you want to save the results to a Matlab file...\n', line)) and saveRezFile == False:
-                stream.write(f'% Kill MATLAB')
-                stream.write(f'fprintf("All done!");\n')
-                stream.write(f'quit;\n')
-                break
+            if bool(re.search('%% if you want to save the results to a Matlab file...\n', line)):
+                if saveRezFile == False:
+                    break
 
             #
             replacement = None
@@ -116,7 +131,13 @@ def generateMatlabScripts(
             if replacement is None:
                 stream.write(line)
             else:
-                stream.write(replacement)          
+                stream.write(replacement)
+
+        # Append this code block to the end of the main script
+        stream.write(f'% Kill MATLAB and clean up\n')
+        stream.write(f'fprintf("All done!");\n')
+        stream.write(f'close all;\n')
+        stream.write(f'quit;\n')         
 
     return mainScriptFilePathLocal
 
@@ -130,6 +151,8 @@ def autosortNeuralRecording(
     Runs the automatic spike-sorting in the working directory then
     return the spike-sorting results to the source directory
     """
+
+    global matlabExecutableFile
 
     #
     mainScriptFilePath = generateMatlabScripts(workingDirectory)
@@ -155,20 +178,27 @@ def autosortNeuralRecording(
             raise Exception(f'Python engine for MATLAB is not installed')
         else:
             engine = me.start_matlab()
-            # engine.run('/home/jbhunt/Desktop/untitled.m', nargout=0)
             engine.run(str(mainScriptFilePath), nargout=0)
             engine.quit()
 
     else:
+        if os.name == 'nt':
+            matlabFunction = f'run(\""{mainScriptFilePath}\"")'
+        elif os.name == 'posix':
+            matlabFunction = f'run("{mainScriptFilePath}")'
         command = [
-            f'/usr/local/bin/matlab',
+            str(matlabExecutableFile),
             f'-r',
-            f'run("{mainScriptFilePath}")'
+            matlabFunction
         ]
-        print(command)
         p = sp.run(command)
-        # p = sp.Popen(command)
-        # out, errs = p.communicate()
+
+    # Block while the sorting is executed
+    # TODO: Figure out how to get the subprocess to block
+    while True:
+        for file in pl.Path(workingDirectory).iterdir():
+            if bool(re.search('cluster_group.tsv', file.name)):
+                break
 
     # Copy sorting results back to the source directory and clean up
     for file in pl.Path(workingDirectory).iterdir():
