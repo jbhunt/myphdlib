@@ -195,9 +195,11 @@ def autosortNeuralRecording(
 
     # Block while the sorting is executed
     # TODO: Figure out how to get the subprocess to block
-    while True:
+    sortingComplete = False
+    while sortingComplete == False:
         for file in pl.Path(workingDirectory).iterdir():
             if bool(re.search('cluster_group.tsv', file.name)):
+                sortingComplete = True
                 break
 
     # Copy sorting results back to the source directory and clean up
