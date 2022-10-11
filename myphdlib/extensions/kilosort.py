@@ -66,8 +66,8 @@ def generateMatlabScripts(
     configFilePathLocal = workingDirectoryPath.joinpath('kilosortConfigScript.m')
     with open(configFilePathLocal, 'w') as stream:
         for line in lines:
-            if bool(re.search('D:\\\\GitHub\\\\KiloSort2\\\\configFiles\\\\neuropixPhase3A_kilosortChanMap.mat', line)):
-                replacement = re.sub('D:\\\\GitHub\\\\KiloSort2\\\\configFiles\\\\neuropixPhase3A_kilosortChanMap.mat', str(channelMapFilePath2), line)
+            if bool(re.search('D:.*kilosortChanMap.mat', line)):
+                replacement = re.sub('D:.*kilosortChanMap.mat', str(channelMapFilePath2.as_posix()), line)
                 stream.write(replacement)
             else:
                 stream.write(line)
@@ -79,28 +79,34 @@ def generateMatlabScripts(
         lines = stream.readlines()
     with open(mainScriptFilePathLocal, 'w') as stream:
         for line in lines:
+
+            #
             if bool(re.search('%% if you want to save the results to a Matlab file...\n', line)) and saveRezFile == False:
                 stream.write(f'% Kill MATLAB')
                 stream.write(f'fprintf("All done!");\n')
                 stream.write(f'quit;\n')
                 break
+
+            #
             replacement = None
-            if bool(re.search('D:\\\\GitHub\\\\KiloSort2', line)):
-                replacement = re.sub('D:\\\\GitHub\\\\KiloSort2', str(kilosortInstallFolder), line)
-            if bool(re.search('D:\\\\GitHub\\\\npy-matlab', line)):
+            if bool(re.search('D:.*KiloSort2', line)):
+                replacement = re.sub('D:.*KiloSort2', str(kilosortInstallFolder.as_posix()), line)
+            if bool(re.search('D:.*npy-matlab', line)):
                 replacement = re.sub(
-                    'D:\\\\GitHub\\\\npy-matlab',
-                    str(numpyInstallFolder),
+                    'D:.*npy-matlab',
+                    str(numpyInstallFolder.as_posix()),
                     line
                 )
-            if bool(re.search('G:\\\\drift_simulations\\\\test', line)):
-                replacement = re.sub('G:\\\\drift_simulations\\\\test', workingDirectory, line)
-            if bool(re.search('H:\\\\', line)):
-                replacement = re.sub('H:\\\\', workingDirectory, line)
-            if bool(re.search('D:\\\\GitHub\\\\KiloSort2\\\\configFiles', line)):
+            if bool(re.search('G:.*test', line)):
+                replacement = re.sub('G:.*test', str(workingDirectoryPath.as_posix()), line)
+            if bool(re.search("'H:.*';", line)):
+                path = str(workingDirectoryPath.as_posix())
+                repl = f"'{path}';"
+                replacement = re.sub("'H:.*';", repl, line)
+            if bool(re.search('D:.*configFiles', line)):
                 replacement = re.sub(
-                    'D:\\\\GitHub\\\\KiloSort2\\\\configFiles',
-                    workingDirectory,
+                    'D:.*configFiles',
+                    str(workingDirectoryPath.as_posix()),
                     line
                 )
             if bool(re.search('neuropixPhase3A_kilosortChanMap.mat', line)):
