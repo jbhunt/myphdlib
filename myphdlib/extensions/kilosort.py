@@ -191,16 +191,8 @@ def autosortNeuralRecording(
             f'-r',
             matlabFunction
         ]
-        p = sp.run(command)
-
-    # Block while the sorting is executed
-    # TODO: Figure out how to get the subprocess to block
-    sortingComplete = False
-    while sortingComplete == False:
-        for file in pl.Path(workingDirectory).iterdir():
-            if bool(re.search('cluster_group.tsv', file.name)):
-                sortingComplete = True
-                break
+        p = sp.Popen(command)
+        output, errors = p.communicate() # This should block until MATLAB closes
 
     # Copy sorting results back to the source directory and clean up
     for file in pl.Path(workingDirectory).iterdir():
