@@ -22,6 +22,7 @@ def locateSoftwareDependencies(
     Identifies the filepaths to the Kilosort and npy-matlab installations
     """
 
+    # Kilosort
     global kilosortInstallFolder
 
     _kilosortInstallFolder = pl.Path(matlabAddonsFolder).joinpath(f'Kilosort-{kilosortVersion}')
@@ -30,6 +31,7 @@ def locateSoftwareDependencies(
     else:
         kilosortInstallFolder = _kilosortInstallFolder
 
+    # npy-matlab package
     global numpyInstallFolder
 
     _numpyInstallFolder = pl.Path(matlabAddonsFolder).joinpath(f'npy-matlab-master', 'npy-matlab')
@@ -38,7 +40,7 @@ def locateSoftwareDependencies(
     else:
         numpyInstallFolder = _numpyInstallFolder
 
-    #
+    # MATALB executable
     global matlabExecutableFile
 
     _matlabExecutableFile = None
@@ -164,11 +166,45 @@ def checkAutosortingResults(workingDirectory):
 
     return result
 
+def updateSortingParameters(workingDirectory, **kwargs):
+    """
+    """
+
+    # Find config script
+    kilosortConfigScript = None
+    for file in pl.Path(workingDirectory).iterdir():
+        if file.name == 'kilosortConfigScript.m':
+            kilosortConfigScript = file
+    if kilosortConfigScript is None:
+        raise Exception(f'Could not find the config script for kilosort')
+
+    # Parse lines looking for kwarg keys
+    with open(kilosortConfigScript, 'r') as stream:
+        lines = stream.readlines()
+    kilosortConfigScript.unlink()
+    with open(kilosortConfigScript, 'w') as stream:
+        for line in lines:
+            # if line.startswith('ops.spkTh'):
+            #     import pdb; pdb.set_trace()
+            replacement = None
+            for parameter, value in kwargs.items():
+                if bool(re.search(f'ops\.{parameter}.*=.*;', line)):
+                    replacement = re.sub(f'ops\.{parameter}.*=.*;', f'ops.{parameter} = {value};', line)
+                    break
+
+            if replacement is None:
+                stream.write(line)
+            else:
+                stream.write(replacement)
+
+    return
+
 def startKilosortProcess(
     sourceDirectory=None,
     workingDirectory=None,
     deleteAfterSorting=False,
-    useMatlabEngine=False
+    useMatlabEngine=False,
+    **sortingParameters
     ):
     """
     Runs the automatic spike-sorting in the working directory then
@@ -179,6 +215,7 @@ def startKilosortProcess(
 
     #
     mainScriptFilePath = generateMatlabScripts(workingDirectory)
+    updateSortingParameters(workingDirectory, **sortingParameters)
 
     #
     binaryDataTransferred = False
@@ -206,7 +243,7 @@ def startKilosortProcess(
 
     else:
         if os.name == 'nt':
-            matlabFunction = f'run(\""{mainScriptFilePath}\"")'
+            matlabFunction = f'run(""{mainScriptFilePath}"")' # NOTE: For some reason double-quotes are necessary on Windows
         elif os.name == 'posix':
             matlabFunction = f'run("{mainScriptFilePath}")'
         command = [
@@ -215,7 +252,7 @@ def startKilosortProcess(
             matlabFunction
         ]
         p = sp.Popen(command)
-        output, errors = p.communicate() # This should block until MATLAB (works on Ubuntu but not Windows)
+        output, errors = p.communicate() # This should block until MATLAB closes (works on Ubuntu but not Windows)
 
     # NOTE: Blocking until the sorting is complete has to be done manually on Windows
     if os.name == 'nt':
