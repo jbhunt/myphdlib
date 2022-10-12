@@ -228,7 +228,5 @@ def autosortNeuralRecording(
         )
         if deleteAfterSorting:
             file.unlink()
-    if deleteAfterSorting:
-        pl.Path(workingDirectory).unlink()
 
     return
