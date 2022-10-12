@@ -192,7 +192,29 @@ def autosortNeuralRecording(
             matlabFunction
         ]
         p = sp.Popen(command)
-        output, errors = p.communicate() # This should block until MATLAB closes
+        output, errors = p.communicate() # This should block until MATLAB (works on Ubuntu but not Windows)
+
+    # NOTE: Blocking until the sorting is complete has to be done manually on Windows
+    if os.name == 'nt':
+        expectedFilenames = (
+            'cluster_group.tsv',
+            'cluster_ContamPct.tsv',
+            'cluster_KSLabel.tsv',
+            'cluster_Amplitude.tsv',
+            'cluster_sorted.tsv',
+            'cluster_info.tsv'
+        )
+        while True:
+            flags = list()
+            for expectedFilename in expectedFilenames:
+                fileList = [file.name for file in pl.Path(workingDirectory).glob('cluster*')]
+                if expectedFilename in fileList:
+                    flags.append(True)
+                else:
+                    flags.append(False)
+            result = all(flags)
+            if result:
+                break
 
     # Copy sorting results back to the source directory and clean up
     for file in pl.Path(workingDirectory).iterdir():
