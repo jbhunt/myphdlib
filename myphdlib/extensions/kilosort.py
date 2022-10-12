@@ -141,7 +141,30 @@ def generateMatlabScripts(
 
     return mainScriptFilePathLocal
 
-def autosortNeuralRecording(
+def checkAutosortingResults(workingDirectory):
+    """
+    Check if the automatic spike-sorting was successful
+    """
+
+    expectedFilenames = (
+        'cluster_group.tsv',
+        'cluster_ContamPct.tsv',
+        'cluster_KSLabel.tsv',
+        'cluster_Amplitude.tsv',
+    )
+
+    flags = list()
+    for expectedFilename in expectedFilenames:
+        fileList = [file.name for file in pl.Path(workingDirectory).glob('cluster*')]
+        if expectedFilename in fileList:
+            flags.append(True)
+        else:
+            flags.append(False)
+    result = all(flags)
+
+    return result
+
+def startKilosortProcess(
     sourceDirectory=None,
     workingDirectory=None,
     deleteAfterSorting=False,
@@ -196,36 +219,18 @@ def autosortNeuralRecording(
 
     # NOTE: Blocking until the sorting is complete has to be done manually on Windows
     if os.name == 'nt':
-        expectedFilenames = (
-            'cluster_group.tsv',
-            'cluster_ContamPct.tsv',
-            'cluster_KSLabel.tsv',
-            'cluster_Amplitude.tsv',
-            'cluster_sorted.tsv',
-            'cluster_info.tsv'
-        )
         while True:
-            flags = list()
-            for expectedFilename in expectedFilenames:
-                fileList = [file.name for file in pl.Path(workingDirectory).glob('cluster*')]
-                if expectedFilename in fileList:
-                    flags.append(True)
-                else:
-                    flags.append(False)
-            result = all(flags)
+            result = checkAutosortingResults(workingDirectory)
             if result:
                 break
 
     # Copy sorting results back to the source directory and clean up
     for file in pl.Path(workingDirectory).iterdir():
-        if file.name in ('continuous.dat', 'temp_wh.dat', 'rez.mat'):
-            if deleteAfterSorting:
-                file.unlink()
-            continue
-        shutil.copy(
-            str(file),
-            str(pl.Path(sourceDirectory).joinpath(file.name))
-        )
+        if file.name not in ('continuous.dat', 'temp_wh.dat', 'rez.mat'):
+            shutil.copy(
+                str(file),
+                str(pl.Path(sourceDirectory).joinpath(file.name))
+            )
         if deleteAfterSorting:
             file.unlink()
 
