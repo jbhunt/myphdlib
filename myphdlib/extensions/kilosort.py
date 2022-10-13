@@ -156,12 +156,22 @@ def checkAutosortingResults(workingDirectory):
     )
 
     flags = list()
+
+    # Check for cluster files
     for expectedFilename in expectedFilenames:
         fileList = [file.name for file in pl.Path(workingDirectory).glob('cluster*')]
         if expectedFilename in fileList:
             flags.append(True)
         else:
             flags.append(False)
+
+    # Check for phy params.py file
+    if 'params.py' in [file.name for file in pl.Path(workingDirectory).iterdir()]:
+        flags.append(True)
+    else:
+        flags.append(False)
+
+    # Check if all files were found
     result = all(flags)
 
     return result
