@@ -180,6 +180,11 @@ def updateSortingParameters(workingDirectory, **kwargs):
     """
     """
 
+    #
+    if 'batchSize' in kwargs.keys():
+        if kwargs['batchSize'] % 32 != 0:
+            raise Exception(f'Batch size must be a multiple of 32')
+
     # Find config script
     kilosortConfigScript = None
     for file in pl.Path(workingDirectory).iterdir():
@@ -194,13 +199,14 @@ def updateSortingParameters(workingDirectory, **kwargs):
     kilosortConfigScript.unlink()
     with open(kilosortConfigScript, 'w') as stream:
         for line in lines:
-            # if line.startswith('ops.spkTh'):
-            #     import pdb; pdb.set_trace()
             replacement = None
             for parameter, value in kwargs.items():
                 if bool(re.search(f'ops\.{parameter}.*=.*;', line)):
                     replacement = re.sub(f'ops\.{parameter}.*=.*;', f'ops.{parameter} = {value};', line)
                     break
+                elif parameter == 'batchSize':
+                    if line.startswith('ops.NT'):
+                        replacement = re.sub(f'\*1024\+', f'\*{value}\+', line)
 
             if replacement is None:
                 stream.write(line)
