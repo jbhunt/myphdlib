@@ -3,51 +3,92 @@ import numpy as np
 samplingRateLabjack = 1000
 samplingRateNeuropoixels = 30000
 
-def getPulseTrains(timestampsFile, minimumBarcodeInterval=3, minimumBarcodeDuration=0.95):
+def extractPulseTrains(
+    variableInput,
+    device='lj',
+    maximumWrapperPulseDuration=0.011,
+    minimumBarcodeInterval=3,
+    ):
     """
     """
 
-    # Identify all pulse trains
+    #
+    global samplingRateLabjack
     global samplingRateNeuropoixels
-    stateTransitionIndices = np.load(timestampsFile)
+
+    # Identify pulse trains recorded by Neuropixels
+    if device in ('np', 'neuropixels', 'Neuropixels', 'NeuroPixels'):
+        stateTransitionIndices = np.load(variableInput)
+        samplingRate = samplingRateNeuropoixels
+
+    # Identify pulse trains recorded by labjack
+    elif device in ('lj', 'labjack', 'Labjack', 'LabJack'):
+        stateTransitionIndices = np.where(
+            np.logical_or(
+                np.diff(variableInput) > +0.5,
+                np.diff(variableInput) < -0.5
+            )
+        )[0]
+        samplingRate = samplingRateLabjack
+
+    #
+    else:
+        raise Exception(f'Invalid device: {device}')
+
+    # Parse individual barcode pulse trains
     longIntervalIndices = np.where(
-        np.diff(stateTransitionIndices) >= minimumBarcodeInterval * samplingRateNeuropoixels
+        np.diff(stateTransitionIndices) >= minimumBarcodeInterval * samplingRate
     )[0]
     pulseTrains = np.split(stateTransitionIndices, longIntervalIndices + 1)
 
     # Filter out incomplete pulse trains
+    pulseDurationThreshold = round(maximumWrapperPulseDuration * samplingRate)
     pulseTrainsFiltered = list()
     for pulseTrain in pulseTrains:
-        pulseTrainDuation = (pulseTrain[-1] - pulseTrain[0]) / samplingRateNeuropoixels
-        if pulseTrainDuation >= minimumBarcodeDuration:
+        firstPulseDuration = pulseTrain[1] - pulseTrain[0]
+        finalPulseDuration = pulseTrain[-1] - pulseTrain[-2]
+
+        if firstPulseDuration > pulseDurationThreshold:
+            continue
+        elif finalPulseDuration > pulseDurationThreshold:
+            continue
+        else:
             pulseTrainsFiltered.append(pulseTrain)
 
     return pulseTrainsFiltered
 
-def decodePulseTrains(pulseTrains, barcodeBitSize=0.03, wrapperBitSize=0.01):
+def decodePulseTrains(pulseTrains, device='lj', barcodeBitSize=0.03, wrapperBitSize=0.01):
     """
     """
 
+    global samplingRateLabjack
     global samplingRateNeuropoixels
 
-    values = list()
+    if device in ('lj', 'labjack', 'Labjack', 'LabJack'):
+        samplingRate = samplingRateLabjack
+    elif device in ('np', 'neuropixels', 'Neuropixels', 'NeuroPixels'):
+        samplingRate = samplingRateNeuropoixels
+    else:
+        raise Exception(f'Invalid device: {device}')
+
+    values, indices = list(), list()
 
     for pulseTrain in pulseTrains:
 
         # 
         wrapperFallingEdge = pulseTrain[1]
         wrapperRisingEdge = pulseTrain[-2]
-        barcodeLeftEdge = wrapperFallingEdge + round(wrapperBitSize * samplingRateNeuropoixels)
-        barcodeRightEdge = wrapperRisingEdge - round(wrapperBitSize * samplingRateNeuropoixels)
+        barcodeLeftEdge = wrapperFallingEdge + round(wrapperBitSize * samplingRate)
+        barcodeRightEdge = wrapperRisingEdge - round(wrapperBitSize * samplingRate)
         
         # Determine the state at the beginning and end of the data window
         firstStateTransition = pulseTrain[2]
-        if (firstStateTransition - barcodeLeftEdge) / samplingRateNeuropoixels < 0.001:
+        if (firstStateTransition - barcodeLeftEdge) / samplingRate < 0.001:
             initialSignalState = currentSignalState = True
         else:
             initialSignalState = currentSignalState = False
         finalStateTransition = pulseTrain[-3]
-        if (barcodeRightEdge - finalStateTransition) / samplingRateNeuropoixels < 0.001:
+        if (barcodeRightEdge - finalStateTransition) / samplingRate < 0.001:
             finalSignalState = True
         else:
             finalSignalState = False
@@ -65,7 +106,7 @@ def decodePulseTrains(pulseTrains, barcodeBitSize=0.03, wrapperBitSize=0.01):
         # Determine how many bits are stored in each time interval and keep track of the signal state
         bitList = list()
         for nSamples in np.diff(iterable):
-            nBits = round(nSamples / (barcodeBitSize * samplingRateNeuropoixels))
+            nBits = round(nSamples / (barcodeBitSize * samplingRate))
             for iBit in range(nBits):
                 bitList.append(1 if currentSignalState else 0)
             currentSignalState = not currentSignalState
@@ -73,8 +114,16 @@ def decodePulseTrains(pulseTrains, barcodeBitSize=0.03, wrapperBitSize=0.01):
         # Decode the strings of bits
         bitString = ''.join(map(str, bitList[::-1]))
         if len(bitString) != 32:
+            import pdb; pdb.set_trace()
             raise Exception(f'More or less that 32 bits decoded')
         value = int(bitString, 2)
         values.append(value)
+        indices.append(pulseTrain[0])
 
-    return np.array(values)
+    return np.array(values), np.array(indices)
+
+def computeEventTimestamp():
+    """
+    """
+
+    return
