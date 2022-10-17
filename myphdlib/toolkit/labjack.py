@@ -153,7 +153,7 @@ def extractLabjackEvent(
 
     return event, indices
 
-def extractBarcodes(signal, minimumBarcodeInterval=3, bitSize=0.03, labjackSamplingRate=1000):
+def extractBarcodeValues(signal, minimumBarcodeInterval=3, bitSize=0.03, labjackSamplingRate=1000):
     """
     """
 
@@ -170,6 +170,11 @@ def extractBarcodes(signal, minimumBarcodeInterval=3, bitSize=0.03, labjackSampl
     samplesPerBit = bitSize * labjackSamplingRate
     for pulseTrainOnsetIndex in pulseTrainOnsetIndices:
         pulseTrainOffsetIndex = int(pulseTrainOnsetIndex + samplesPerBit * 32)
+
+        #
+        if signal[pulseTrainOnsetIndex: pulseTrainOffsetIndex].size % 32 != 0:
+            continue
+
         splits = np.split(signal[pulseTrainOnsetIndex: pulseTrainOffsetIndex], 32)
         string = ''.join(
             str(round(split.mean())) for split in splits[::-1]

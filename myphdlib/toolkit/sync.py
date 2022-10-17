@@ -121,9 +121,3 @@ def decodePulseTrains(pulseTrains, device='lj', barcodeBitSize=0.03, wrapperBitS
         indices.append(pulseTrain[0])
 
     return np.array(values), np.array(indices)
-
-def computeEventTimestamp():
-    """
-    """
-
-    return
