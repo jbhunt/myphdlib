@@ -1,8 +1,8 @@
 from myphdlib.toolkit.custom import DotDict
 
 labjackChannelMapping = DotDict({
-    'stimulus': None,
-    'cameras': None,
+    'stimulus': 7,
+    'cameras': 6,
     'barcode': 5
 })
 samplingRateLabjack = 1000

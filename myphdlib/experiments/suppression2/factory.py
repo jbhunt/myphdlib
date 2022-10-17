@@ -74,6 +74,9 @@ class Session():
         self.outputFilePath = self.sessionFolderPath.joinpath('output.pickle')
         self.timestampsFilePath = self.ephysFolderPath.joinpath('events', 'Neuropix-PXI-100.0', 'TTL_1', 'timestamps.npy')
         self.messagesFilePath = self.ephysFolderPath.joinpath('sync_messages.txt')
+        self.driftingGratingMetadataFilePath = self.videosFolderPath.joinpath('driftingGratingMetadata.txt')
+        self.movingBarsMetadataFilePath = self.videosFolderPath.joinpath('movingBarsMetadata.txt')
+        self.sparseNoiseMetadataFilePath = self.videosFolderPath.joinpath('sparseNoiseMetadata.txt')
 
         # Identify the very first sample index in the ephys recording
         if self.messagesFilePath.exists() != True:
