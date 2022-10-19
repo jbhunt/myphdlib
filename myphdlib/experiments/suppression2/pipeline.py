@@ -193,14 +193,12 @@ def _extractDriftingGratingTimestamps(sessionObject, stateTransitionTimestamps, 
     """
     """
 
-    # TODO: Figure out how to handle Nan values associated with missing TTL pulses
-
     #
     start = constants.stateTransitionCounts[0] + constants.stateTransitionCounts[1]
     nEdgesTotal = np.sum([value for value in constants.stateTransitionCounts.values() if value is not None])
     nEdgesResidual = stateTransitionTimestamps.size - nEdgesTotal
     stop = start + nEdgesResidual
-    nTrials = int(nEdgesResidual / 2 - constants.trialCountDriftingGrating)
+    nTrials = int(nEdgesResidual / 2)
 
     #
     dataContainer['driftingGrating'] = {
@@ -210,7 +208,28 @@ def _extractDriftingGratingTimestamps(sessionObject, stateTransitionTimestamps, 
         't2': np.empty(nTrials)
     }
 
-    return
+    #
+    with open(sessionObject.driftingGratingMetadataFilePath, 'r') as stream:
+        lines = [
+            line for line in stream.readlines()
+                if bool(re.search('.*, .*, .*\n', line)) and line.startswith('Columns') == False
+        ]
+    motionDirections = list()
+    for line in lines:
+        eventCode, motionDirection, approxTimestamp = line.rstrip('\n').split(', ')
+        motionDirections.append(int(motionDirection))
+
+    #
+    risingEdgeTimestamps = stateTransitionTimestamps[start: stop: 2]
+    fallingEdgeTimestamps = stateTransitionTimestamps[start + 1: stop: 2]
+    iterable = zip(risingEdgeTimestamps, fallingEdgeTimestamps, motionDirections)
+    for trialIndex, (risingEdgeTimestamp, fallingEdgeTimestamp, motionDirection) in enumerate(iterable):
+        dataContainer['driftingGrating']['i'][trialIndex] = trialIndex
+        dataContainer['driftingGrating']['d'][trialIndex] = motionDirection
+        dataContainer['driftingGrating']['t1'][trialIndex] = risingEdgeTimestamp
+        dataContainer['driftingGrating']['t2'][trialIndex] = fallingEdgeTimestamp
+
+    return dataContainer
 
 def _extractNoisyGratingTimestamps():
     """
