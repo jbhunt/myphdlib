@@ -77,6 +77,7 @@ class Session():
         self.driftingGratingMetadataFilePath = self.videosFolderPath.joinpath('driftingGratingMetadata.txt')
         self.movingBarsMetadataFilePath = self.videosFolderPath.joinpath('movingBarsMetadata.txt')
         self.sparseNoiseMetadataFilePath = self.videosFolderPath.joinpath('sparseNoiseMetadata.txt')
+        self.missingFilePath = self.sessionFolderPath.joinpath('missing.txt')
 
         # Identify the very first sample index in the ephys recording
         if self.messagesFilePath.exists() != True:
