@@ -272,15 +272,16 @@ def extractStimuliTimestamps(sessionObject):
         3
     )
 
-    # Correct for missing TTL pulses
-    missingStateTransitionIndices = np.loadtxt(
-        sessionObject.missingFilePath,
-        delimiter=', ',
-        dtype=np.int
-    )
-    fillValues = np.full(missingStateTransitionIndices.size, np.nan)
-    stateTransitionIndices = np.insert(stateTransitionIndices, missingStateTransitionIndices, fillValues)
-    stateTransitionTimestamps = np.insert(stateTransitionTimestamps, missingStateTransitionIndices, fillValues)
+    # Correct for missing TTL pulses if they exist
+    if sessionObject.missingFilePath.exists():
+        missingStateTransitionIndices = np.loadtxt(
+            sessionObject.missingFilePath,
+            delimiter=', ',
+            dtype=np.int
+        )
+        fillValues = np.full(missingStateTransitionIndices.size, np.nan)
+        stateTransitionIndices = np.insert(stateTransitionIndices, missingStateTransitionIndices, fillValues)
+        stateTransitionTimestamps = np.insert(stateTransitionTimestamps, missingStateTransitionIndices, fillValues)
 
     # First bout of the sparse noise stimulus
     dataContainer = _extractSparseNoiseTimestamps(sessionObject, stateTransitionTimestamps, dataContainer)
