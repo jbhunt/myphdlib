@@ -1,6 +1,6 @@
-from unittest import result
 import numpy as np
 import pathlib as pl
+from myphdlib.toolkit.custom import psth, smooth
 
 class Neuron():
     """
@@ -11,6 +11,17 @@ class Neuron():
         clusterMask = singleUnitData[:, 0] == clusterNumber
         self._timestamps = singleUnitData[clusterMask, 1] / samplingRate
         return
+
+    @property
+    def baselineFiringRate(self):
+        """
+        Compute the average and standard deviation FR (spikes/second)
+        """
+        binEdges = np.arange(0, self.timestamps.max(), 0.02)
+        spikeCounts, binEdges = np.histogram(self.timestamps, binEdges)
+        mu = np.mean(spikeCounts / 0.02)
+        sigma = np.std(spikeCounts / 0.02)
+        return mu, sigma
 
     @property
     def timestamps(self):

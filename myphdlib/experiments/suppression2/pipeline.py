@@ -141,18 +141,20 @@ def _extractSparseNoiseTimestamps(sessionObject, stateTransitionTimestamps, data
 
     # Make sure the metadata file has the exact number of trials expected
     if len(lines) != constants.trialCountSparseNoise:
-        import pdb; pdb.set_trace()
         raise Exception(f'Sparse noise stimulus metadata file contains too many or too few lines')
 
     #
-    timestampIndices = np.arange(0, int(constants.trialCountSparseNoise * 2), 2)
-    for trialIndex, (lineData, timestampIndex) in enumerate(zip(lines, timestampIndices)):
+    timestampIndicesOnset = np.arange(0, int(constants.trialCountSparseNoise * 2), 1)[0::2]
+    timestampIndicesOffset = np.arange(0, int(constants.trialCountSparseNoise * 2), 1)[1::2]
+    for trialIndex, (lineData, timestampIndexOnset, timestampIndexOffset) in enumerate(zip(lines, timestampIndicesOnset, timestampIndicesOffset)):
         x, y, t1, t2 = lineData.split(', ')
-        t = stateTransitionTimestamps[timestampIndex]
+        t1 = stateTransitionTimestamps[timestampIndexOnset]
+        t2 = stateTransitionTimestamps[timestampIndexOffset]
         dataContainer['sparseNoise']['i'][trialIndex] = trialIndex
         dataContainer['sparseNoise']['x'][trialIndex] = x
         dataContainer['sparseNoise']['y'][trialIndex] = y
-        dataContainer['sparseNoise']['t'][trialIndex] = t
+        dataContainer['sparseNoise']['t1'][trialIndex] = t1
+        dataContainer['sparseNoise']['t2'][trialIndex] = t2
 
     return dataContainer
 
@@ -247,7 +249,8 @@ def extractStimuliTimestamps(sessionObject):
             'x': np.empty(constants.trialCountSparseNoise),
             'y': np.empty(constants.trialCountSparseNoise),
             's': np.tile([1, 0], int(constants.trialCountSparseNoise / 2)),
-            't': np.empty(constants.trialCountSparseNoise)
+            't1': np.empty(constants.trialCountSparseNoise),
+            't2': np.empty(constants.trialCountSparseNoise)
         },
         'movingBars': {
             'i': np.empty(constants.trialCountMovingBars),
@@ -300,5 +303,16 @@ def extractStimuliTimestamps(sessionObject):
 
 
     saveSessionData(sessionObject, 'visualStimuliData', dataContainer)
+
+    return
+
+def runAll(sessionObject):
+    """
+    """
+
+    extractLabjackData(sessionObject)
+    extractBarcodeSignals(sessionObject)
+    fitTimestampGenerator(sessionObject)
+    extractStimuliTimestamps(sessionObject)
 
     return
