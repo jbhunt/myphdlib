@@ -1,5 +1,4 @@
-from pickle import NONE
-from re import L
+from requests import session
 from myphdlib.toolkit.custom import DotDict
 from myphdlib.experiments.suppression2.constants import labjackChannelMapping
 from myphdlib.experiments.suppression2 import constants
@@ -8,6 +7,7 @@ from myphdlib.toolkit.labjack import loadLabjackData, extractLabjackEvent
 from myphdlib.toolkit.sync import extractPulseTrains, decodePulseTrains
 
 import re
+import yaml
 import numpy as np
 
 def extractLabjackData(sessionObject):
@@ -118,6 +118,112 @@ def fitTimestampGenerator(sessionObject):
     }
     saveSessionData(sessionObject, 'timestampGeneratorParameters', timestampGeneratorParameters)
     saveSessionData(sessionObject, 'filteredBarcodeData', filteredBarcodeData)
+
+    return
+
+def extractStimulusDataSN(sessionObject, dataContainer):
+    """
+    """
+
+    # Compute the timestamp for each state transition
+    labjackDataMatrix = sessionObject.load('labjackDataMatrix')
+    params = DotDict(sessionObject.load('timestampGeneratorParameters'))
+
+    #
+    with open(sessionObject.inputFilePath, 'r') as stream:
+        curatedStimulusMetadata = yaml.full_load(stream)['curatedStimulusMetadata']
+
+    #
+    with open(sessionObject.sparseNoiseMetadataFilePath, 'r') as stream:
+        lines = [
+            line for line in stream.readlines()
+                if bool(re.search('.*, .*, .*, .*\n', line)) and line.startswith('Columns') == False
+        ]
+    nEdgesPerBlock = int(curatedStimulusMetadata['sn']['b1']['nEdgesTotal'])
+    nEdgesPerTrial = 4
+    nTrialsPerBlock = int(nEdgesPerBlock / nEdgesPerTrial)
+    nTrialsTotal = int(nTrialsPerBlock * 2)
+    if len(lines) != nTrialsTotal:
+        raise Exception('') # TODO: Describe this exception
+    else:
+        coords = list()
+        for line in lines:
+            x, y, t1, t2 = line.split(', ')
+            coords.append([float(x), float(y)])
+        coords = np.array(coords)
+    for key in dataContainer['sn'].keys():
+        if key == 'xy':
+            dataContainer['sn'][key] = np.empty([nTrialsTotal, 2])
+        elif key == 'i':
+            dataContainer['sn'][key] = np.zeros(nTrialsTotal, dtype=int)
+        else:
+            dataContainer['sn'][key] = np.empty(nTrialsTotal)
+    for block in ('b1', 'b2'):
+        startIndex = curatedStimulusMetadata['sn'][block]['s1']
+        stopIndex = curatedStimulusMetadata['sn'][block]['s2']
+        if block == 'b1':
+            trialIndexOffset = 0
+        else:
+            trialIndexOffset = nTrialsPerBlock
+        trialIndices = np.arange(0, nTrialsPerBlock, 1) + trialIndexOffset
+        dataContainer['sn']['i'][trialIndices] = trialIndices
+        digitalSignal = labjackDataMatrix[startIndex: stopIndex, labjackChannelMapping.stimulus]
+        edgeIndices = np.where(np.logical_or(
+            np.diff(digitalSignal) > +0.5,
+            np.diff(digitalSignal) < -0.5
+        ))[0]
+        nEdgesDetected = edgeIndices.size
+        nEdgesExpected = curatedStimulusMetadata['sn'][block]['nEdgesTotal']
+        if nEdgesDetected != nEdgesExpected:
+            print(f'Warning: {nEdgesDetected} edges detected in block {block} but {nEdgesExpected} expected')
+            continue
+        else:
+            timestamps = np.around(
+                np.interp(edgeIndices, params.xp, params.fp) * params.m + params.b,
+                3
+            )
+            dataContainer['sn']['xy'][trialIndices, :] = coords[trialIndices, :]
+            dataContainer['sn']['t1'][trialIndices] = timestamps[0::4]
+            dataContainer['sn']['t2'][trialIndices] = timestamps[2::4]
+
+    return dataContainer
+
+def extractStimuliTimestamps2(sessionObject):
+    """
+    """
+
+    #
+    dataContainer = {
+        'sn': {
+            'i': None,  # Trial index
+            'xy': None, # x and y position of the dot (in degs)
+            't1': None, # ON timestamp
+            't2': None  # Off timestamp
+        },
+        'mb': {
+            'i': None,  # Trial index
+            'o': None,  # Orientation (in degs)
+            't1': None, # Stimulus onset timestamp
+            't2': None, # Stimulus offset timestamp
+        },
+        'dg': {
+            'i': None,  # Trial index
+            'e': None,  # Event code
+            't': None,  # Timestamps for events
+            'd': None,  # Direction of motion of the grating
+        },
+        'ng': {
+            'i': None,  # Trial index
+            't': None,  # Timestamps (N trials x N steps)
+            's': None,  # Stimulus matrix indicating contrast levels (N trials x N steps) 
+        },
+    }
+    
+    # Extract metadata for the sparse noise stimulus
+    dataContainer = extractStimulusDataSN(sessionObject, dataContainer)
+
+    # Save results
+    saveSessionData(sessionObject, 'visualStimuliData2', dataContainer)
 
     return
 

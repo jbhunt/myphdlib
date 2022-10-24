@@ -71,6 +71,7 @@ class Session():
         self.videosFolderPath = self.sessionFolderPath.joinpath('videos')
 
         # Files
+        self.inputFilePath = self.sessionFolderPath.joinpath('input.txt')
         self.outputFilePath = self.sessionFolderPath.joinpath('output.pickle')
         self.timestampsFilePath = self.ephysFolderPath.joinpath('events', 'Neuropix-PXI-100.0', 'TTL_1', 'timestamps.npy')
         self.messagesFilePath = self.ephysFolderPath.joinpath('sync_messages.txt')
