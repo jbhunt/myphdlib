@@ -125,20 +125,18 @@ def extractStimulusDataSN(sessionObject, dataContainer):
     """
     """
 
-    # Compute the timestamp for each state transition
+    #
     labjackDataMatrix = sessionObject.load('labjackDataMatrix')
     params = DotDict(sessionObject.load('timestampGeneratorParameters'))
-
-    #
     with open(sessionObject.inputFilePath, 'r') as stream:
         curatedStimulusMetadata = yaml.full_load(stream)['curatedStimulusMetadata']
-
-    #
     with open(sessionObject.sparseNoiseMetadataFilePath, 'r') as stream:
         lines = [
             line for line in stream.readlines()
                 if bool(re.search('.*, .*, .*, .*\n', line)) and line.startswith('Columns') == False
         ]
+
+    #
     nEdgesPerBlock = int(curatedStimulusMetadata['sn']['b1']['nEdgesTotal'])
     nEdgesPerTrial = 4
     nTrialsPerBlock = int(nEdgesPerBlock / nEdgesPerTrial)
@@ -188,7 +186,179 @@ def extractStimulusDataSN(sessionObject, dataContainer):
 
     return dataContainer
 
-def extractStimuliTimestamps2(sessionObject):
+def extractStimulusDataMB(sessionObject, dataContainer):
+    """
+    """
+
+    labjackDataMatrix = sessionObject.load('labjackDataMatrix')
+    params = DotDict(sessionObject.load('timestampGeneratorParameters'))
+    with open(sessionObject.inputFilePath, 'r') as stream:
+        curatedStimulusMetadata = yaml.full_load(stream)['curatedStimulusMetadata']
+    with open(sessionObject.movingBarsMetadataFilePath, 'r') as stream:
+        lines = [
+            line for line in stream.readlines()
+                if bool(re.search('.*, .*, .*\n', line)) and line.startswith('Columns') == False
+        ]
+    orientations = list()
+    for line in lines[::2]:
+        eventCode, orientation, approxTimestamp = line.rstrip('\n').split(', ')
+        orientations.append(float(orientation))
+    orientation = np.array(orientations)
+
+    #
+    nBlocks = len(curatedStimulusMetadata['mb'].keys())
+    nTrialsTotal = int(len(lines) / 2)
+    nTrialsPerBlock = (nTrialsTotal * nBlocks)
+    dataContainer['mb']['i'] = np.arange(nTrialsTotal)
+    dataContainer['mb']['o'] = np.empty(nTrialsTotal)
+    dataContainer['mb']['t1'] = np.empty(nTrialsTotal)
+    dataContainer['mb']['t2'] = np.empty(nTrialsTotal)
+
+    #
+    for block in ('b1', 'b2'):
+        if block == 'b1':
+            trialIndices = np.arange(nTrialsPerBlock)
+        else:
+            trialIndices = np.arange(nTrialsPerBlock) + nTrialsPerBlock
+        startIndex = curatedStimulusMetadata['mb'][block]['s1']
+        stopIndex = curatedStimulusMetadata['mb'][block]['s2']
+        digitalSignal = labjackDataMatrix[startIndex: stopIndex, labjackChannelMapping.stimulus]
+        edgeIndices = np.where(np.logical_or(
+            np.diff(digitalSignal) > +0.5,
+            np.diff(digitalSignal) < -0.5
+        ))[0]
+        nEdgesExpected = curatedStimulusMetadata['mb'][block]['nEdgesTotal']
+        nEdgesDetected = edgeIndices.size
+        if nEdgesDetected != nEdgesExpected:
+            print('Warning: Ligma balls')
+            continue
+        else:
+            timestamps = np.around(
+                np.interp(edgeIndices, params.xp, params.fp) * params.m + params.b,
+                3
+            )
+            dataContainer['mb']['t1'][trialIndices] = timestamps[0::4]
+            dataContainer['mb']['t2'][trialIndices] = timestamps[2::4]
+            dataContainer['mb']['o'][trialIndices] = orientations[trialIndices]
+
+    return dataContainer
+
+def extractStimulusDataDG(sessionObject, dataContainer):
+    """
+    """
+
+    #
+    labjackDataMatrix = sessionObject.load('labjackDataMatrix')
+    params = DotDict(sessionObject.load('timestampGeneratorParameters'))
+    with open(sessionObject.inputFilePath, 'r') as stream:
+        curatedStimulusMetadata = yaml.full_load(stream)['curatedStimulusMetadata']
+
+    #
+    with open(sessionObject.driftingGratingMetadataFilePath, 'r') as stream:
+        lines = [
+            line for line in stream.readlines()
+                if bool(re.search('.*, .*, .*\n', line)) and line.startswith('Columns') == False
+        ]
+    motionDirections, eventCodes = list(), list()
+    for line in lines:
+        eventCode, motionDirection, approxTimestamp = line.rstrip('\n').split(', ')
+        motionDirections.append(int(motionDirection))
+        eventCodes.append(int(eventCode))
+    motionDirections = np.array(motionDirections)
+
+    #
+    startIndex = curatedStimulusMetadata['dg']['b1']['s1']
+    stopIndex = curatedStimulusMetadata['dg']['b1']['s2']
+    digitalSignal = labjackDataMatrix[startIndex: stopIndex, labjackChannelMapping.stimulus]
+    edgeIndices = np.where(np.logical_or(
+        np.diff(digitalSignal) > +0.5,
+        np.diff(digitalSignal) < -0.5
+    ))[0]
+
+    #
+    nEvents = len(lines)
+
+    #
+    dataContainer['dg']['i'] = np.arange(nEvents)
+    dataContainer['dg']['d'] = np.empty(nEvents)
+    dataContainer['dg']['e'] = np.empty(nEvents)
+    dataContainer['dg']['t'] = np.empty(nEvents)
+
+    nEdgesExpected = int(nEvents * 2)
+    nEdgesDetected = edgeIndices.size
+    if nEdgesDetected != nEdgesExpected:
+        print('Warning: Gottem')
+        return dataContainer
+    else:
+        timestamps = np.around(
+            np.interp(edgeIndices, params.xp, params.fp) * params.m + params.b,
+            3
+        )
+        trialIndices = np.arange(nEvents)
+        dataContainer['dg']['d'][trialIndices] = motionDirections
+        dataContainer['dg']['e'][trialIndices] = eventCodes
+        dataContainer['dg']['t'][trialIndices] = timestamps[::2]
+        return dataContainer
+
+def extractStimulusDataNG(sessionObject, dataContainer, nBlocks=20):
+    """
+    """
+
+    #
+    labjackDataMatrix = sessionObject.load('labjackDataMatrix')
+    params = DotDict(sessionObject.load('timestampGeneratorParameters'))
+    with open(sessionObject.inputFilePath, 'r') as stream:
+        curatedStimulusMetadata = yaml.full_load(stream)['curatedStimulusMetadata']
+
+    #
+    with open(sessionObject.noisyGratingMetadataFilePath, 'r') as stream:
+        lines = [
+            line for line in stream.readlines()
+                if bool(re.search('.*, .*, .*\n', line)) and line.startswith('Columns') == False
+        ]
+    contrastLevels, motionDirectionList = list(), list()
+    for line in lines:
+        contrastLevel, motionDirection, approxTimestamp = line.rstrip('\n').split(', ')
+        contrastLevels.append(float(contrastLevel))
+        motionDirectionList.append(int(motionDirection))
+    contrastLevels = np.array(contrastLevels)
+    motionDirectionList = np.array(motionDirectionList)
+    nStepsPerBlock = int(len(lines / nBlocks))
+    nEdgesPerBlock = nStepsPerBlock + 1
+    motionDirectionByBlock = motionDirectionList[::nStepsPerBlock]
+    contrastMatrix = np.array(np.split(contrastLevels, nBlocks))
+
+    #
+    dataContainer['ng']['i'] = np.arange(nStepsPerBlock)
+    dataContainer['ng']['d'] = np.empty(nBlocks)
+    dataContainer['ng']['t'] = np.empty([nBlocks, nStepsPerBlock])
+    dataContainer['ng']['s'] = np.empty([nBlocks, nStepsPerBlock])
+
+    #
+    for blockIndex, block in enumerate([f'b{i}' for i in range(nBlocks)]):
+        startIndex = curatedStimulusMetadata['ng'][block]['s1']
+        stopIndex = curatedStimulusMetadata['ng'][block]['s2']
+        digitalSignal = labjackDataMatrix[startIndex: stopIndex, labjackChannelMapping.stimulus]
+        edgeIndices = np.where(np.logical_or(
+            np.diff(digitalSignal) > +0.5,
+            np.diff(digitalSignal) < -0.5
+        ))[0]
+        nEdgesDetected = edgeIndices.size
+        if nEdgesDetected != nEdgesPerBlock:
+            print('Warning: Never gonna give you up')
+            continue
+        else:
+            timestamps = np.around(
+                np.interp(edgeIndices, params.xp, params.fp) * params.m + params.b,
+                3
+            )
+            dataContainer['ng']['t'][blockIndex, :] = timestamps[:-1]
+            dataContainer['ng']['s'][blockIndex, :] = contrastMatrix[blockIndex, :]
+            dataContainer['ng']['d'][blockIndex] = motionDirectionByBlock[blockIndex]
+
+    return dataContainer
+
+def extractStimulusData(sessionObject):
     """
     """
 
@@ -210,205 +380,30 @@ def extractStimuliTimestamps2(sessionObject):
             'i': None,  # Trial index
             'e': None,  # Event code
             't': None,  # Timestamps for events
-            'd': None,  # Direction of motion of the grating
+            'd': None,  # Direction of grating motion
         },
         'ng': {
-            'i': None,  # Trial index
+            'i': None,  # Trial indexm
+            'd': None,  # Direction of grating motion
             't': None,  # Timestamps (N trials x N steps)
             's': None,  # Stimulus matrix indicating contrast levels (N trials x N steps) 
         },
     }
     
-    # Extract metadata for the sparse noise stimulus
+    # Extract data for the sparse noise stimulus
     dataContainer = extractStimulusDataSN(sessionObject, dataContainer)
+
+    # Extract data for the moving bars stimulus
+    dataContainer = extractStimulusDataMB(sessionObject, dataContainer)
+
+    # Extract data for the drifting grating stimulus
+    dataContainer = extractStimulusDataDG(sessionObject, dataContainer)
+
+    # Extract data for the noisy grating stimulus
+    dataContainer = extractStimulusDataNG(sessionObject, dataContainer, 20)
 
     # Save results
     saveSessionData(sessionObject, 'visualStimuliData2', dataContainer)
-
-    return
-
-def _extractSparseNoiseTimestamps(sessionObject, stateTransitionTimestamps, dataContainer):
-    """
-    Extract timestamps and metadata for the sparse noise stimulus
-    """
-
-    # TODO: Extract data for both presentations of the sparse noise stimulus
-
-    # Determine which edges/timestamps to work with
-    start = 0
-    stop = start + constants.stateTransitionCounts[0]
-
-    # Read metadata file
-    with open(sessionObject.sparseNoiseMetadataFilePath, 'r') as stream:
-        lines = [
-            line for line in stream.readlines()
-                if bool(re.search('.*, .*, .*, .*\n', line)) and line.startswith('Columns') == False
-        ][:constants.trialCountSparseNoise]
-
-    # Make sure the metadata file has the exact number of trials expected
-    if len(lines) != constants.trialCountSparseNoise:
-        raise Exception(f'Sparse noise stimulus metadata file contains too many or too few lines')
-
-    #
-    timestampIndicesOnset = np.arange(0, int(constants.trialCountSparseNoise * 2), 1)[0::2]
-    timestampIndicesOffset = np.arange(0, int(constants.trialCountSparseNoise * 2), 1)[1::2]
-    for trialIndex, (lineData, timestampIndexOnset, timestampIndexOffset) in enumerate(zip(lines, timestampIndicesOnset, timestampIndicesOffset)):
-        x, y, t1, t2 = lineData.split(', ')
-        t1 = stateTransitionTimestamps[timestampIndexOnset]
-        t2 = stateTransitionTimestamps[timestampIndexOffset]
-        dataContainer['sparseNoise']['i'][trialIndex] = trialIndex
-        dataContainer['sparseNoise']['x'][trialIndex] = x
-        dataContainer['sparseNoise']['y'][trialIndex] = y
-        dataContainer['sparseNoise']['t1'][trialIndex] = t1
-        dataContainer['sparseNoise']['t2'][trialIndex] = t2
-
-    return dataContainer
-
-def _extractMovingBarsTimestamps(sessionObject, stateTransitionTimestamps, dataContainer):
-    """
-    Extract timestamps and metadata for the moving bar stimulus
-    """
-
-    # TODO: Extract data for both presentations of the sparse noise stimulus
-
-    # Determine which edges/timestamps to work with
-    start = constants.stateTransitionCounts[0]
-    stop = constants.stateTransitionCounts[0] + constants.stateTransitionCounts[1]
-
-    #
-    with open(sessionObject.movingBarsMetadataFilePath, 'r') as stream:
-        lines = [
-            line for line in stream.readlines()
-                if bool(re.search('.*, .*, .*\n', line)) and line.startswith('Columns') == False
-        ]
-    for trialIndex, line in enumerate(lines[::2][:constants.trialCountMovingBars]):
-        eventCode, orientation, approxTimestamp = line.rstrip('\n').split(', ')
-        dataContainer['movingBars']['o'][trialIndex] = int(orientation)
-
-    #
-    for trialIndex, stateTransitionTimestamp in enumerate(stateTransitionTimestamps[start:stop][0::4]):
-        dataContainer['movingBars']['i'][trialIndex] = trialIndex
-        dataContainer['movingBars']['t1'][trialIndex] = stateTransitionTimestamp
-
-    #
-    for trialIndex, stateTransitionTimestamp in enumerate(stateTransitionTimestamps[start:stop][2::4]):
-        dataContainer['movingBars']['i'][trialIndex] = trialIndex
-        dataContainer['movingBars']['t2'][trialIndex] = stateTransitionTimestamp
-
-    return dataContainer
-
-def _extractDriftingGratingTimestamps(sessionObject, stateTransitionTimestamps, dataContainer):
-    """
-    """
-
-    #
-    start = constants.stateTransitionCounts[0] + constants.stateTransitionCounts[1]
-    nEdgesTotal = np.sum([value for value in constants.stateTransitionCounts.values() if value is not None])
-    nEdgesResidual = stateTransitionTimestamps.size - nEdgesTotal
-    stop = start + nEdgesResidual
-    nTrials = int(nEdgesResidual / 2)
-
-    #
-    dataContainer['driftingGrating'] = {
-        'i': np.empty(nTrials),
-        'd': np.empty(nTrials),
-        't1': np.empty(nTrials),
-        't2': np.empty(nTrials)
-    }
-
-    #
-    with open(sessionObject.driftingGratingMetadataFilePath, 'r') as stream:
-        lines = [
-            line for line in stream.readlines()
-                if bool(re.search('.*, .*, .*\n', line)) and line.startswith('Columns') == False
-        ]
-    motionDirections = list()
-    for line in lines:
-        eventCode, motionDirection, approxTimestamp = line.rstrip('\n').split(', ')
-        motionDirections.append(int(motionDirection))
-
-    #
-    risingEdgeTimestamps = stateTransitionTimestamps[start: stop: 2]
-    fallingEdgeTimestamps = stateTransitionTimestamps[start + 1: stop: 2]
-    iterable = zip(risingEdgeTimestamps, fallingEdgeTimestamps, motionDirections)
-    for trialIndex, (risingEdgeTimestamp, fallingEdgeTimestamp, motionDirection) in enumerate(iterable):
-        dataContainer['driftingGrating']['i'][trialIndex] = trialIndex
-        dataContainer['driftingGrating']['d'][trialIndex] = motionDirection
-        dataContainer['driftingGrating']['t1'][trialIndex] = risingEdgeTimestamp
-        dataContainer['driftingGrating']['t2'][trialIndex] = fallingEdgeTimestamp
-
-    return dataContainer
-
-def _extractNoisyGratingTimestamps():
-    """
-    """
-
-    return
-
-def extractStimuliTimestamps(sessionObject):
-    """
-    """
-
-    dataContainer = {
-        'sparseNoise': {
-            'i': np.empty(constants.trialCountSparseNoise),
-            'x': np.empty(constants.trialCountSparseNoise),
-            'y': np.empty(constants.trialCountSparseNoise),
-            's': np.tile([1, 0], int(constants.trialCountSparseNoise / 2)),
-            't1': np.empty(constants.trialCountSparseNoise),
-            't2': np.empty(constants.trialCountSparseNoise)
-        },
-        'movingBars': {
-            'i': np.empty(constants.trialCountMovingBars),
-            'o': np.empty(constants.trialCountMovingBars),
-            't1': np.empty(constants.trialCountMovingBars),
-            't2': np.empty(constants.trialCountMovingBars),
-        },
-        'driftingGrating': None, # This is dynamically populated
-        'noisyGrating': None,
-    }
-
-    # Compute the timestamp for each state transition
-    labajackDataMatrix = sessionObject.load('labjackDataMatrix')
-    visualStimuliSignal = labajackDataMatrix[:, labjackChannelMapping.stimulus]
-    stateTransitionIndices = np.where(np.logical_or(
-        np.diff(visualStimuliSignal) > +0.5,
-        np.diff(visualStimuliSignal) < -0.5
-    ))[0]
-    params = DotDict(sessionObject.load('timestampGeneratorParameters'))
-    stateTransitionTimestamps = np.around(
-        np.interp(stateTransitionIndices, params.xp, params.fp) * params.m + params.b,
-        3
-    )
-
-    # Correct for missing TTL pulses if they exist
-    if sessionObject.missingFilePath.exists():
-        missingStateTransitionIndices = np.loadtxt(
-            sessionObject.missingFilePath,
-            delimiter=', ',
-            dtype=np.int
-        )
-        fillValues = np.full(missingStateTransitionIndices.size, np.nan)
-        stateTransitionIndices = np.insert(stateTransitionIndices, missingStateTransitionIndices, fillValues)
-        stateTransitionTimestamps = np.insert(stateTransitionTimestamps, missingStateTransitionIndices, fillValues)
-
-    # First bout of the sparse noise stimulus
-    dataContainer = _extractSparseNoiseTimestamps(sessionObject, stateTransitionTimestamps, dataContainer)
-
-    # First bout of the moving bars stimulus
-    dataContainer = _extractMovingBarsTimestamps(sessionObject, stateTransitionTimestamps, dataContainer)
-
-    # Drifting grating stimulus (with probes)
-    dataContainer = _extractDriftingGratingTimestamps(sessionObject, stateTransitionTimestamps, dataContainer)
-
-    # Second bout of the sparse noise stimulus
-
-    # Second bout of the moving bars stimulus
-
-    # Noisy drifting grating stimulus
-
-
-    saveSessionData(sessionObject, 'visualStimuliData', dataContainer)
 
     return
 

@@ -78,6 +78,12 @@ class Session():
         self.driftingGratingMetadataFilePath = self.videosFolderPath.joinpath('driftingGratingMetadata.txt')
         self.movingBarsMetadataFilePath = self.videosFolderPath.joinpath('movingBarsMetadata.txt')
         self.sparseNoiseMetadataFilePath = self.videosFolderPath.joinpath('sparseNoiseMetadata.txt')
+        self.stimuliMetadataFilePaths = {
+            'dg': self.videosFolderPath.joinpath('driftingGratingMetadata.txt'),
+            'ng': self.videosFolderPath.joinpath('noisyGratingMetadata.txt'),
+            'mb': self.videosFolderPath.joinpath('movingBarsMetadata.txt'),
+            'sn': self.videosFolderPath.joinpath('sparseNoiseMetadata.txt')
+        }
         self.missingFilePath = self.sessionFolderPath.joinpath('missing.txt')
 
         # Identify the very first sample index in the ephys recording
