@@ -208,7 +208,7 @@ def extractStimulusDataMB(sessionObject, dataContainer):
     #
     nBlocks = len(curatedStimulusMetadata['mb'].keys())
     nTrialsTotal = int(len(lines) / 2)
-    nTrialsPerBlock = (nTrialsTotal * nBlocks)
+    nTrialsPerBlock = (nTrialsTotal / nBlocks)
     dataContainer['mb']['i'] = np.arange(nTrialsTotal)
     dataContainer['mb']['o'] = np.empty(nTrialsTotal)
     dataContainer['mb']['t1'] = np.empty(nTrialsTotal)
@@ -414,6 +414,6 @@ def runAll(sessionObject):
     extractLabjackData(sessionObject)
     extractBarcodeSignals(sessionObject)
     fitTimestampGenerator(sessionObject)
-    extractStimuliTimestamps(sessionObject)
+    extractStimulusData(sessionObject)
 
     return
