@@ -14,7 +14,7 @@ numpyInstallFolder = None
 matlabExecutableFile = None
 
 def locateSoftwareDependencies(
-    matlabAddonsFolder='/home/jbhunt/Code',
+    matlabAddonsFolder=None,
     kilosortVersion='2.0',
     matlabVersion='2021a'
     ):
@@ -25,6 +25,14 @@ def locateSoftwareDependencies(
     # Kilosort
     global kilosortInstallFolder
 
+    # Runs some checks
+    if matlabAddonsFolder is None:
+        raise Exception('Path to MATLAB addons not specified')
+
+    if kilosortVersion != '2.0':
+        raise Exception(f'Kilosort-{kilosortVersion} is not supported yet')
+
+    #
     _kilosortInstallFolder = pl.Path(matlabAddonsFolder).joinpath(f'Kilosort-{kilosortVersion}')
     if _kilosortInstallFolder.exists() == False:
         raise Exception(f'Could not locate Kilosort installation folder')
@@ -206,7 +214,7 @@ def updateSortingParameters(workingDirectory, **kwargs):
                     break
                 elif parameter == 'batchSize':
                     if line.startswith('ops.NT'):
-                        replacement = re.sub(f'\*1024\+', f'* {value} +', line)
+                        replacement = re.sub(f'\*1024\+', f'*{value}+', line)
 
             if replacement is None:
                 stream.write(line)
@@ -227,7 +235,16 @@ def startKilosortProcess(
     return the spike-sorting results to the source directory
     """
 
+    # Check that all the software dependencies were located
     global matlabExecutableFile
+    global numpyInstallFolder
+    global kilosortInstallFolder
+    if any([
+        matlabExecutableFile is None,
+        numpyInstallFolder is None,
+        kilosortInstallFolder is None
+    ]):
+        raise Exception('Please call the "locateSoftwareDependencies" function')
 
     #
     mainScriptFilePath = generateMatlabScripts(workingDirectory)
