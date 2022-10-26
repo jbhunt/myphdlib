@@ -206,7 +206,7 @@ def updateSortingParameters(workingDirectory, **kwargs):
                     break
                 elif parameter == 'batchSize':
                     if line.startswith('ops.NT'):
-                        replacement = re.sub(f'\*1024\+', f'* {value} +', line)
+                        replacement = re.sub(f'\*1024\+', f'*{value}+', line)
 
             if replacement is None:
                 stream.write(line)
