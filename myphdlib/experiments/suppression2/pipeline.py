@@ -1,25 +1,77 @@
-from requests import session
 from myphdlib.toolkit.custom import DotDict
-from myphdlib.experiments.suppression2.constants import labjackChannelMapping
-from myphdlib.experiments.suppression2 import constants
+from myphdlib.experiments.suppression2.constants import labjackChannelMapping as LCM
 from myphdlib.experiments.suppression2.factory import loadSessionData, saveSessionData
 from myphdlib.toolkit.labjack import loadLabjackData, extractLabjackEvent
 from myphdlib.toolkit.sync import extractPulseTrains, decodePulseTrains
+from myphdlib.extensions.matplotlib import placeVerticalLines
 
 import re
 import yaml
 import numpy as np
+from collections import OrderedDict
 
-def extractLabjackData(sessionObject):
+def extractLabjackData(sessionObject, saveDataMatrix=False):
     """
-    Extract the labjack data matrix
-    TODO: Save the inidvi
+    Extract the digital signals recorded by the labjack device
     """
 
     labjackDataMatrix = loadLabjackData(sessionObject.labjackFolderPath)
-    saveSessionData(sessionObject, 'labjackDataMatrix', labjackDataMatrix)
+    iterable = zip(
+        ['lightSensorSignal', 'exposureOnsetSignal', 'digitalBarcodeSignal'],
+        ['stimulus', 'cameras', 'barcode']
+    )
+    for channelName, channelKey in iterable:
+        channelSignal = labjackDataMatrix[:, LCM[channelKey]]
+        saveSessionData(sessionObject, channelName, channelSignal)
+
+    if saveDataMatrix:
+        saveSessionData(sessionObject, 'labjackDataMatrix', labjackDataMatrix)
 
     return
+
+def createInputFile(sessionObject, xData=None, nBlocksTotal=25):
+    """
+    Create the input file which contains the sample indices which separate
+    blocks of each stimulus presentation
+    """
+
+    #
+    if xData is None:
+        lightSensorSignal = sessionObject.load('lightSensorSignal')
+        xData = np.around(placeVerticalLines(lightSensorSignal), 0).astype(int)
+
+    #
+    if xData.size - 1 != nBlocksTotal:
+        print('Warning: Number of line indices != number of blocks + 1')
+        return xData
+
+    #
+    iterable = zip(
+        ['sn', 'mb', 'dg', 'ng'],
+        [2, 2, 1, 20],
+        [2160, 96, 0, 24040]
+    )
+    data = dict()
+    data['curatedStimulusMetadata'] = dict()
+    lineIndex = 0
+    for stimulusName, blockCount, nEdgesTotal in iterable:
+        data['curatedStimulusMetadata'][stimulusName] = dict()
+        for blockIndex in np.arange(blockCount):
+            block = {
+                's1': int(xData[lineIndex]),
+                's2': int(xData[lineIndex + 1]),
+                'nEdgesTotal': nEdgesTotal,
+                'iEdgesMissing': list()
+            }
+            key = f'b{blockIndex + 1}'
+            data['curatedStimulusMetadata'][stimulusName][key] = block
+            lineIndex += 1
+
+    #
+    with open(sessionObject.inputFilePath, 'w') as stream:
+        yaml.dump(data, stream, default_flow_style=False, sort_keys=False)
+
+    return xData
 
 def extractBarcodeSignals(sessionObject):
     """
@@ -41,7 +93,7 @@ def extractBarcodeSignals(sessionObject):
 
     # Extract labjack barcodes
     labjackDataMatrix = loadSessionData(sessionObject, 'labjackDataMatrix')
-    barcodeDigitalSignal = labjackDataMatrix[:, labjackChannelMapping['barcode']]
+    barcodeDigitalSignal = labjackDataMatrix[:, LCM['barcode']]
     barcodePulseTrains = extractPulseTrains(barcodeDigitalSignal, device='lj')
     barcodeValuesLabjack, barcodeIndicesLabjack = decodePulseTrains(barcodePulseTrains, device='lj')
 
@@ -165,7 +217,7 @@ def extractStimulusDataSN(sessionObject, dataContainer):
             trialIndexOffset = nTrialsPerBlock
         trialIndices = np.arange(0, nTrialsPerBlock, 1) + trialIndexOffset
         dataContainer['sn']['i'][trialIndices] = trialIndices
-        digitalSignal = labjackDataMatrix[startIndex: stopIndex, labjackChannelMapping.stimulus]
+        digitalSignal = labjackDataMatrix[startIndex: stopIndex, LCM.stimulus]
         edgeIndices = np.where(np.logical_or(
             np.diff(digitalSignal) > +0.5,
             np.diff(digitalSignal) < -0.5
@@ -203,12 +255,12 @@ def extractStimulusDataMB(sessionObject, dataContainer):
     for line in lines[::2]:
         eventCode, orientation, approxTimestamp = line.rstrip('\n').split(', ')
         orientations.append(float(orientation))
-    orientation = np.array(orientations)
+    orientations = np.array(orientations)
 
     #
     nBlocks = len(curatedStimulusMetadata['mb'].keys())
     nTrialsTotal = int(len(lines) / 2)
-    nTrialsPerBlock = (nTrialsTotal / nBlocks)
+    nTrialsPerBlock = int(nTrialsTotal / nBlocks)
     dataContainer['mb']['i'] = np.arange(nTrialsTotal)
     dataContainer['mb']['o'] = np.empty(nTrialsTotal)
     dataContainer['mb']['t1'] = np.empty(nTrialsTotal)
@@ -222,7 +274,7 @@ def extractStimulusDataMB(sessionObject, dataContainer):
             trialIndices = np.arange(nTrialsPerBlock) + nTrialsPerBlock
         startIndex = curatedStimulusMetadata['mb'][block]['s1']
         stopIndex = curatedStimulusMetadata['mb'][block]['s2']
-        digitalSignal = labjackDataMatrix[startIndex: stopIndex, labjackChannelMapping.stimulus]
+        digitalSignal = labjackDataMatrix[startIndex: stopIndex, LCM.stimulus]
         edgeIndices = np.where(np.logical_or(
             np.diff(digitalSignal) > +0.5,
             np.diff(digitalSignal) < -0.5
@@ -237,9 +289,13 @@ def extractStimulusDataMB(sessionObject, dataContainer):
                 np.interp(edgeIndices, params.xp, params.fp) * params.m + params.b,
                 3
             )
-            dataContainer['mb']['t1'][trialIndices] = timestamps[0::4]
-            dataContainer['mb']['t2'][trialIndices] = timestamps[2::4]
-            dataContainer['mb']['o'][trialIndices] = orientations[trialIndices]
+            try:
+                dataContainer['mb']['t1'][trialIndices] = timestamps[0::4]
+                dataContainer['mb']['t2'][trialIndices] = timestamps[2::4]
+                dataContainer['mb']['o'][trialIndices] = orientations[trialIndices]
+            except:
+                import pdb; pdb.set_trace()
+                continue
 
     return dataContainer
 
@@ -269,7 +325,7 @@ def extractStimulusDataDG(sessionObject, dataContainer):
     #
     startIndex = curatedStimulusMetadata['dg']['b1']['s1']
     stopIndex = curatedStimulusMetadata['dg']['b1']['s2']
-    digitalSignal = labjackDataMatrix[startIndex: stopIndex, labjackChannelMapping.stimulus]
+    digitalSignal = labjackDataMatrix[startIndex: stopIndex, LCM.stimulus]
     edgeIndices = np.where(np.logical_or(
         np.diff(digitalSignal) > +0.5,
         np.diff(digitalSignal) < -0.5
@@ -311,7 +367,7 @@ def extractStimulusDataNG(sessionObject, dataContainer, nBlocks=20):
         curatedStimulusMetadata = yaml.full_load(stream)['curatedStimulusMetadata']
 
     #
-    with open(sessionObject.noisyGratingMetadataFilePath, 'r') as stream:
+    with open(sessionObject.stimuliMetadataFilePaths['ng'], 'r') as stream:
         lines = [
             line for line in stream.readlines()
                 if bool(re.search('.*, .*, .*\n', line)) and line.startswith('Columns') == False
@@ -323,7 +379,7 @@ def extractStimulusDataNG(sessionObject, dataContainer, nBlocks=20):
         motionDirectionList.append(int(motionDirection))
     contrastLevels = np.array(contrastLevels)
     motionDirectionList = np.array(motionDirectionList)
-    nStepsPerBlock = int(len(lines / nBlocks))
+    nStepsPerBlock = int(len(lines) / nBlocks)
     nEdgesPerBlock = nStepsPerBlock + 1
     motionDirectionByBlock = motionDirectionList[::nStepsPerBlock]
     contrastMatrix = np.array(np.split(contrastLevels, nBlocks))
@@ -335,10 +391,10 @@ def extractStimulusDataNG(sessionObject, dataContainer, nBlocks=20):
     dataContainer['ng']['s'] = np.empty([nBlocks, nStepsPerBlock])
 
     #
-    for blockIndex, block in enumerate([f'b{i}' for i in range(nBlocks)]):
+    for blockIndex, block in enumerate([f'b{i + 1}' for i in range(nBlocks)]):
         startIndex = curatedStimulusMetadata['ng'][block]['s1']
         stopIndex = curatedStimulusMetadata['ng'][block]['s2']
-        digitalSignal = labjackDataMatrix[startIndex: stopIndex, labjackChannelMapping.stimulus]
+        digitalSignal = labjackDataMatrix[startIndex: stopIndex, LCM.stimulus]
         edgeIndices = np.where(np.logical_or(
             np.diff(digitalSignal) > +0.5,
             np.diff(digitalSignal) < -0.5
@@ -358,7 +414,7 @@ def extractStimulusDataNG(sessionObject, dataContainer, nBlocks=20):
 
     return dataContainer
 
-def extractStimulusData(sessionObject):
+def extractVisualStimuliData(sessionObject, dataContainerName='visualStimuliData'):
     """
     """
 
@@ -403,7 +459,7 @@ def extractStimulusData(sessionObject):
     dataContainer = extractStimulusDataNG(sessionObject, dataContainer, 20)
 
     # Save results
-    saveSessionData(sessionObject, 'visualStimuliData2', dataContainer)
+    saveSessionData(sessionObject, dataContainerName, dataContainer)
 
     return
 
@@ -414,6 +470,6 @@ def runAll(sessionObject):
     extractLabjackData(sessionObject)
     extractBarcodeSignals(sessionObject)
     fitTimestampGenerator(sessionObject)
-    extractStimulusData(sessionObject)
+    extractVisualStimuliData(sessionObject)
 
     return
