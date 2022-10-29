@@ -148,28 +148,25 @@ class SessionFactory():
         #
         elif os.name == 'nt':
             for driveLetter in string.ascii_uppercase:
-                rootFolderPath = pl.WindowsPath().joinpath(f'{driveLetter}:/', hdd)
+                rootFolderPath = pl.WindowsPath().joinpath(f'{driveLetter}:/', alias)
                 if rootFolderPath.exists():
                     self.rootFolderPath = rootFolderPath
                     break
 
         #
-        if self.rootFolder is None:
-            raise Exception('Could not locate data')
+        if self.rootFolderPath is None:
+            raise Exception('Could not root folder')
 
         #
         self.sessionFolders = None
 
         return
 
-    def produce(self):
-        return
-
     def __iter__(self):
         self.sessionFolders = list()
         for date in self.rootFolderPath.iterdir():
             for animal in date.iterdir():
-                self._sessionFolders.append(str(animal))
+                self.sessionFolders.append(str(animal))
         self._listIndex = 0
         return self
 
