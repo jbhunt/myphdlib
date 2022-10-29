@@ -1,6 +1,7 @@
 # Imports
 import os
 import re
+import string
 import pickle
 import pathlib as pl
 
@@ -135,11 +136,28 @@ class SessionFactory():
         """
         """
 
-        user = os.environ['USER']
-        self.rootFolder = pl.Path(f'/media/{user}').joinpath(hdd, alias)
-        if self.rootFolder.exists() == False:
+        self.rootFolderPath = None
+
+        #
+        if os.name == 'posix':
+            user = os.environ['USER']
+            self.rootFolderPath = pl.Path(f'/media/{user}').joinpath(hdd, alias)
+            if self.rootFolderPath.exists() == False:
+                self.rootFolderPath = None
+        
+        #
+        elif os.name == 'nt':
+            for driveLetter in string.ascii_uppercase:
+                rootFolderPath = pl.WindowsPath().joinpath(f'{driveLetter}:/', hdd)
+                if rootFolderPath.exists():
+                    self.rootFolderPath = rootFolderPath
+                    break
+
+        #
+        if self.rootFolder is None:
             raise Exception('Could not locate data')
 
+        #
         self.sessionFolders = None
 
         return
@@ -149,7 +167,7 @@ class SessionFactory():
 
     def __iter__(self):
         self.sessionFolders = list()
-        for date in self.rootFolder.iterdir():
+        for date in self.rootFolderPath.iterdir():
             for animal in date.iterdir():
                 self._sessionFolders.append(str(animal))
         self._listIndex = 0
