@@ -162,6 +162,23 @@ class SessionFactory():
 
         return
 
+    def produce(self, animal, date):
+        """
+        Produce a specific session object as specified by the animal and date kwargs
+        """
+
+        sessionLocated = False
+        for session in self:
+            if session.animal == animal and session.date == date:
+                sessionLocated = True
+                break
+        
+        if sessionLocated:
+            return session
+        else:
+            raise Exception('Could not locate session')
+
+    # Iterator protocol definition
     def __iter__(self):
         self.sessionFolders = list()
         for date in self.rootFolderPath.iterdir():
