@@ -1,60 +1,11 @@
 # Imports
 import os
 import re
+import yaml
 import string
 import pickle
 import pathlib as pl
-
-#
-def saveSessionData(sessionObject, name, data, createOutputFile=True):
-    """
-    """
-
-    #
-    if sessionObject.outputFilePath.exists() == False:
-        if createOutputFile:
-            with open(str(sessionObject.outputFilePath), 'wb') as stream:
-                pass
-        else:
-            raise Exception('Could not locate output file')
-
-    #
-    with open(str(sessionObject.outputFilePath), 'rb') as stream:
-        try:
-            dataContainer = pickle.load(stream)
-        except EOFError:
-            dataContainer = dict()
-    sessionObject.outputFilePath.unlink() # TODO: Wait to delete the output file until it passes a check
-
-    #
-    try:
-        dataContainer.update({name: data})
-        with open(str(sessionObject.outputFilePath), 'wb') as stream:
-            pickle.dump(dataContainer, stream)
-    except:
-        import pdb; pdb.set_trace()
-
-        print()
-
-    return
-
-def loadSessionData(sessionObject, name):
-    """
-    """
-
-    if sessionObject.outputFilePath.exists() == False:
-        raise Exception('Could not locate output file')
-
-    with open(sessionObject.outputFilePath, 'rb') as stream:
-        try:
-            dataContainer = pickle.load(stream)
-        except EOFError:
-            raise Exception('Output file is empty') from None
-
-    if name not in dataContainer.keys():
-        raise Exception(f'Invalid data key: {name}')
-    else:
-        return dataContainer[name]
+from myphdlib.general.session import saveSessionData
 
 # Class definitions
 class Session():
@@ -127,6 +78,22 @@ class Session():
         else:
             return dataContainer[name]
 
+    @property
+    def fps(self):
+        """
+        Video acquisition framerate
+        """
+
+        framerate = None
+        result = list(self.videosFolderPath.glob('*metadata.yaml'))
+        if result:
+            with open(result.pop(), 'r') as stream:
+                acquisitionMetadata = yaml.safe_load(stream)
+            for cameraAlias in ('cam1', 'cam2'):
+                if acquisitionMetadata[cameraAlias]['ismaster']:
+                    framerate = acquisitionMetadata[cameraAlias]['framerate']
+
+        return framerate
 
 class SessionFactory():
     """

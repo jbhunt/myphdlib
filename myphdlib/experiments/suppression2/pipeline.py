@@ -1,14 +1,13 @@
-from myphdlib.toolkit.custom import DotDict
+from myphdlib.general.toolkit import DotDict
 from myphdlib.experiments.suppression2.constants import labjackChannelMapping as LCM
-from myphdlib.experiments.suppression2.factory import loadSessionData, saveSessionData
-from myphdlib.toolkit.labjack import loadLabjackData, extractLabjackEvent
-from myphdlib.toolkit.sync import extractPulseTrains, decodePulseTrains
+from myphdlib.general.session import saveSessionData, loadSessionData
+from myphdlib.general.labjack import loadLabjackData, extractLabjackEvent
+from myphdlib.general.sync import extractPulseTrains, decodePulseTrains
 from myphdlib.extensions.matplotlib import placeVerticalLines
 
 import re
 import yaml
 import numpy as np
-from collections import OrderedDict
 
 def extractLabjackData(sessionObject, saveDataMatrix=False):
     """
