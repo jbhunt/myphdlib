@@ -1,8 +1,13 @@
 import numpy as np
 import pandas as pd
+from sklearn.impute import KNNImputer
+from sklearn.decomposition import PCA
+from scipy.stats import pearsonr
+from scipy.signal import find_peaks as findPeaks
+from myphdlib.general.toolkit import smooth
 from myphdlib.general.session import saveSessionData
 
-def extractEyePosition(sessionObject, likelihoodThreshold=0.95):
+def extractEyePosition(sessionObject, likelihoodThreshold=0.95, pupilCenterName='pupilCenter'):
     """
     Extract the raw eye position data
     """
@@ -14,17 +19,16 @@ def extractEyePosition(sessionObject, likelihoodThreshold=0.95):
 
     #
     for side in ('left', 'right'):
-        csv = sessionObject.dlcPoseEstimates[side]
-        result = sessionObject.videosFolderPath.glob(f'*{side}Cam*.csv')
+        result = list(sessionObject.videosFolderPath.glob(f'*{side}Cam*.csv'))
         if result:
-            frame = pd.read_csv(csv, header=list(range(3)), index_col=0)
+            frame = pd.read_csv(result.pop(), header=list(range(3)), index_col=0)
         else:
             continue
         frame = frame.sort_index(level=1, axis=1)
         network = frame.columns[0][0]
-        x = np.array(frame[network, 'pupilCenter', 'x']).flatten()
-        y = np.array(frame[network, 'pupilCenter', 'y']).flatten()
-        l = np.array(frame[network, 'pupilCenter', 'likelihood']).flatten()
+        x = np.array(frame[network, pupilCenterName, 'x']).flatten()
+        y = np.array(frame[network, pupilCenterName, 'y']).flatten()
+        l = np.array(frame[network, pupilCenterName, 'likelihood']).flatten()
         x[l < likelihoodThreshold] = np.nan
         y[l < likelihoodThreshold] = np.nan
         coords = np.hstack([
@@ -48,56 +52,165 @@ def extractEyePosition(sessionObject, likelihoodThreshold=0.95):
 
     return
 
-def correctEyePosition(sessionObject, frameIntervalTolerance=0.1, nDroppedFramesAllowed=100000):
+def correctEyePosition(sessionObject, pad=1e6):
     """
-    Search for and correct missing frames in the raw eye position data
+    Correct eye position data for missing/dropped frames
     """
 
     #
     eyePositionUncorrected = sessionObject.load('eyePositionUncorrected')
-    nSamples = eyePositionUncorrected.shape[0] + nDroppedFramesAllowed
-    eyePositionCorrected = np.full([nSamples, 4])
+    nSamples = eyePositionUncorrected.shape[0] + int(pad)
+    eyePositionCorrected = np.full([nSamples, 4], np.nan)
 
     #
-    expectedFrameInterval = 1 / sessionObject.fps
-    thresholdFrameInterval = expectedFrameInterval + (expectedFrameInterval * frameIntervalTolerance)
+    terminationIndex = 0
+    expectedFrameInterval = 1 / sessionObject.fps * 1000 # In ms
     for camera in ('left', 'right'):
 
         #
-        result = sessionObject.videosFolderPath.glob(f'*{camera}Cam_timestamps.txt')
-        if result:
-            frameIntervals = np.loadtxt(result.pop(), dtype=np.int64) / 1000000000
+        if camera == 'left':
+            columnIndices = 0, 1
         else:
-            continue
-        frameTimestamps = np.full(frameIntervals.size + 1, np.nan)
-        frameTimestamps[0] = 0
-        frameTimestamps[1:] = np.cumsum(frameIntervals)
+            columnIndices = 2, 3
 
         #
-        mask = frameIntervals > thresholdFrameInterval
-        indices = np.where(mask)[0]
-        dropped = list()
-        for frameInterval in frameIntervals[mask]:
-            nFramesDropped = round(frameInterval / expectedFrameInterval)
-            dropped.append(nFramesDropped)
+        result = list(sessionObject.videosFolderPath.glob(f'*{camera}Cam_timestamps.txt'))
+        if result:
+            frameIntervals = np.loadtxt(result.pop(), dtype=np.int64) / 1000000 # In ms
+        else:
+            continue
+
+        # TODO: Figure out if I should save these data
+        # frameTimestamps = np.full(frameIntervals.size + 1, np.nan)
+        # frameTimestamps[0] = 0
+        # frameTimestamps[1:] = np.cumsum(frameIntervals)
+
+        #
+        frameIndex = 0
+        frameOffset = 0
+        eyePositionUncorrected[0, columnIndices] = eyePositionUncorrected[0, columnIndices]
+        for frameInterval in frameIntervals:
+            frameOffset += round(frameInterval / expectedFrameInterval) - 1
+            eyePositionCorrected[frameIndex + frameOffset, columnIndices] = eyePositionUncorrected[frameIndex, columnIndices]
+            frameIndex += 1
+
+        #
+        if frameIndex + frameOffset > terminationIndex:
+            terminationIndex = frameIndex + frameOffset
+
+        #
+        print(f'Info: {frameOffset} dropped frames detected in the {camera} camera recording')
+
+    #
+    eyePositionCorrected = eyePositionCorrected[:terminationIndex, :]
+    saveSessionData(sessionObject, 'eyePositionCorrected', eyePositionCorrected)
 
     return
 
-def filterEyePosition(sessionObject):
+# TODO: Remove the constant motion of the eye
+def stabilizeEyePosition(sessionObject):
     """
     """
 
     return
 
-def decomposeEyePosition(sessionObject):
+# TODO: Normlize eye position to some common measurement (e.g., eye width)
+def normalizeEyePosition(sessionObject):
     """
     """
 
     return
 
-def detectMonocularSaccades(sessionObject):
+def decomposeEyePosition(sessionObject, nNeighbors=5):
     """
     """
+
+    eyePositionCorrected = sessionObject.load('eyePositionCorrected')
+    eyePositionImputed = KNNImputer(n_neighbors=nNeighbors).fit_transform(eyePositionCorrected)
+    eyePositionDecomposed = np.full_like(eyePositionImputed, np.nan)
+    for columnIndices, X in zip([(0, 1), (2, 3)], np.split(eyePositionImputed, 2, axis=1)):
+        eyePositionDecomposed[:, columnIndices] = PCA(n_components=2).fit_transform(X)
+
+    saveSessionData(sessionObject, 'eyePositionDecomposed', eyePositionDecomposed)
+
+    return
+
+# TODO: Reorient eye position such that the decomposed signal matches the raw eye position
+def reorientEyePosition(sessionObject, reflect='left'):
+    """
+    """
+
+    eyePositionDecomposed = sessionObject.load('eyePositionDecomposed')
+    eyePositionCorrected = sessionObject.load('eyePositionCorrected')
+    eyePositionReoriented = np.full_like(eyePositionCorrected, np.nan)
+
+    #
+    iterable = zip(['left', 'left', 'right', 'right'], np.arange(4))
+    for eye, columnIndex in iterable:
+        if eye == reflect:
+            coefficient = -1
+        else:
+            coefficient = +1
+        signal3 = np.copy(eyePositionDecomposed[:, columnIndex])
+        signal1 = eyePositionCorrected[:, columnIndex]
+        indices = np.where(np.isnan(signal1))[0]
+        signal1 = np.delete(signal1, indices)
+        signal2 = eyePositionDecomposed[:, columnIndex]
+        signal2 = np.delete(signal2, indices)
+        r2, p =  pearsonr(signal1, signal2)
+        if r2 > 0.1 and p < 0.05:
+            pass
+        elif r2 < -0.1 and p < 0.05:
+            signal3 *= -1
+        else:
+            raise Exception()
+        signal3 *= coefficient
+        eyePositionReoriented[:, columnIndex] = signal3
+
+    #
+    saveSessionData(sessionObject, 'eyePositionReoriented', eyePositionReoriented)
+
+    return
+
+def filterEyePosition(sessionObject, t=25):
+    """
+    Filter eye position
+
+    keywords
+    --------
+    t : int
+        Size of time window for smoothing (in ms)
+    """
+    
+    # Determine the nearest odd window size
+    smoothingWindowSize = round(t / (1 / sessionObject.fps * 1000))
+    if smoothingWindowSize % 2 == 0:
+        smoothingWindowSize += 1
+
+    # Filter
+    eyePositionDecomposed = sessionObject.load('eyePositionDecomposed')
+    eyePositionFiltered = np.full_like(eyePositionDecomposed, np.nan)
+    for columnIndex in range(eyePositionDecomposed.shape[1]):
+        eyePositionFiltered[:, columnIndex] = smooth(eyePositionDecomposed[:, columnIndex], smoothingWindowSize)
+
+    # Save filtered eye position data
+    saveSessionData(sessionObject, 'eyePositionFiltered', eyePositionFiltered)
+
+    return
+
+def detectMonocularSaccades(sessionObject, p=0.99, isi=0.05):
+    """
+    """
+
+
+    eyePositionFiltered = sessionObject.load('eyePositionFiltered')
+    distance = round(isi * sessionObject.fps)
+    for eye, columnIndex in zip(['left', 'right'], [0, 2]):
+        for coefficient in (+1, -1):
+            signal = np.diff(eyePositionFiltered[:, columnIndex]) * coefficient
+            threshold = np.percentile(signal, p * 100)
+            peakIndices, peakProperties = findPeaks(signal, height=threshold, distance=distance)
+
     
     return
 

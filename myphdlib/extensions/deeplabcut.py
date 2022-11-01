@@ -2,16 +2,16 @@ import os
 import yaml
 import pathlib as pl
 
-CONFIG = None
+configFilePath = None
 
 def changeWorkingNetwork(network='Gazer'):
     """
     """
 
     if network == 'Gazer':
-        global CONFIG
-        CONFIG = '/media/jbhunt/JH-DATA-00B/Networks/Gazer-Josh-2022-05-24/config.yaml'
-        if pl.Path(CONFIG).exists() == False:
+        global configFilePath
+        configFilePath = pl.Path('/media/jbhunt/JH-DATA-00B/Networks/Gazer-Josh-2022-05-24/config.yaml')
+        if configFilePath.exists() == False:
             raise Exception('Could not locate config file')
 
     return
