@@ -42,8 +42,6 @@ def readDataFile(dat, line_length_range=(94, np.inf)):
     shape = (nrows, ncols)
     data = np.zeros(shape)
     for iline, line in enumerate(content):
-        if len(line) > line_length_range[1] or len(line) < line_length_range[0]:
-            continue
         elements = line.decode().rstrip('\r\n').split('\t')
         elements = [float(el) for el in elements]
         data[iline, :] = elements
