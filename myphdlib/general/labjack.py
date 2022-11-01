@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 import pathlib as pl
 from scipy.signal import find_peaks
@@ -28,7 +29,7 @@ def readDataFile(dat, line_length_range=(94, np.inf)):
 
     #
     for iline, line in enumerate(lines):
-        if line_length_range[0] <= len(line) <= line_length_range[1]:
+        if bool(re.search('.*\t.*\t.*\t.*\t.*\t.*\t.*\r\n', line.decode())) and line.decode().startswith('Time') == False:
             break
 
     # split into header and content
