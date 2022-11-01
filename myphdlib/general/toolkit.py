@@ -5,6 +5,7 @@ import pathlib as pl
 import subprocess as sp
 from decimal import Decimal
 from scipy.stats import pearsonr
+from scipy.interpolate import Akima1DInterpolator
 
 def smooth(a, window_size=5, window_type='hanning', axis=1):
     """
@@ -231,18 +232,20 @@ def interpolate(a, axis=0):
     else:
         return b
 
-def resampleTimeSeries(a, actualSamplingRate, targetSamplingRate):
+def resample(fp, N=101, method='linear'):
     """
-    Resampling a time series using a different sampling rate
     """
 
-    totalTime = np.around(1 / actualSamplingRate * a.size, 3)
-    N = round(totalTime * targetSamplingRate)
-    x = np.linspace(0, totalTime, N)
-    xp = np.linspace(0, totalTime, a.size)
-    b = np.interp(x, xp, a)
+    x = np.linspace(0, fp.size - 1, N)
+    xp = np.linspace(0, fp.size - 1, fp.size)
+    if method == 'linear':
+        y = np.interp(x, xp, fp )
+    elif method == 'akima':
+        clf = Akima1DInterpolator(xp, fp)
+        y = clf(x)
 
-    return b
+    return x, y
+
 
 def inrange(value, lowerBound, upperBound):
     """

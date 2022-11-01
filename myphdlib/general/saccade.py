@@ -4,7 +4,7 @@ from sklearn.impute import KNNImputer
 from sklearn.decomposition import PCA
 from scipy.stats import pearsonr
 from scipy.signal import find_peaks as findPeaks
-from myphdlib.general.toolkit import smooth
+from myphdlib.general.toolkit import smooth, resample
 from myphdlib.general.session import saveSessionData
 
 def extractEyePosition(sessionObject, likelihoodThreshold=0.95, pupilCenterName='pupilCenter'):
@@ -198,19 +198,48 @@ def filterEyePosition(sessionObject, t=25):
 
     return
 
-def detectMonocularSaccades(sessionObject, p=0.99, isi=0.05):
+def detectMonocularSaccades(
+        sessionObject,
+        p=0.99,
+        isi=0.05,
+        window=(-0.2, 0.2),
+        alignment='before'
+        ):
     """
     """
 
+    #
+    offset = (
+        round(window[0] * sessionObject.fps),
+        round(window[1] * sessionObject.fps)
+    )
 
-    eyePositionFiltered = sessionObject.load('eyePositionFiltered')
+    #
     distance = round(isi * sessionObject.fps)
+    eyePositionFiltered = sessionObject.load('eyePositionFiltered')
+    saccadeWaveformsPutative = {
+        'left': list(),
+        'right': list()
+    }
     for eye, columnIndex in zip(['left', 'right'], [0, 2]):
         for coefficient in (+1, -1):
-            signal = np.diff(eyePositionFiltered[:, columnIndex]) * coefficient
-            threshold = np.percentile(signal, p * 100)
-            peakIndices, peakProperties = findPeaks(signal, height=threshold, distance=distance)
+            velocity = np.diff(eyePositionFiltered[:, columnIndex]) * coefficient
+            threshold = np.percentile(velocity, p * 100)
+            peakIndices, peakProperties = findPeaks(velocity, height=threshold, distance=distance)
+            for peakIndex in peakIndices:
+                if alignment == 'before':
+                    pass
+                elif alignment == 'after':
+                    peakIndex += 1
+                s1 = peakIndex + offset[0]
+                s2 = peakIndex + offset[1]
+                saccadeWaveform = eyePositionFiltered[s1:s2, columnIndex]
+                saccadeWaveformsPutative[eye].append(saccadeWaveform)
 
+    #
+    for eye in ('left', 'right'):
+        saccadeWaveformsPutative[eye] = np.array(saccadeWaveformsPutative[eye])
+    saveSessionData(sessionObject, 'saccadeWaveformsPutative', saccadeWaveformsPutative)
     
     return
 
@@ -226,7 +255,7 @@ def detectConjugateSaccades(sessionObject):
 
     return
 
-def labelPutativeSaccades():
+def labelPutativeSaccades(factoryObject):
     """
     """
 
