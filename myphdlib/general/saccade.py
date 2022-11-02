@@ -2,12 +2,14 @@ import numpy as np
 import pandas as pd
 from sklearn.impute import KNNImputer
 from sklearn.decomposition import PCA
+from sklearn.neural_network import MLPClassifier
 from scipy.stats import pearsonr
 from scipy.signal import find_peaks as findPeaks
 from myphdlib.general.toolkit import smooth, resample
 from myphdlib.general.session import saveSessionData
+from myphdlib.extensions.matplotlib import SaccadeLabelingGUI
 
-def extractEyePosition(sessionObject, likelihoodThreshold=0.95, pupilCenterName='pupilCenter'):
+def extractEyePosition(sessionObject, likelihoodThreshold=0.95, pupilCenterName='pupil-c'):
     """
     Extract the raw eye position data
     """
@@ -126,16 +128,27 @@ def decomposeEyePosition(sessionObject, nNeighbors=5):
     """
 
     eyePositionCorrected = sessionObject.load('eyePositionCorrected')
-    eyePositionImputed = KNNImputer(n_neighbors=nNeighbors).fit_transform(eyePositionCorrected)
-    eyePositionDecomposed = np.full_like(eyePositionImputed, np.nan)
-    for columnIndices, X in zip([(0, 1), (2, 3)], np.split(eyePositionImputed, 2, axis=1)):
-        eyePositionDecomposed[:, columnIndices] = PCA(n_components=2).fit_transform(X)
+    eyePositionDecomposed = np.full_like(eyePositionCorrected, np.nan)
+
+    #
+    for columnIndices, X1 in zip([(0, 1), (2, 3)], np.split(eyePositionCorrected, 2, axis=1)):
+
+        # Check for missing eye position data
+        if np.isnan(X1).all(0).all():
+            continue
+
+        # Impute NaN values
+        X2 = KNNImputer(n_neighbors=nNeighbors).fit_transform(X1)
+
+        #
+        eyePositionDecomposed[:, columnIndices] = PCA(n_components=2).fit_transform(X2)
 
     saveSessionData(sessionObject, 'eyePositionDecomposed', eyePositionDecomposed)
 
     return
 
-# TODO: Reorient eye position such that the decomposed signal matches the raw eye position
+# TODO: Double-check that the left and right eyes move opposite of each other
+# e.g., when left eye moves nasal, right eye moves temporal
 def reorientEyePosition(sessionObject, reflect='left'):
     """
     """
@@ -147,10 +160,10 @@ def reorientEyePosition(sessionObject, reflect='left'):
     #
     iterable = zip(['left', 'left', 'right', 'right'], np.arange(4))
     for eye, columnIndex in iterable:
-        if eye == reflect:
-            coefficient = -1
-        else:
-            coefficient = +1
+        # if eye == reflect:
+        #     coefficient = -1
+        # else:
+        #     coefficient = +1
         signal3 = np.copy(eyePositionDecomposed[:, columnIndex])
         signal1 = eyePositionCorrected[:, columnIndex]
         indices = np.where(np.isnan(signal1))[0]
@@ -164,8 +177,10 @@ def reorientEyePosition(sessionObject, reflect='left'):
             signal3 *= -1
         else:
             raise Exception()
-        signal3 *= coefficient
+        # signal3 *= coefficient
         eyePositionReoriented[:, columnIndex] = signal3
+
+    # TODO: Check that left and right eye position is anti-correlated
 
     #
     saveSessionData(sessionObject, 'eyePositionReoriented', eyePositionReoriented)
@@ -198,13 +213,14 @@ def filterEyePosition(sessionObject, t=25):
 
     return
 
-def detectMonocularSaccades(
-        sessionObject,
-        p=0.99,
-        isi=0.05,
-        window=(-0.2, 0.2),
-        alignment='before'
-        ):
+# TODO: Align saccades to the onset of the saccade
+def detectPutativeSaccades(
+    sessionObject,
+    p=0.992,
+    isi=0.015,
+    window=(-0.2, 0.2),
+    alignment='before'
+    ):
     """
     """
 
@@ -243,32 +259,142 @@ def detectMonocularSaccades(
     
     return
 
-def classifyMonocularSaccades(sessionObject):
+# TODO: Exclude duplicate labeled saccades
+def labelPutativeSaccades(sessionObject, nSamplesPerEye=30):
     """
     """
+
+    saccadeWaveformsPutative = sessionObject.load('saccadeWaveformsPutative')
+    saccadeWaveformsLabeled = {
+        'left': {
+            'X': None,
+            'y': None,
+        },
+        'right': {
+            'X': None,
+            'y': None,
+        }
+    }
+
+    #
+    samples = list()
+    for eye in ('left', 'right'):
+        nSamples = saccadeWaveformsPutative[eye].shape[0]
+        sampleIndices = np.random.choice(np.arange(nSamples), nSamplesPerEye)
+        for sample in saccadeWaveformsPutative[eye][sampleIndices, :]:
+            samples.append(sample)
+
+    #
+    gui = SaccadeLabelingGUI()
+    gui.inputSamples(np.array(samples))
+    while gui.isRunning():
+        continue
+
+    #
+    xLeftEye, xRightEye = np.split(gui.xTrain, 2, axis=0)
+    yLeftEye, yRightEye = np.split(gui.y, 2, axis=0)
+    saccadeWaveformsLabeled['left']['X'] = xLeftEye
+    saccadeWaveformsLabeled['right']['X'] = xRightEye
+    saccadeWaveformsLabeled['left']['y'] = yLeftEye
+    saccadeWaveformsLabeled['right']['y'] = yRightEye
+
+    #
+    saveSessionData(sessionObject, 'saccadeWaveformsLabeled', saccadeWaveformsLabeled)
 
     return
 
+def classifyPutativeSaccades(factoryObject, classifierClass=MLPClassifier, **classifierKwargs):
+    """
+    """
+
+    classifierKwargsDefaults = {
+        'max_iter': 1000000
+    }
+    classifierKwargs.update(classifierKwargsDefaults)
+
+    # Collect the training dataset
+    X = list()
+    y = list()
+    for sessionObject in factoryObject:
+        saccadeWaveformsLabeled = sessionObject.load('saccadeWaveformsLabeled')
+        for eye in ('left', 'right'):
+            samples = np.diff(saccadeWaveformsLabeled[eye]['X'], axis=1)
+            labels = saccadeWaveformsLabeled[eye]['y']
+            for sample, label in zip(samples, labels):
+                X.append(sample)
+                y.append(label)
+
+    X = np.array(X)
+    y = np.array(y).reshape(-1, 1)
+
+    # Init and fit the classifier
+    clf = classifierClass(**classifierKwargs).fit(X, y.ravel())
+
+    #
+    for sessionObject in factoryObject:
+        
+        # Init the empty data container
+        saccadeWaveformsClassified = {
+            'left': {
+                'left': list(),
+                'right': list() 
+            },
+            'right': {
+                'left': list(),
+                'right': list()
+            }
+            
+        }
+
+        # Classify saccades
+        for eye in ('left', 'right'):
+            saccadeWaveformsPutative = sessionObject.load('saccadeWaveformsPutative')
+            samples = np.diff(saccadeWaveformsPutative[eye], axis=1)
+            labels = clf.predict(samples)
+
+            for sampleIndex, (sample, label) in enumerate(zip(samples, labels)):
+                waveform = saccadeWaveformsPutative[eye][sampleIndex, :]
+
+                # TODO: Instead of labeling saccade direction as left/right label it as nasal/temporal
+                # label = -1 and eye = left: temporal
+                # label = +1 and eye = right: nasal
+                # label = -1 and eye = right: temporal
+                # label = +1 and eye = left: nasal
+
+                if label == -1:
+                    saccadeWaveformsClassified[eye]['left'].append(waveform)
+                elif label == +1:
+                    saccadeWaveformsClassified[eye]['right'].append(waveform)
+    
+        # Save the results
+        for eye in ('left', 'right'):
+            for direction in ('left', 'right'):
+                saccadeWaveformsClassified[eye][direction] = np.array(saccadeWaveformsClassified[eye][direction])
+        saveSessionData(sessionObject, 'saccadeWaveformsClassified', saccadeWaveformsClassified)
+
+    return
+
+# TODO: Code this
 def detectConjugateSaccades(sessionObject):
     """
     """
 
     return
 
-def labelPutativeSaccades(factoryObject):
+def runAllModules(sessionObject):
     """
     """
 
-    return
+    modules = (
+        extractEyePosition,
+        correctEyePosition,
+        decomposeEyePosition,
+        reorientEyePosition,
+        filterEyePosition,
+        detectPutativeSaccades,
+    )
 
-def createTrainingDataset():
-    """
-    """
-
-    return
-
-def identifySaccadeOnset():
-    """
-    """
+    for module in modules:
+        module(sessionObject)
 
     return

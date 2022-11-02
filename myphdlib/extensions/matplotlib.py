@@ -63,15 +63,14 @@ class SaccadeLabelingGUI():
 
     def __init__(
         self,
-        xlim=(-4, 4),
-        side='both'
+        figsize=(5, 5)
         ):
         """
         """
 
         #
-        self.xlim = xlim
-        self.side = side
+        self.xlim = (-1, 1)
+        self.ylim = (-1, 1)
         self.labels = (
             'Left',
             'Right',
@@ -81,11 +80,19 @@ class SaccadeLabelingGUI():
 
         #
         self.fig, self.ax = plt.subplots()
-        plt.subplots_adjust(left=0.35)
-        self.line = lines.Line2D([0], [0], color='k')
-        self.midline = lines.Line2D(self.xlim, [0, 0], color='r')
-        self.ax.add_line(self.line)
-        self.ax.add_line(self.midline)
+        self.fig.subplots_adjust(left=0.35)
+        self.fig.set_figwidth(figsize[0])
+        self.fig.set_figheight(figsize[1])
+        self.wave = lines.Line2D([0], [0], color='k')
+        self.cross = {
+            'vertical': lines.Line2D([0, 0], self.ax.get_ylim(), color='k', alpha=0.3),
+            'horizontal': lines.Line2D(self.ax.get_xlim(), [0, 0], color='k', alpha=0.3)
+        }
+        self.ax.add_line(self.wave)
+        for line in self.cross.values():
+            self.ax.add_line(line)
+
+        #
         self.sampleIndex = 0
 
         # Checkbox panel
@@ -125,47 +132,33 @@ class SaccadeLabelingGUI():
 
         return
 
-    # TODO: Recode this method
-    def collectSamples(
-        self,
-        datasetNames=['Realtime'],
-        randomizeSamples=True,
-        ):
+    def inputSamples(self, samples, gain=1.3, randomizeSamples=False):
         """
         """
-
-        self.sampleIndex = 0
 
         #
-        xTrain = list()
-        factory = SessionFactory()
-        for datasetName in datasetNames:
-            for obj, animal, date, session in pipeline.iterateSessions(datasetName):
-                if hasattr(obj, 'saccadeWaveformsPutative'):
-                    if self.side == 'both':
-                        keys = ['left', 'right']
-                    elif self.side == 'left':
-                        keys = ['left']
-                    elif self.side == 'right':
-                        keys = ['right']
-                    for key in keys:
-                        for wave in obj.saccadeWaveformsPutative[key]:
-                            xTrain.append(wave)
-
-        # Cast to numpy array
-        self.xTrain = np.array(xTrain)
-
-        # Randomize samples
+        self.xTrain = samples
         if randomizeSamples:
             np.random.shuffle(self.xTrain)
-
-        # Create a new array for labels
+        nSamples, nFeatures = self.xTrain.shape
         self.y = np.full([self.xTrain.shape[0], 1], np.nan)
 
-        # Draw the first sample
-        self.ylim = 0, self.xTrain.shape[1]
-        midpoint = (self.ylim[1] - 1) / 2
-        self.midline.set_data(self.xlim, [midpoint, midpoint])
+        #
+        self.ylim = np.array([0, nFeatures - 1])
+        self.xlim = np.array([
+            self.xTrain.min() * gain,
+            self.xTrain.max() * gain
+        ])
+
+        #
+        if nFeatures % 2 == 0:
+            center = nFeatures / 2
+        else:
+            center = (nFeatures - 1) / 2
+        self.cross['vertical'].set_data([0, 0], self.ylim)
+        self.cross['horizontal'].set_data(self.xlim, [center, center])
+
+        #
         self.updatePlot()
         plt.show()
 
@@ -176,7 +169,7 @@ class SaccadeLabelingGUI():
         """
 
         wave = np.take(self.xTrain, self.sampleIndex, mode='wrap', axis=0)
-        self.line.set_data(wave, np.arange(wave.size))
+        self.wave.set_data(wave, np.arange(wave.size))
         self.ax.set_ylim(self.ylim)
         self.ax.set_xlim(self.xlim)
         self.fig.canvas.draw()
@@ -237,6 +230,12 @@ class SaccadeLabelingGUI():
         plt.close(self.fig)
 
         return
+
+    def isRunning(self):
+        """
+        """
+
+        return plt.fignum_exists(self.fig.number)
 
     @property
     def trainingData(self):

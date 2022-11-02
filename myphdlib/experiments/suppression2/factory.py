@@ -99,14 +99,18 @@ class SessionFactory():
     """
     """
 
-    def __init__(self, hdd='JH-DATA-01', alias='Suppression2'):
+    def __init__(self, hdd='JH-DATA-01', alias='Suppression2', source=None):
         """
         """
 
         self.rootFolderPath = None
 
         #
-        if os.name == 'posix':
+        if source is not None:
+            self.rootFolderPath = pl.Path(source)
+
+        #
+        elif os.name == 'posix':
             user = os.environ['USER']
             self.rootFolderPath = pl.Path(f'/media/{user}').joinpath(hdd, alias)
             if self.rootFolderPath.exists() == False:

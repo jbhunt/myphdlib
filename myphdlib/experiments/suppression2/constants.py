@@ -1,4 +1,4 @@
-from myphdlib.toolkit.custom import DotDict
+from myphdlib.general.toolkit import DotDict
 
 samplingRateLabjack         = 1000
 samplingRateNeuropixels     = 3000
