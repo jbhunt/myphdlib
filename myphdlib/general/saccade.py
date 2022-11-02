@@ -160,10 +160,9 @@ def reorientEyePosition(sessionObject, reflect='left'):
     #
     iterable = zip(['left', 'left', 'right', 'right'], np.arange(4))
     for eye, columnIndex in iterable:
-        # if eye == reflect:
-        #     coefficient = -1
-        # else:
-        #     coefficient = +1
+        #
+        if np.isnan(eyePositionDecomposed[:, columnIndex]).all():
+            continue
         signal3 = np.copy(eyePositionDecomposed[:, columnIndex])
         signal1 = eyePositionCorrected[:, columnIndex]
         indices = np.where(np.isnan(signal1))[0]
@@ -177,7 +176,6 @@ def reorientEyePosition(sessionObject, reflect='left'):
             signal3 *= -1
         else:
             raise Exception()
-        # signal3 *= coefficient
         eyePositionReoriented[:, columnIndex] = signal3
 
     # TODO: Check that left and right eye position is anti-correlated
@@ -206,6 +204,8 @@ def filterEyePosition(sessionObject, t=25):
     eyePositionDecomposed = sessionObject.load('eyePositionDecomposed')
     eyePositionFiltered = np.full_like(eyePositionDecomposed, np.nan)
     for columnIndex in range(eyePositionDecomposed.shape[1]):
+        if np.isnan(eyePositionDecomposed[:, columnIndex]).all():
+            continue
         eyePositionFiltered[:, columnIndex] = smooth(eyePositionDecomposed[:, columnIndex], smoothingWindowSize)
 
     # Save filtered eye position data
@@ -214,6 +214,7 @@ def filterEyePosition(sessionObject, t=25):
     return
 
 # TODO: Align saccades to the onset of the saccade
+# TODO: Record the saccade onset timestamp
 def detectPutativeSaccades(
     sessionObject,
     p=0.992,
@@ -238,6 +239,8 @@ def detectPutativeSaccades(
         'right': list()
     }
     for eye, columnIndex in zip(['left', 'right'], [0, 2]):
+        if np.isnan(eyePositionFiltered[:, columnIndex]).all():
+            continue
         for coefficient in (+1, -1):
             velocity = np.diff(eyePositionFiltered[:, columnIndex]) * coefficient
             threshold = np.percentile(velocity, p * 100)
@@ -336,12 +339,12 @@ def classifyPutativeSaccades(factoryObject, classifierClass=MLPClassifier, **cla
         # Init the empty data container
         saccadeWaveformsClassified = {
             'left': {
-                'left': list(),
-                'right': list() 
+                'nasal': list(),
+                'temporal': list() 
             },
             'right': {
-                'left': list(),
-                'right': list()
+                'nasal': list(),
+                'temporal': list()
             }
             
         }
@@ -354,21 +357,14 @@ def classifyPutativeSaccades(factoryObject, classifierClass=MLPClassifier, **cla
 
             for sampleIndex, (sample, label) in enumerate(zip(samples, labels)):
                 waveform = saccadeWaveformsPutative[eye][sampleIndex, :]
-
-                # TODO: Instead of labeling saccade direction as left/right label it as nasal/temporal
-                # label = -1 and eye = left: temporal
-                # label = +1 and eye = right: nasal
-                # label = -1 and eye = right: temporal
-                # label = +1 and eye = left: nasal
-
                 if label == -1:
-                    saccadeWaveformsClassified[eye]['left'].append(waveform)
+                    saccadeWaveformsClassified[eye]['temporal'].append(waveform)
                 elif label == +1:
-                    saccadeWaveformsClassified[eye]['right'].append(waveform)
+                    saccadeWaveformsClassified[eye]['nasal'].append(waveform)
     
         # Save the results
         for eye in ('left', 'right'):
-            for direction in ('left', 'right'):
+            for direction in ('nasal', 'temporal'):
                 saccadeWaveformsClassified[eye][direction] = np.array(saccadeWaveformsClassified[eye][direction])
         saveSessionData(sessionObject, 'saccadeWaveformsClassified', saccadeWaveformsClassified)
 
