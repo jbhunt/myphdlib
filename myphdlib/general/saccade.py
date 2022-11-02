@@ -147,8 +147,6 @@ def decomposeEyePosition(sessionObject, nNeighbors=5):
 
     return
 
-# TODO: Double-check that the left and right eyes move opposite of each other
-# e.g., when left eye moves nasal, right eye moves temporal
 def reorientEyePosition(sessionObject, reflect='left'):
     """
     """
@@ -239,8 +237,13 @@ def detectPutativeSaccades(
         'right': list()
     }
     for eye, columnIndex in zip(['left', 'right'], [0, 2]):
+
+        # Check for NaN values
         if np.isnan(eyePositionFiltered[:, columnIndex]).all():
+            saccadeWaveformsPutative[eye] = None
             continue
+        
+        #
         for coefficient in (+1, -1):
             velocity = np.diff(eyePositionFiltered[:, columnIndex]) * coefficient
             threshold = np.percentile(velocity, p * 100)
@@ -282,6 +285,8 @@ def labelPutativeSaccades(sessionObject, nSamplesPerEye=30):
     #
     samples = list()
     for eye in ('left', 'right'):
+        if saccadeWaveformsPutative[eye] is None:
+            continue
         nSamples = saccadeWaveformsPutative[eye].shape[0]
         sampleIndices = np.random.choice(np.arange(nSamples), nSamplesPerEye)
         for sample in saccadeWaveformsPutative[eye][sampleIndices, :]:
@@ -322,6 +327,8 @@ def classifyPutativeSaccades(factoryObject, classifierClass=MLPClassifier, **cla
         saccadeWaveformsLabeled = sessionObject.load('saccadeWaveformsLabeled')
         for eye in ('left', 'right'):
             samples = np.diff(saccadeWaveformsLabeled[eye]['X'], axis=1)
+            if samples is None:
+                continue
             labels = saccadeWaveformsLabeled[eye]['y']
             for sample, label in zip(samples, labels):
                 X.append(sample)
@@ -353,6 +360,8 @@ def classifyPutativeSaccades(factoryObject, classifierClass=MLPClassifier, **cla
         for eye in ('left', 'right'):
             saccadeWaveformsPutative = sessionObject.load('saccadeWaveformsPutative')
             samples = np.diff(saccadeWaveformsPutative[eye], axis=1)
+            if samples is None:
+                continue
             labels = clf.predict(samples)
 
             for sampleIndex, (sample, label) in enumerate(zip(samples, labels)):
