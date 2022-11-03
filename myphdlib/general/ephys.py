@@ -1,6 +1,6 @@
 import numpy as np
 import pathlib as pl
-from myphdlib.toolkit.custom import psth, smooth
+from myphdlib.general.toolkit import psth, smooth
 
 class Neuron():
     """

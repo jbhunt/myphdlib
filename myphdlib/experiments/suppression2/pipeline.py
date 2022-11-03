@@ -8,6 +8,7 @@ from myphdlib.extensions.matplotlib import placeVerticalLines
 import re
 import yaml
 import numpy as np
+from scipy.signal import find_peaks as findPeaks
 
 def extractLabjackData(sessionObject, saveDataMatrix=False):
     """
@@ -227,10 +228,12 @@ def extractStimulusDataSN(sessionObject, dataContainer):
         trialIndices = np.arange(0, nTrialsPerBlock, 1) + trialIndexOffset
         dataContainer['sn']['i'][trialIndices] = trialIndices
         digitalSignal = labjackDataMatrix[startIndex: stopIndex, LCM.stimulus]
-        edgeIndices = np.where(np.logical_or(
-            np.diff(digitalSignal) > +0.5,
-            np.diff(digitalSignal) < -0.5
-        ))[0]
+        # edgeIndices = np.where(np.logical_or(
+        #     np.diff(digitalSignal) > +0.5,
+        #     np.diff(digitalSignal) < -0.5
+        # ))[0]
+        edgeIndices, peakProperties = findPeaks(np.abs(np.diff(digitalSignal)), height=0.5)
+        edgeIndices += startIndex
         nEdgesDetected = edgeIndices.size
         nEdgesExpected = curatedStimulusMetadata['sn'][block]['nEdgesTotal']
         if nEdgesDetected != nEdgesExpected:
@@ -239,7 +242,7 @@ def extractStimulusDataSN(sessionObject, dataContainer):
         else:
             timestamps = np.around(
                 np.interp(edgeIndices, params.xp, params.fp) * params.m + params.b,
-                3
+                6
             )
             dataContainer['sn']['xy'][trialIndices, :] = coords[trialIndices, :]
             dataContainer['sn']['t1'][trialIndices] = timestamps[0::4]

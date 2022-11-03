@@ -154,25 +154,32 @@ def createShareableSummary(sessionObject, outputFolder):
     """
     """
 
-    result = sessionObject.ephysFolderPath.rglob('Neuropix-PXI-100.0')
-    if result:
-        spikeSortingResult = SpikeSortingResults(str(result.pop()))
-    else:
-        return
-
+    #
     outputFolderPath = pl.Path(outputFolder)
-    for neuron in spikeSortingResult:
+    if outputFolderPath.exists() == False:
+        outputFolderPath.mkdir()
+
+    #
+    sortingResultsFolder = str(sessionObject.ephysFolderPath.joinpath('continuous', 'Neuropix-PXI-100.0'))
+    spikeSortingResult = SpikeSortingResults(sortingResultsFolder)
+
+    #
+    for neuron in spikeSortingResult._neuronList:
         file = outputFolderPath.joinpath(f'spikeTimestampsUnit{neuron.clusterNumber}.txt')
         with open(file, 'w') as stream:
             for ts in neuron.timestamps:
                 stream.write(f'{ts:.3f}\n')
 
     #
-    visualStimuliData = sessionObject.load('visualStimuliData')
-    sparseNoiseData = visualStimuliData['sn']
+    data = sessionObject.load('visualStimuliData')['sn']
+    iterable = zip(
+        data['xy'][:, 0],
+        data['xy'][:, 1],
+        data['t1'],
+        data['t2']
+    )
     with open(outputFolderPath.joinpath('sparseNoiseStimulus.txt'), 'w') as stream:
-        for i, xy, t1, t2 in zip(sparseNoiseData.values()):
-            x, y = xy[0], xy[1]
+        for x, y, t1, t2 in iterable:
             stream.write(f'{x}, {y}, {t1}, {t2}\n')
 
     return
