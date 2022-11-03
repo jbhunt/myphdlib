@@ -5,7 +5,7 @@ import yaml
 import string
 import pickle
 import pathlib as pl
-from myphdlib.general.session import saveSessionData
+from myphdlib.general.session import saveSessionData, locateFactorySource
 
 # Class definitions
 class Session():
@@ -103,33 +103,13 @@ class SessionFactory():
         """
         """
 
-        self.rootFolderPath = None
-
-        #
-        if source is not None:
-            self.rootFolderPath = pl.Path(source)
-
-        #
-        elif os.name == 'posix':
-            user = os.environ['USER']
-            self.rootFolderPath = pl.Path(f'/media/{user}').joinpath(hdd, alias)
-            if self.rootFolderPath.exists() == False:
-                self.rootFolderPath = None
-        
-        #
-        elif os.name == 'nt':
-            for driveLetter in string.ascii_uppercase:
-                rootFolderPath = pl.WindowsPath().joinpath(f'{driveLetter}:/', alias)
-                if rootFolderPath.exists():
-                    self.rootFolderPath = rootFolderPath
-                    break
-
-        #
-        if self.rootFolderPath is None:
-            raise Exception('Could not root folder')
-
-        #
-        self.sessionFolders = None
+        kwargs = {
+            'hdd': hdd,
+            'alias': alias,
+            'source': source
+        }
+        self.rootFolderPath = locateFactorySource(**kwargs)
+        self.sessionFolders = list()
 
         return
 
@@ -165,3 +145,34 @@ class SessionFactory():
             return Session(sessionFolder)
         else:
             raise StopIteration
+
+import numpy as np
+import pathlib as pl
+from myphdlib.general.ephys import SpikeSortingResults
+
+def createShareableSummary(sessionObject, outputFolder):
+    """
+    """
+
+    result = sessionObject.ephysFolderPath.rglob('Neuropix-PXI-100.0')
+    if result:
+        spikeSortingResult = SpikeSortingResults(str(result.pop()))
+    else:
+        return
+
+    outputFolderPath = pl.Path(outputFolder)
+    for neuron in spikeSortingResult:
+        file = outputFolderPath.joinpath(f'spikeTimestampsUnit{neuron.clusterNumber}.txt')
+        with open(file, 'w') as stream:
+            for ts in neuron.timestamps:
+                stream.write(f'{ts:.3f}\n')
+
+    #
+    visualStimuliData = sessionObject.load('visualStimuliData')
+    sparseNoiseData = visualStimuliData['sn']
+    with open(outputFolderPath.joinpath('sparseNoiseStimulus.txt'), 'w') as stream:
+        for i, xy, t1, t2 in zip(sparseNoiseData.values()):
+            x, y = xy[0], xy[1]
+            stream.write(f'{x}, {y}, {t1}, {t2}\n')
+
+    return
