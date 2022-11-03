@@ -260,7 +260,10 @@ def detectPutativeSaccades(
 
     #
     for eye in ('left', 'right'):
-        saccadeWaveformsPutative[eye] = np.array(saccadeWaveformsPutative[eye])
+        if saccadeWaveformsPutative[eye] is None:
+            continue
+        else:
+            saccadeWaveformsPutative[eye] = np.array(saccadeWaveformsPutative[eye])
     saveSessionData(sessionObject, 'saccadeWaveformsPutative', saccadeWaveformsPutative)
     
     return
@@ -326,9 +329,9 @@ def classifyPutativeSaccades(factoryObject, classifierClass=MLPClassifier, **cla
     for sessionObject in factoryObject:
         saccadeWaveformsLabeled = sessionObject.load('saccadeWaveformsLabeled')
         for eye in ('left', 'right'):
-            samples = np.diff(saccadeWaveformsLabeled[eye]['X'], axis=1)
-            if samples is None:
+            if saccadeWaveformsLabeled[eye]['X'] is None:
                 continue
+            samples = np.diff(saccadeWaveformsLabeled[eye]['X'], axis=1)
             labels = saccadeWaveformsLabeled[eye]['y']
             for sample, label in zip(samples, labels):
                 X.append(sample)
@@ -359,9 +362,9 @@ def classifyPutativeSaccades(factoryObject, classifierClass=MLPClassifier, **cla
         # Classify saccades
         for eye in ('left', 'right'):
             saccadeWaveformsPutative = sessionObject.load('saccadeWaveformsPutative')
-            samples = np.diff(saccadeWaveformsPutative[eye], axis=1)
-            if samples is None:
+            if saccadeWaveformsPutative[eye] is None:
                 continue
+            samples = np.diff(saccadeWaveformsPutative[eye], axis=1)
             labels = clf.predict(samples)
 
             for sampleIndex, (sample, label) in enumerate(zip(samples, labels)):
@@ -374,7 +377,10 @@ def classifyPutativeSaccades(factoryObject, classifierClass=MLPClassifier, **cla
         # Save the results
         for eye in ('left', 'right'):
             for direction in ('nasal', 'temporal'):
-                saccadeWaveformsClassified[eye][direction] = np.array(saccadeWaveformsClassified[eye][direction])
+                if len(saccadeWaveformsClassified[eye][direction]) == 0:
+                    saccadeWaveformsClassified[eye][direction] = None
+                else:
+                    saccadeWaveformsClassified[eye][direction] = np.array(saccadeWaveformsClassified[eye][direction])
         saveSessionData(sessionObject, 'saccadeWaveformsClassified', saccadeWaveformsClassified)
 
     return

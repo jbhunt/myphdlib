@@ -1,4 +1,6 @@
+import os
 import pickle
+import pathlib as pl
 
 def saveSessionData(sessionObject, name, data, createOutputFile=True):
     """
@@ -47,3 +49,34 @@ def loadSessionData(sessionObject, name):
         raise Exception(f'Invalid data key: {name}')
     else:
         return dataContainer[name]
+
+def locateFactorySource(hdd, alias, source=None):
+    """
+    """
+
+    rootFolderPath = None
+
+    #
+    if source is not None:
+        rootFolderPath = pl.Path(source)
+
+    #
+    elif os.name == 'posix':
+        user = os.environ['USER']
+        rootFolderPath = pl.Path(f'/media/{user}').joinpath(hdd, alias)
+        if rootFolderPath.exists() == False:
+            rootFolderPath = None
+    
+    #
+    elif os.name == 'nt':
+        for driveLetter in string.ascii_uppercase:
+            rootFolderPath = pl.WindowsPath().joinpath(f'{driveLetter}:/', alias)
+            if rootFolderPath.exists():
+                rootFolderPath = rootFolderPath
+                break
+
+    #
+    if rootFolderPath is None:
+        raise Exception('Could not locate root folder')
+    else:
+        return rootFolderPath

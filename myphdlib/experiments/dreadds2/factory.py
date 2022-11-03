@@ -1,3 +1,5 @@
+from myphdlib.general.session import saveSessionData, locateFactorySource
+
 class Session():
     """
     """
@@ -8,13 +10,21 @@ class Session():
 
         return
 
-def SessionFactory():
+def SessionFactory(SessionFactoryBase):
     """
     """
 
-    def __init__(self, hdd, alias, source=None):
+    def __init__(self, hdd='CM-DATA-00', alias='Dreadds2', source=None):
         """
         """
+
+        kwargs = {
+            'hdd': hdd,
+            'alias': alias,
+            'source': source
+        }
+        self.rootFolderPath = locateFactorySource(**kwargs)
+        self.sessionFolders = list()
 
         return
 
