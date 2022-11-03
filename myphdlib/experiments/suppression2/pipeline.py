@@ -45,25 +45,35 @@ def createInputFile(sessionObject, xData=None, nBlocksTotal=25):
         return xData
 
     #
-    iterable = zip(
-        ['sn', 'mb', 'dg', 'ng'],
-        [2, 2, 1, 20],
-        [2160, 96, 0, 24040]
-    )
     data = dict()
-    data['curatedStimulusMetadata'] = dict()
+    data['curatedStimulusMetadata'] = {
+        'sn': {f'b{i + 1}': dict() for i in range(2)},
+        'mb': {f'b{i + 1}': dict() for i in range(2)},
+        'dg': {f'b{i + 1}': dict() for i in range(1)},
+        'ng': {f'b{i + 1}': dict() for i in range(20)}
+    }
+    iterable = zip(
+        ['sn', 'mb', 'dg', 'sn', 'mb', 'ng'],
+        [2160, 96, 0, 2160, 96, 24040],
+        [1, 1, 1, 2, 2, None]
+    )
     lineIndex = 0
-    for stimulusName, blockCount, nEdgesTotal in iterable:
-        data['curatedStimulusMetadata'][stimulusName] = dict()
-        for blockIndex in np.arange(blockCount):
-            block = {
-                's1': int(xData[lineIndex]),
-                's2': int(xData[lineIndex + 1]),
-                'nEdgesTotal': nEdgesTotal,
-                'iEdgesMissing': list()
-            }
-            key = f'b{blockIndex + 1}'
-            data['curatedStimulusMetadata'][stimulusName][key] = block
+    # TODO: Clean up this loop
+    for stimulusName, nEdgesTotal, blockNumber in iterable:
+        if blockNumber is None:
+            for blockIndex in range(20):
+                block = data['curatedStimulusMetadata'][stimulusName][f'b{blockIndex + 1}']
+                block['s1'] = int(xData[lineIndex])
+                block['s2'] = int(xData[lineIndex + 1])
+                block['nEdgesTotal'] = nEdgesTotal
+                block['iEdgesMissing'] = list()
+                lineIndex += 1
+        else:
+            block = data['curatedStimulusMetadata'][stimulusName][f'b{blockNumber}']
+            block['s1'] = int(xData[lineIndex])
+            block['s2'] = int(xData[lineIndex + 1])
+            block['nEdgesTotal'] = nEdgesTotal
+            block['iEdgesMissing'] = list()
             lineIndex += 1
 
     #
@@ -281,6 +291,7 @@ def extractStimulusDataMB(sessionObject, dataContainer):
         nEdgesExpected = curatedStimulusMetadata['mb'][block]['nEdgesTotal']
         nEdgesDetected = edgeIndices.size
         if nEdgesDetected != nEdgesExpected:
+            import pdb; pdb.set_trace()
             print('Warning: Ligma balls')
             continue
         else:
@@ -462,7 +473,7 @@ def extractVisualStimuliData(sessionObject, dataContainerName='visualStimuliData
 
     return
 
-def runAll(sessionObject):
+def runAllModules(sessionObject):
     """
     """
 
