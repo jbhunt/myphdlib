@@ -9,7 +9,7 @@ from myphdlib.general.toolkit import smooth, resample
 from myphdlib.general.session import saveSessionData
 from myphdlib.extensions.matplotlib import SaccadeLabelingGUI
 
-def extractEyePosition(sessionObject, likelihoodThreshold=0.95, pupilCenterName='pupil-c'):
+def extractEyePosition(sessionObject, likelihoodThreshold=0.95, pupilCenterName='pupilCenter'):
     """
     Extract the raw eye position data
     """
@@ -173,7 +173,8 @@ def reorientEyePosition(sessionObject, reflect='left'):
         elif r2 < -0.1 and p < 0.05:
             signal3 *= -1
         else:
-            raise Exception()
+            continue
+            raise Exception('Could not determine correlation between raw and decomposed eye position')
         eyePositionReoriented[:, columnIndex] = signal3
 
     # TODO: Check that left and right eye position is anti-correlated
@@ -228,6 +229,7 @@ def detectPutativeSaccades(
         round(window[0] * sessionObject.fps),
         round(window[1] * sessionObject.fps)
     )
+    nFeatures = offset[1] - offset[0]
 
     #
     distance = round(isi * sessionObject.fps)
@@ -256,7 +258,8 @@ def detectPutativeSaccades(
                 s1 = peakIndex + offset[0]
                 s2 = peakIndex + offset[1]
                 saccadeWaveform = eyePositionFiltered[s1:s2, columnIndex]
-                saccadeWaveformsPutative[eye].append(saccadeWaveform)
+                if saccadeWaveform.size == nFeatures:
+                    saccadeWaveformsPutative[eye].append(saccadeWaveform)
 
     #
     for eye in ('left', 'right'):
@@ -406,6 +409,7 @@ def runAllModules(sessionObject):
     )
 
     for module in modules:
+        print(f'Info: Executing {module.__name__} module ...')
         module(sessionObject)
 
     return

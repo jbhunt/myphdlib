@@ -1,3 +1,7 @@
+import re
+import yaml
+import pickle
+import pathlib as pl
 from myphdlib.general.session import saveSessionData, locateFactorySource
 
 class Session():
@@ -63,7 +67,7 @@ class Session():
 
         return framerate
 
-def SessionFactory(SessionFactoryBase):
+class SessionFactory():
     """
     """
 
