@@ -45,15 +45,21 @@ def extractPulseTrains(
     pulseDurationThreshold = round(maximumWrapperPulseDuration * samplingRate)
     pulseTrainsFiltered = list()
     for pulseTrain in pulseTrains:
+
+        # Need at least 1 pulse on each side for the wrapper
+        if pulseTrain.size < 4:
+            continue
+
+        # Wrapper pulses should be smaller than the encoding pulses
         firstPulseDuration = pulseTrain[1] - pulseTrain[0]
         finalPulseDuration = pulseTrain[-1] - pulseTrain[-2]
-
         if firstPulseDuration > pulseDurationThreshold:
             continue
         elif finalPulseDuration > pulseDurationThreshold:
             continue
-        else:
-            pulseTrainsFiltered.append(pulseTrain)
+        
+        # Complete pulses
+        pulseTrainsFiltered.append(pulseTrain)
 
     return pulseTrainsFiltered
 
@@ -106,7 +112,7 @@ def decodePulseTrains(pulseTrains, device='lj', barcodeBitSize=0.03, wrapperBitS
         # Determine how many bits are stored in each time interval and keep track of the signal state
         bitList = list()
         for nSamples in np.diff(iterable):
-            nBits = round(nSamples / (barcodeBitSize * samplingRate))
+            nBits = int(round(nSamples / (barcodeBitSize * samplingRate)))
             for iBit in range(nBits):
                 bitList.append(1 if currentSignalState else 0)
             currentSignalState = not currentSignalState
@@ -114,7 +120,6 @@ def decodePulseTrains(pulseTrains, device='lj', barcodeBitSize=0.03, wrapperBitS
         # Decode the strings of bits
         bitString = ''.join(map(str, bitList[::-1]))
         if len(bitString) != 32:
-            import pdb; pdb.set_trace()
             raise Exception(f'More or less that 32 bits decoded')
         value = int(bitString, 2)
         values.append(value)
