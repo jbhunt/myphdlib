@@ -164,11 +164,13 @@ def createShareableSummary(sessionObject, outputFolder):
     spikeSortingResult = SpikeSortingResults(sortingResultsFolder)
 
     #
-    for neuron in spikeSortingResult._neuronList:
-        file = outputFolderPath.joinpath(f'spikeTimestampsUnit{neuron.clusterNumber}.txt')
-        with open(file, 'w') as stream:
-            for ts in neuron.timestamps:
-                stream.write(f'{ts:.3f}\n')
+    with open(outputFolderPath.joinpath('populationSpikeTimestamps.txt'), 'w') as stream:
+        for neuron in spikeSortingResult._neuronList:
+            if neuron.timestamps.size < 3:
+                continue
+            line = ''.join([f'{ts:.3f}, ' for ts in neuron.timestamps[:-1]])
+            line += f'{neuron.timestamps[-1]:.3f}\n'
+            stream.write(line)
 
     #
     data = sessionObject.load('visualStimuliData')['sn']
@@ -181,5 +183,19 @@ def createShareableSummary(sessionObject, outputFolder):
     with open(outputFolderPath.joinpath('sparseNoiseStimulus.txt'), 'w') as stream:
         for x, y, t1, t2 in iterable:
             stream.write(f'{x}, {y}, {t1}, {t2}\n')
+
+    #
+    data = sessionObject.load('visualStimuliData')['dg']
+    iterable = zip(
+        data['e'],
+        data['d'],
+        data['t']
+    )
+    probeIndex = 0
+    with open(outputFolderPath.joinpath('driftingGratingStimulus.txt'), 'w') as stream:
+        for e, d, t in iterable:
+            if e == 3:
+                stream.write(f'{probeIndex + 1}, {d:.0f}, {t}\n')
+                probeIndex += 1
 
     return
