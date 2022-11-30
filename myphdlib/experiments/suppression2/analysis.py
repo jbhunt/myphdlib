@@ -1,8 +1,9 @@
 import numpy as np
 from scipy.ndimage import gaussian_filter as gaussianFilter
-from myphdlib.toolkit.custom import psth, smooth
+from myphdlib.general.toolkit import psth, smooth
+from myphdlib.general.ephys import SpikeSortingResults
 
-def estimateSpatialReceptiveField(
+def computeSRF(
     neuronObject, 
     sessionObject,
     binSize=0.01,
@@ -66,7 +67,7 @@ def estimateSpatialReceptiveField(
 
     return resultMatrix
 
-def computeSpikeTriggeredAverage(sessionObject, neuronObject, timeWindow=(-1, 0.5), samplingRate=1000):
+def computeSTA(sessionObject, neuronObject, timeWindow=(-1, 0.5), samplingRate=1000):
     """
     Compute a spike-triggered average of the noisy grating stimulus
     """
@@ -119,4 +120,43 @@ def computeSpikeTriggeredAverage(sessionObject, neuronObject, timeWindow=(-1, 0.
 
     return np.array(trials)
 
+def computeSEA(sessionObject, minimumSpikeCount=1000, binsize=0.02):
+    """
+    Stimulus-evoked activity (normalized to baseline activity)
+    """
 
+    #
+    stimulusData = sessionObject.load('visualStimuliData')['dg']
+    probeOnsetTimestamps = list()
+    for e, t in zip(stimulusData['e'], stimulusData['t']):
+        if e == 3:
+            if np.isnan(t) == False:
+                probeOnsetTimestamps.append(t)
+    
+    #
+    resultsFolderPath = sessionObject.ephysFolderPath.joinpath('continuous', 'Neuropix-PXI-100.0')
+    rez = SpikeSortingResults(resultsFolderPath)
+
+    #
+    responses = list()
+    for unit in rez._neuronList:
+        if unit.timestamps.size < minimumSpikeCount:
+            continue
+        edges, M = psth(
+            probeOnsetTimestamps,
+            unit.timestamps,
+            window=(-0.3, 0.3),
+            binsize=binsize
+        )
+        nBins = M.shape[1]
+        halfway = int(M.shape[1] / 2)
+        ref = np.mean(M[:, :halfway].mean(0) / binsize) # average spikes per second per bin
+        fac = np.mean(M[:, :halfway].std(0) / binsize) # std of spikes per second per bin
+        if fac == 0:
+            continue
+        raw = np.mean(M[:, halfway:] / binsize, axis=0) # average spikes per second across bins
+        response = (raw - ref) / fac
+        energy = np.sum(np.abs(response))
+        responses.append(energy)
+
+    return np.array(responses), np.array([u.clusterNumber for u in rez._neuronList])
