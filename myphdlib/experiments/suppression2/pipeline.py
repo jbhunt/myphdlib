@@ -1,5 +1,6 @@
 from myphdlib.general.toolkit import DotDict
 from myphdlib.experiments.suppression2.constants import labjackChannelMapping as LCM
+from myphdlib.experiments.suppression2.constants import samplingRateLabjack
 from myphdlib.general.session import saveSessionData, loadSessionData
 from myphdlib.general.labjack import loadLabjackData, extractLabjackEvent
 from myphdlib.general.sync import extractPulseTrains, decodePulseTrains
@@ -8,9 +9,10 @@ from myphdlib.extensions.matplotlib import placeVerticalLines
 import re
 import yaml
 import numpy as np
+from decimal import Decimal
 from scipy.signal import find_peaks as findPeaks
 
-def extractLabjackData(sessionObject, saveDataMatrix=False):
+def extractLabjackData(sessionObject, saveDataMatrix=True):
     """
     Extract the digital signals recorded by the labjack device
     """
@@ -237,7 +239,7 @@ def extractStimulusDataSN(sessionObject, dataContainer):
         nEdgesDetected = edgeIndices.size
         nEdgesExpected = curatedStimulusMetadata['sn'][block]['nEdgesTotal']
         if nEdgesDetected != nEdgesExpected:
-            print(f'Warning: {nEdgesDetected} edges detected in block {block} but {nEdgesExpected} expected')
+            print(f'Warning: {nEdgesDetected} edges detected for the sparse noise stimulus in block {block} but {nEdgesExpected} expected (animal={sessionObject.animal}, date={sessionObject.date})')
             continue
         else:
             timestamps = np.around(
@@ -295,7 +297,7 @@ def extractStimulusDataMB(sessionObject, dataContainer):
         nEdgesDetected = edgeIndices.size
         if nEdgesDetected != nEdgesExpected:
             import pdb; pdb.set_trace()
-            print('Warning: Ligma balls')
+            print('Warning: Ligma balls') # TODO: Print an informative warning
             continue
         else:
             timestamps = np.around(
@@ -311,6 +313,28 @@ def extractStimulusDataMB(sessionObject, dataContainer):
                 continue
 
     return dataContainer
+
+def findMissingPulses(approximateProbeTimestamps, risingEdgeIndices):
+    """
+    Determine which probes were presented but not detected by the Frame2TTL device
+    """
+
+    #
+    nProbesRecorded = len(risingEdgeIndices)
+    recordedProbeTimestamps = risingEdgeIndices / samplingRateLabjack
+
+    #
+    while True:
+        dt = np.diff(approximateProbeTimestamps[:nProbesRecorded]) - np.diff(recordedProbeTimestamps)
+        lastRecordedProbe = np.where(dt > 0.25)[0][0]
+        recordedProbeTimestamps = np.insert(recordedProbeTimestamps, lastRecordedProbe + 1, np.nan)
+        if recordedProbeTimestamps.size == len(approximateProbeTimestamps):
+            break
+
+    #
+    missingPulsesMask = np.isnan(recordedProbeTimestamps)
+
+    return missingPulsesMask
 
 def extractStimulusDataDG(sessionObject, dataContainer):
     """
@@ -328,12 +352,17 @@ def extractStimulusDataDG(sessionObject, dataContainer):
             line for line in stream.readlines()
                 if bool(re.search('.*, .*, .*\n', line)) and line.startswith('Columns') == False
         ]
-    motionDirections, eventCodes = list(), list()
+    motionDirections, eventCodes, approxTimestamps = list(), list(), list()
     for line in lines:
         eventCode, motionDirection, approxTimestamp = line.rstrip('\n').split(', ')
         motionDirections.append(int(motionDirection))
         eventCodes.append(int(eventCode))
+        approxTimestamps.append(float(approxTimestamp))
+
+    #
+    eventCodes = np.array(eventCodes)
     motionDirections = np.array(motionDirections)
+    approxTimestamps = np.array(approxTimestamps)
 
     #
     startIndex = curatedStimulusMetadata['dg']['b1']['s1']
@@ -349,25 +378,33 @@ def extractStimulusDataDG(sessionObject, dataContainer):
 
     #
     dataContainer['dg']['i'] = np.arange(nEvents)
-    dataContainer['dg']['d'] = np.empty(nEvents)
-    dataContainer['dg']['e'] = np.empty(nEvents)
-    dataContainer['dg']['t'] = np.empty(nEvents)
+    dataContainer['dg']['d'] = np.full(nEvents, np.nan)
+    dataContainer['dg']['e'] = np.full(nEvents, np.nan)
+    dataContainer['dg']['t'] = np.full(nEvents, np.nan)
 
     nEdgesExpected = int(nEvents * 2)
     nEdgesDetected = edgeIndices.size
+
+    #
+    missingPulsesMask = np.full(approxTimestamps.size, False)
     if nEdgesDetected != nEdgesExpected:
-        print('Warning: Gottem')
+        missingPulsesMask = findMissingPulses(approxTimestamps, edgeIndices[::2])
+    nMissingPulses = missingPulsesMask.sum()
+    if int(nMissingPulses * 2) != (nEdgesExpected - nEdgesDetected):
+        print(f'Error: {nEdgesDetected} edges detected for the drifting grating stimulus but {nEdgesExpected} edges expected (animal={sessionObject.animal}, date={sessionObject.date})')
         return dataContainer
-    else:
-        timestamps = np.around(
-            np.interp(edgeIndices, params.xp, params.fp) * params.m + params.b,
-            3
-        )
-        trialIndices = np.arange(nEvents)
-        dataContainer['dg']['d'][trialIndices] = motionDirections
-        dataContainer['dg']['e'][trialIndices] = eventCodes
-        dataContainer['dg']['t'][trialIndices] = timestamps[::2]
-        return dataContainer
+
+    #
+    timestamps = np.around(
+        np.interp(edgeIndices, params.xp, params.fp) * params.m + params.b,
+        3
+    )
+    trialIndices = np.delete(np.arange(nEvents), np.where(missingPulsesMask)[0])
+    dataContainer['dg']['d'][trialIndices] = motionDirections[~missingPulsesMask]
+    dataContainer['dg']['e'][trialIndices] = eventCodes[~missingPulsesMask]
+    dataContainer['dg']['t'][trialIndices] = timestamps[::2]
+
+    return dataContainer
 
 def extractStimulusDataNG(sessionObject, dataContainer, nBlocks=20):
     """
@@ -414,7 +451,8 @@ def extractStimulusDataNG(sessionObject, dataContainer, nBlocks=20):
         ))[0]
         nEdgesDetected = edgeIndices.size
         if nEdgesDetected != nEdgesPerBlock:
-            print('Warning: Never gonna give you up')
+            message = f'Warning: {nEdgesDetected} edges detected for the noisy grating stimulus in block {blockIndex + 1} but {nEdgesPerBlock} edges expected (animal={sessionObject.animal}, date={sessionObject.date})'
+            print(message)
             continue
         else:
             timestamps = np.around(
