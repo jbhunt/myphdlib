@@ -1,5 +1,7 @@
 import os
 import yaml
+import numpy as np
+import pandas as pd
 import pathlib as pl
 
 configFilePath = None
@@ -33,3 +35,12 @@ def deleteLabeledFolders(config):
             folder.rmdir()
 
     return
+
+def loadBodypartData(csv, bodypart='pupilCenter', feature='likelihood'):
+    """
+    """
+
+    frame = pd.read_csv(csv, header=list(range(3)), index_col=0)
+    network = frame.columns[0][0]
+
+    return np.array(frame[network, bodypart, feature])
