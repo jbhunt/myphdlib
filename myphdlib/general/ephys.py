@@ -12,15 +12,20 @@ class Neuron():
         self._timestamps = singleUnitData[clusterMask, 1] / samplingRate
         return
 
-    @property
-    def baselineFiringRate(self):
+    def describe(self, event, window=(0, 0.5), binsize=0.02):
         """
-        Compute the average and standard deviation FR (spikes/second)
+        Estimate the mean and standard deviation of the neuron's FR within a single time bin
         """
-        binEdges = np.arange(0, self.timestamps.max(), 0.02)
-        spikeCounts, binEdges = np.histogram(self.timestamps, binEdges)
-        mu = np.mean(spikeCounts / 0.02)
-        sigma = np.std(spikeCounts / 0.02)
+
+        edges, M = psth(
+            event,
+            self.timestamps,
+            window=window,
+            binsize=binsize
+        )
+        mu = M.flatten().mean() / binsize
+        sigma = M.flatten().std() / binsize
+
         return mu, sigma
 
     @property
@@ -54,13 +59,35 @@ class SpikeSortingResults():
         for clusterNumber in clusterNumbers:
             self._neuronList.append(Neuron(clusterNumber, singleUnitData))
 
+        #
+        self._listIndex = 0
+
         return
+
+    def search(self, clusterNumber):
+        """
+        """
+
+        for neuron in self._neuronList:
+            if neuron.clusterNumber == clusterNumber:
+                return neuron
+
+        return None
 
     def __iter__(self):
-        return
+        self._listIndex =0
+        return self
 
     def __next__(self):
-        return
+        if self._listIndex < len(self._neuronList):
+            neuron = self._neuronList[self._listIndex]
+            self._listIndex += 1
+            return neuron
+        else:
+            raise StopIteration()
+
+    def __len__(self):
+        return len(self._neuronList)
 
     def __getitem__(self, listIndex):
         """

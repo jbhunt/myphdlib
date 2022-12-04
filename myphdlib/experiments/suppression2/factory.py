@@ -1,4 +1,3 @@
-# Imports
 import os
 import re
 import yaml
@@ -6,12 +5,9 @@ import string
 import pickle
 import pathlib as pl
 from myphdlib.general.session import saveSessionData, locateFactorySource
+from myphdlib.general.ephys import SpikeSortingResults
 
-# Class definitions
 class Session():
-    """
-    """
-
     def __init__(self, sessionFolder):
         """
         """
@@ -61,6 +57,16 @@ class Session():
                         value = line.lower().split(': ')[-1].rstrip('\n')
                         setattr(self, attribute, value)
 
+        #
+        self._spikeSortingResults = None
+        self._probeOnsetTimestamps = None
+        self._gratingOnsetTimestamps = None
+        self._motionOnsetTimestamps = None
+        self._itiOnsetTimestamps = None
+        self._spotOnsetTimestamps = None
+        self._spotOffsetTimestamps = None
+        self._barOnsetTimestamps = None
+
         return
 
     def load(self, name):
@@ -94,6 +100,174 @@ class Session():
                     framerate = acquisitionMetadata[cameraAlias]['framerate']
 
         return framerate
+
+    @property
+    def isAutosorted(self):
+        """
+        TODO: Code this
+        Checks if the session has been sorted with Kilosort
+        """
+
+        return
+
+    @property
+    def spikeSortingResults(self):
+        """
+        """
+
+        if self._spikeSortingResults is None:
+            self._spikeSortingResults = SpikeSortingResults(self.ephysFolderPath.joinpath('continuous', 'Neuropix-PXI-100.0'))
+
+        return self._spikeSortingResults
+
+    @property
+    def probeOnsetTimestamps(self):
+        """
+        """
+
+        if self._probeOnsetTimestamps is None:
+            data = self.load('visualStimuliData')['dg']
+            iterable = zip(
+                data['i'],
+                data['d'],
+                data['e'],
+                data['t']
+            )
+            self._probeOnsetTimestamps = list()
+            for i, d, e, t, in iterable:
+                if e == 3:
+                    self._probeOnsetTimestamps.append(t)
+            self._probeOnsetTimestamps = np.array(self._probeOnsetTimestamps)
+
+        return self._probeOnsetTimestamps
+
+    @property
+    def barOnsetTimestamps(self):
+        """
+        """
+
+        if self._barOnsetTimestamps is None:
+            data = self.load('visualStimuliData')['mb']
+            iterable = zip(
+                data['i'],
+                data['o'],
+                data['t1'],
+                data['t2']
+            )
+            self._barOnsetTimestamps = dict()
+            for i, o, t1, t2 in iterable:
+                if str(o) not in self._barOnsetTimestamps:
+                    self._barOnsetTimestamps[str(o)] = list()
+                self._barOnsetTimestamps[str(o)].append(t1)
+            #
+
+        return self._barOnsetTimestamps
+
+    @property
+    def spotOnsetTimestamps(self):
+        """
+        """
+
+        if self._spotOnsetTimestamps is None:
+            self._spotOnsetTimestamps = self.load('visualStimuliData')['sn']['t1']
+
+        return self._spotOnsetTimestamps
+
+    @property
+    def spotOffsetTimestamps(self):
+        """
+        """
+
+        if self._spotOffsetTimestamps is None:
+            self._spotOffsetTimestamps = self.load('visualStimuliData')['sn']['t2']
+
+        return self._spotOffsetTimestamps
+
+    @property
+    def barOnsetTimestamps(self):
+        """
+        """
+
+        if self._barOnsetTimestamps is None:
+            self._barOnsetTimestamps = self.load('visualStimuliData')['mb']['t1']
+
+        return self._barOnsetTimestamps
+
+    @property
+    def gratingOnsetTimestamps(self):
+        """
+        """
+
+        if self._gratingOnsetTimestamps is None:
+            data = self.load('visualStimuliData')['dg']
+            iterable = zip(
+                data['i'],
+                data['d'],
+                data['e'],
+                data['t']
+            )
+            self._gratingOnsetTimestamps = list()
+            for i, d, e, t, in iterable:
+                if e == 1:
+                    self._gratingOnsetTimestamps.append(t)
+            self._gratingOnsetTimestamps = np.array(self._gratingOnsetTimestamps)
+
+        return self._gratingOnsetTimestamps
+
+    @property
+    def motionOnsetTimestamps(self):
+        """
+        """
+
+        if self._motionOnsetTimestamps is None:
+            data = self.load('visualStimuliData')['dg']
+            iterable = zip(
+                data['i'],
+                data['d'],
+                data['e'],
+                data['t']
+            )
+            self._motionOnsetTimestamps = list()
+            for i, d, e, t, in iterable:
+                if e == 2:
+                    self._motionOnsetTimestamps.append(t)
+            self._motionOnsetTimestamps = np.array(self._motionOnsetTimestamps)
+
+        return self._motionOnsetTimestamps
+
+    @property
+    def itiOnsetTimestamps(self):
+        """
+        """
+
+        if self._itiOnsetTimestamps is None:
+            data = self.load('visualStimuliData')['dg']
+            iterable = zip(
+                data['i'],
+                data['d'],
+                data['e'],
+                data['t']
+            )
+            self._itiOnsetTimestamps = list()
+            for i, d, e, t, in iterable:
+                if e == 4:
+                    self._itiOnsetTimestamps.append(t)
+            self._itiOnsetTimestamps = np.array(self._itiOnsetTimestamps)
+
+        return self._itiOnsetTimestamps
+
+    @property
+    def keys(self):
+        """
+        """
+
+        with open(str(self.outputFilePath), 'rb') as stream:
+            try:
+                dataContainer = pickle.load(stream)
+            except EOFError:
+                dataContainer = dict()
+
+        return dataContainer.keys()
 
 class SessionFactory():
     """

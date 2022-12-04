@@ -79,6 +79,7 @@ def decodePulseTrains(pulseTrains, device='lj', barcodeBitSize=0.03, wrapperBitS
 
     values, indices = list(), list()
 
+    offset = 0
     for pulseTrain in pulseTrains:
 
         # 
@@ -121,7 +122,13 @@ def decodePulseTrains(pulseTrains, device='lj', barcodeBitSize=0.03, wrapperBitS
         bitString = ''.join(map(str, bitList[::-1]))
         if len(bitString) != 32:
             raise Exception(f'More or less that 32 bits decoded')
-        value = int(bitString, 2)
+        value = int(bitString, 2) + offset
+
+        # 32-bit integer overflow
+        if value == 2 ** 32 - 1:
+            offset = 2 ** 32
+
+        #
         values.append(value)
         indices.append(pulseTrain[0])
 

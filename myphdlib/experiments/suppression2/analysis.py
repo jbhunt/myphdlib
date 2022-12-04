@@ -120,7 +120,7 @@ def computeSTA(sessionObject, neuronObject, timeWindow=(-1, 0.5), samplingRate=1
 
     return np.array(trials)
 
-def computeSEA(sessionObject, minimumSpikeCount=1000, binsize=0.02):
+def computeSEA(sessionObject, minimumSpikeCount=10000, binsize=0.02):
     """
     Stimulus-evoked activity (normalized to baseline activity)
     """
@@ -137,8 +137,9 @@ def computeSEA(sessionObject, minimumSpikeCount=1000, binsize=0.02):
     resultsFolderPath = sessionObject.ephysFolderPath.joinpath('continuous', 'Neuropix-PXI-100.0')
     rez = SpikeSortingResults(resultsFolderPath)
 
-    #
+    # TODO: Normalize the FR first, then compute the response energy
     responses = list()
+    uids = list()
     for unit in rez._neuronList:
         if unit.timestamps.size < minimumSpikeCount:
             continue
@@ -156,7 +157,30 @@ def computeSEA(sessionObject, minimumSpikeCount=1000, binsize=0.02):
             continue
         raw = np.mean(M[:, halfway:] / binsize, axis=0) # average spikes per second across bins
         response = (raw - ref) / fac
-        energy = np.sum(np.abs(response))
+        energy = np.sqrt(np.power(response, 2).sum())
         responses.append(energy)
+        uids.append(unit.clusterNumber)
 
-    return np.array(responses), np.array([u.clusterNumber for u in rez._neuronList])
+    return np.array(responses), np.array(uids)
+
+def computeVisualResponses(factory):
+    """
+    """
+
+    sessions = [s for s in factory]
+    M = list()
+
+    for s in sessions:
+        try:
+            rez = s.spikeSortingResults
+        except:
+            continue
+        events = (
+            s.spotOnsetTimestamps,
+            s.spotOffsetTimestamps,
+            s.gratingOnsetTimestamps,
+            s.motionOnsetTimestamps,
+            s.probeOnsetTimestamps,
+        )
+
+    return
