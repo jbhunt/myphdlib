@@ -121,8 +121,9 @@ def psth(target_events, relative_events, binsize=0.01, window=(-0.5, 1), edges=N
         for iev, target_event in enumerate(target_events):
             referenced = relative_events - target_event
             within_window_mask = np.logical_and(referenced > start, referenced <= stop)
-            for relative_time in referenced[within_window_mask]:
-                relative_times.append(relative_time)
+            if return_relative_times:
+                for relative_time in referenced[within_window_mask]:
+                    relative_times.append(relative_time)
             counts, edges_ = np.histogram(referenced[within_window_mask], bins=edges)
             M.append(counts)
 
