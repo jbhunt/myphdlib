@@ -300,6 +300,27 @@ class Session(SessionBase):
 
         return
 
+    def getFrameTimestamps(self, eye='left'):
+        """
+        """
+
+        # Compute timestamps for the trigger signal
+        peakIndices, peakProps = findPeaks(
+            np.abs(np.diff(self.load('exposureOnsetSignal'))),
+            height=0.5,
+        )
+        params = self.load('timestampGeneratorParameters')
+        timestamps = np.around(
+            np.interp(peakIndices, params['xp'], params['fp']) * params['m'] + params['b'],
+            3
+        )
+
+        #
+        eyePositionReoriented = self.load('eyePositionReoriented')
+        nFrames = eyePositionReoriented.shape[0]
+
+        return timestamps[:nFrames]
+
     @property
     def spikeSortingResults(self):
         """
