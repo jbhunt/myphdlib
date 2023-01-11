@@ -215,11 +215,11 @@ def extractStimulusDataSN(sessionObject, dataContainer):
         coords = np.array(coords)
     for key in dataContainer['sn'].keys():
         if key == 'xy':
-            dataContainer['sn'][key] = np.empty([nTrialsTotal, 2])
+            dataContainer['sn'][key] = np.full([nTrialsTotal, 2], np.nan)
         elif key == 'i':
             dataContainer['sn'][key] = np.zeros(nTrialsTotal, dtype=int)
         else:
-            dataContainer['sn'][key] = np.empty(nTrialsTotal)
+            dataContainer['sn'][key] = np.full(nTrialsTotal, np.nan)
     for block in ('b1', 'b2'):
         startIndex = curatedStimulusMetadata['sn'][block]['s1']
         stopIndex = curatedStimulusMetadata['sn'][block]['s2']
@@ -276,9 +276,9 @@ def extractStimulusDataMB(sessionObject, dataContainer):
     nTrialsTotal = int(len(lines) / 2)
     nTrialsPerBlock = int(nTrialsTotal / nBlocks)
     dataContainer['mb']['i'] = np.arange(nTrialsTotal)
-    dataContainer['mb']['o'] = np.empty(nTrialsTotal)
-    dataContainer['mb']['t1'] = np.empty(nTrialsTotal)
-    dataContainer['mb']['t2'] = np.empty(nTrialsTotal)
+    dataContainer['mb']['o'] = np.full(nTrialsTotal, np.nan)
+    dataContainer['mb']['t1'] = np.full(nTrialsTotal, np.nan)
+    dataContainer['mb']['t2'] = np.full(nTrialsTotal, np.nan)
 
     #
     for block in ('b1', 'b2'):
@@ -301,7 +301,7 @@ def extractStimulusDataMB(sessionObject, dataContainer):
             continue
         else:
             timestamps = np.around(
-                np.interp(edgeIndices, params.xp, params.fp) * params.m + params.b,
+                np.interp(edgeIndices + startIndex, params.xp, params.fp) * params.m + params.b,
                 3
             )
             try:
@@ -396,7 +396,7 @@ def extractStimulusDataDG(sessionObject, dataContainer):
 
     #
     timestamps = np.around(
-        np.interp(edgeIndices, params.xp, params.fp) * params.m + params.b,
+        np.interp(edgeIndices + startIndex, params.xp, params.fp) * params.m + params.b,
         3
     )
     trialIndices = np.delete(np.arange(nEvents), np.where(missingPulsesMask)[0])
@@ -436,9 +436,9 @@ def extractStimulusDataNG(sessionObject, dataContainer, nBlocks=20):
 
     #
     dataContainer['ng']['i'] = np.arange(nStepsPerBlock)
-    dataContainer['ng']['d'] = np.empty(nBlocks)
-    dataContainer['ng']['t'] = np.empty([nBlocks, nStepsPerBlock])
-    dataContainer['ng']['s'] = np.empty([nBlocks, nStepsPerBlock])
+    dataContainer['ng']['d'] = np.full(nBlocks, np.nan)
+    dataContainer['ng']['t'] = np.full([nBlocks, nStepsPerBlock], np.nan)
+    dataContainer['ng']['s'] = np.full([nBlocks, nStepsPerBlock], np.nan)
 
     #
     for blockIndex, block in enumerate([f'b{i + 1}' for i in range(nBlocks)]):
@@ -456,7 +456,7 @@ def extractStimulusDataNG(sessionObject, dataContainer, nBlocks=20):
             continue
         else:
             timestamps = np.around(
-                np.interp(edgeIndices, params.xp, params.fp) * params.m + params.b,
+                np.interp(edgeIndices + startIndex, params.xp, params.fp) * params.m + params.b,
                 3
             )
             dataContainer['ng']['t'][blockIndex, :] = timestamps[:-1]

@@ -3,17 +3,39 @@ import re
 import yaml
 import string
 import pickle
+import numpy as np
 import pathlib as pl
-from myphdlib.general.session import saveSessionData, locateFactorySource
+from scipy.signal import find_peaks as findPeaks
+from myphdlib.general.session import saveSessionData, locateFactorySource, SessionBase
 from myphdlib.general.ephys import SpikeSortingResults
 
-class Session():
+class EgocentricBilateralDirection():
+
+    def __init__(self, value=None):
+        self.value = None
+
+    @property
+    def opposite(self):
+        if self.value is None:
+            return None
+        elif self.value == 'ipsi':
+            return 'contra'
+        else:
+            return 'ipsi'
+    
+    @property
+    def value(self):
+        return self.value
+
+class Session(SessionBase):
     def __init__(self, sessionFolder):
         """
         """
 
+        #
+        super().__init__(sessionFolder)
+
         # Folders
-        self.sessionFolderPath = pl.Path(sessionFolder)
         self.labjackFolderPath = self.sessionFolderPath.joinpath('labjack')
         self.ephysFolderPath = self.sessionFolderPath.joinpath('ephys')
         self.videosFolderPath = self.sessionFolderPath.joinpath('videos')
@@ -59,54 +81,222 @@ class Session():
 
         #
         self._spikeSortingResults = None
+        self._saccadeOnsetTimestamps = None
         self._probeOnsetTimestamps = None
+        self._probeMotionDirections = None
         self._gratingOnsetTimestamps = None
         self._motionOnsetTimestamps = None
         self._itiOnsetTimestamps = None
         self._spotOnsetTimestamps = None
         self._spotOffsetTimestamps = None
         self._barOnsetTimestamps = None
+        self._barOffsetTimestamps = None
 
         return
 
-    def load(self, name):
+    def movingBarTimestamps(self, orientation=0, position='center'):
         """
+        Returns the timestamps for the moving bar stimulus
         """
 
-        if self.outputFilePath.exists() == False:
-            raise Exception('Could not locate output file')
+        with open(self.videosFolderPath.joinpath('movingBarsMetadata.txt'), 'r') as stream:
+            lines = stream.readlines()
+        orientations = list()
+        for line in lines:
+            if re.match('.*,.*,.*', line) and line.startswith('Columns') == False:
+                e, o, t = line.rstrip('\n').split(', ')
+                if int(e) == 1:
+                    orientations.append(int(round(float(o))))
+        orientations = np.array(orientations)
 
-        with open(self.outputFilePath, 'rb') as stream:
-            dataContainer = pickle.load(stream)
+        #
+        timestamps = None
+        if position == 'center':
+            difference = self.barOffsetTimestamps - self.barOnsetTimestamps
+            centered = self.barOnsetTimestamps + difference / 2
+            timestamps = centered[:24][orientations[:24] == orientation]
+        elif position == 'onset':
+            timestamps = self.barOnsetTimestamps[:24][orientations[:24] == orientation]
 
-        if name not in dataContainer.keys():
-            raise Exception(f'Invalid data key: {name}')
+        return timestamps
+
+    def indexProbeTimestamps(self, index=0, minimumITI=5):
+        """
+        Return the timestamps for the ith probe in the sequence of probes for each presentation 
+        of the drifting grating stimulus
+        """
+
+        dt = np.diff(self.probeOnsetTimestamps)
+        peakIndices, peakProperties = findPeaks(dt, height=minimumITI)
+        timestamps = self.probeOnsetTimestamps[peakIndices + 1 + index]
+        timestamps = np.concatenate([
+            np.array([self.probeOnsetTimestamps[index]]),
+            timestamps
+        ])
+
+        return timestamps
+
+    def saccadeOnsetTimestamps(self, eye='left'):
+        """
+        Categorize saccades by saccade direction and time relative to visual probes
+        TODO: Categorize saccades as peri-stimulus or extra-stimulus
+        """
+
+        data = self.load('saccadeOnsetTimestamps')
+        saccadeOnsetTimestamps = dict()
+
+        if eye == 'left':
+            saccadeOnsetTimestamps['ipsi'] = data[eye]['nasal']
+            saccadeOnsetTimestamps['contra'] = data[eye]['temporal']
         else:
-            return dataContainer[name]
+            saccadeOnsetTimestamps['ipsi'] = data[eye]['temporal']
+            saccadeOnsetTimestamps['contra'] = data[eye]['nasal']
 
-    @property
-    def fps(self):
+        return saccadeOnsetTimestamps
+
+    def parseVisualProbes(self, perisaccadicTimeWindow=(-0.05, 0.1)):
         """
-        Video acquisition framerate
+        Categorize probes by direction of the drifting grating and time relative to saccades
         """
 
-        framerate = None
-        result = list(self.videosFolderPath.glob('*metadata.yaml'))
-        if result:
-            with open(result.pop(), 'r') as stream:
-                acquisitionMetadata = yaml.safe_load(stream)
-            for cameraAlias in ('cam1', 'cam2'):
-                if acquisitionMetadata[cameraAlias]['ismaster']:
-                    framerate = acquisitionMetadata[cameraAlias]['framerate']
+        result = {
+            'extrasaccadic': {
+                'ipsi': {
+                    'timestamps': list(),
+                    'latencies': list(),
+                    'directions': list() # TODO: Include the direction of the grating in addition to the saccade direction
+                },
+                'contra': {
+                    'timestamps': list(),
+                    'latencies': list(),
+                    'directions': list() # TODO: Include the direction of the grating in addition to the saccade direction
+                },
+            },
+            'perisaccadic': {
+                'ipsi': {
+                    'timestamps': list(),
+                    'latencies': list(),
+                    'directions': list() # TODO: Include the direction of the grating in addition to the saccade direction
+                },
+                'contra': {
+                    'timestamps': list(),
+                    'latencies': list(),
+                    'directions': list() # TODO: Include the direction of the grating in addition to the saccade direction
+                },
+            }
+        }
 
-        return framerate
+        #
+        saccadeOnsetTimestamps = self.saccadeOnsetTimestamps()
+        for probeIndex, (probeOnsetTimestamp, probeMotionDirection) in enumerate(zip(self.probeOnsetTimestamps, self.probeMotionDirections)):
 
-    @property
-    def isAutosorted(self):
+            #
+            saccadeDirection = 'ipsi' if probeMotionDirection == -1 else 'contra'
+            
+            #
+            index = np.argmin(np.abs(saccadeOnsetTimestamps[saccadeDirection] - probeOnsetTimestamp))
+            latency = saccadeOnsetTimestamps[saccadeDirection][index] - probeOnsetTimestamp
+
+            # for direction in ('ipsi', 'contra'):
+            #     closestSaccadeIndex = np.argmin(np.abs(saccadeOnsetTimestamps[direction] - probeOnsetTimestamp))
+            #     latency = saccadeOnsetTimestamps[direction][closestSaccadeIndex] - probeOnsetTimestamp
+            #     if abs(latency) < closestSaccadeAttributes['latency']:
+            #         closestSaccadeAttributes['latency'] = latency
+            #         closestSaccadeAttributes['direction'] = direction
+            
+            #
+            if perisaccadicTimeWindow[0] <= latency <= perisaccadicTimeWindow[1]:
+                category = 'perisaccadic'
+            else:
+                category = 'extrasaccadic'
+            if probeMotionDirection == -1:
+                motion = 'contra'
+            else:
+                motion = 'ipsi'
+            result[category][motion]['timestamps'].append(probeOnsetTimestamp)
+            result[category][motion]['latencies'].append(latency)
+            result[category][motion]['directions'].append(saccadeDirection)
+
+        #
+        for category in result.keys():
+            for motion in ('ipsi', 'contra'):
+                for feature in ('timestamps', 'latencies', 'directions'):
+                    result[category][motion][feature] = np.array(result[category][motion][feature]) 
+
+        return result
+
+    def createShareableSummary(self, outputFolder, overwrite=True):
         """
-        TODO: Code this
-        Checks if the session has been sorted with Kilosort
         """
+
+        #
+        outputFolderPath = pl.Path(outputFolder)
+        spikesFilePath = outputFolderPath.joinpath('spikes.txt')
+        eventsFilePath = outputFolderPath.joinpath('events.txt')
+        if overwrite == False:
+            if spikesFilePath.exists() and eventsFilePath.exists():
+                return
+
+        #
+        nSpikes = 0
+        for n in self.spikeSortingResults:
+            nSpikes += n.timestamps.size
+        spikeTimestamps = np.full([nSpikes, 2], np.nan)
+
+        #
+        events = (
+            self.spotOnsetTimestamps,
+            self.spotOffsetTimestamps,
+            self.barOnsetTimestamps,
+            self.barOffsetTimestamps,
+            self.gratingOnsetTimestamps,
+            self.motionOnsetTimestamps,
+            self.probeOnsetTimestamps
+        )
+        nEvents = 0
+        for event in events:
+            mask = np.invert(np.isnan(event))
+            nEvents += mask.sum()
+        eventTimestamps = np.full([nEvents, 2], np.nan)
+
+        #
+        rowIndex = 0
+        for n in self.spikeSortingResults:
+            spikeTimestamps[rowIndex: rowIndex + n.timestamps.size, 0] = n.timestamps
+            spikeTimestamps[rowIndex: rowIndex + n.timestamps.size, 1] = np.full(n.timestamps.size, n.clusterNumber)
+            rowIndex += n.timestamps.size
+        spikeTimestampsIndex = np.argsort(spikeTimestamps[:, 0])
+
+        #
+        rowIndex = 0
+        for event, alias in zip(events, np.arange(len(events)) + 1):
+            mask = np.invert(np.isnan(event))
+            if mask.sum() == 0:
+                continue
+            eventTimestamps[rowIndex: rowIndex + event[mask].size, 0] = event[mask]
+            eventTimestamps[rowIndex: rowIndex + event[mask].size, 1] = np.full(mask.sum(), alias)
+            rowIndex += event[mask].size
+        eventTimestampsIndex = np.argsort(eventTimestamps[:, 0])
+
+        #
+        np.savetxt(
+            str(spikesFilePath),
+            spikeTimestamps[spikeTimestampsIndex, :],
+            fmt=['%.6f', '%d'],
+            header=f'Timestamp, Unit',
+            comments='',
+            delimiter=', '
+        )
+
+        #
+        np.savetxt(
+            str(eventsFilePath),
+            eventTimestamps[eventTimestampsIndex, :],
+            fmt=['%.3f', '%d'],
+            header=f'Timestamps, Event (1=Spot onset, 2=Spot offset, 3=Bar onset, 4=Bar offset, 5=Grating onset, 6=Motion Onset, 7=Probe onset)',
+            comments='',
+            delimiter=', '
+        )
 
         return
 
@@ -140,6 +330,27 @@ class Session():
             self._probeOnsetTimestamps = np.array(self._probeOnsetTimestamps)
 
         return self._probeOnsetTimestamps
+
+    @property
+    def probeMotionDirections(self):
+        """
+        """
+
+        if self._probeMotionDirections is None:
+            data = self.load('visualStimuliData')['dg']
+            iterable = zip(
+                data['i'],
+                data['d'],
+                data['e'],
+                data['t']
+            )
+            self._probeMotionDirections = list()
+            for i, d, e, t, in iterable:
+                if e == 3:
+                    self._probeMotionDirections.append(d)
+            self._probeMotionDirections = np.array(self._probeMotionDirections)
+
+        return self._probeMotionDirections
 
     @property
     def barOnsetTimestamps(self):
@@ -192,6 +403,16 @@ class Session():
             self._barOnsetTimestamps = self.load('visualStimuliData')['mb']['t1']
 
         return self._barOnsetTimestamps
+
+    @property
+    def barOffsetTimestamps(self):
+        """
+        """
+
+        if self._barOffsetTimestamps is None:
+            self._barOffsetTimestamps = self.load('visualStimuliData')['mb']['t2']
+
+        return self._barOffsetTimestamps
 
     @property
     def gratingOnsetTimestamps(self):
@@ -256,19 +477,6 @@ class Session():
 
         return self._itiOnsetTimestamps
 
-    @property
-    def keys(self):
-        """
-        """
-
-        with open(str(self.outputFilePath), 'rb') as stream:
-            try:
-                dataContainer = pickle.load(stream)
-            except EOFError:
-                dataContainer = dict()
-
-        return dataContainer.keys()
-
 class SessionFactory():
     """
     """
@@ -284,8 +492,31 @@ class SessionFactory():
         }
         self.rootFolderPath = locateFactorySource(**kwargs)
         self.sessionFolders = list()
+        for date in self.rootFolderPath.iterdir():
+            for animal in date.iterdir():
+                self.sessionFolders.append(str(animal))
+        
+        self._loaded = False
+        self._sessions = list()
 
         return
+
+    def load(self, loadNeuralData=False):
+        """
+        """
+
+        if self._loaded:
+            return
+
+        for sessionFolder in self.sessionFolders:
+            session = Session(sessionFolder)
+            if loadNeuralData:
+                rez = session.rez
+            self._sessions.append(session)
+
+        self._loaded = True
+
+        return self
 
     def produce(self, animal, date):
         """
@@ -305,71 +536,43 @@ class SessionFactory():
 
     # Iterator protocol definition
     def __iter__(self):
-        self.sessionFolders = list()
-        for date in self.rootFolderPath.iterdir():
-            for animal in date.iterdir():
-                self.sessionFolders.append(str(animal))
         self._listIndex = 0
         return self
 
     def __next__(self):
+        """
+        """
+
         if self._listIndex < len(self.sessionFolders):
-            sessionFolder = self.sessionFolders[self._listIndex]
+            if self._loaded:
+                session = self._sessions[self._listIndex]
+            else:
+                session = Session(self.sessionFolders[self._listIndex])
             self._listIndex += 1
-            return Session(sessionFolder)
+            return session
         else:
             raise StopIteration
 
-import numpy as np
-import pathlib as pl
-from myphdlib.general.ephys import SpikeSortingResults
+    def __delitem__(self, key):
+        raise Exception('Session objects are not able to be deleted')
 
-def createShareableSummary(sessionObject, outputFolder):
-    """
-    """
+    def __setitem__(self, key):
+        raise Exception('Session objects are immutable')
 
-    #
-    outputFolderPath = pl.Path(outputFolder)
-    if outputFolderPath.exists() == False:
-        outputFolderPath.mkdir()
-
-    #
-    sortingResultsFolder = str(sessionObject.ephysFolderPath.joinpath('continuous', 'Neuropix-PXI-100.0'))
-    spikeSortingResult = SpikeSortingResults(sortingResultsFolder)
-
-    #
-    with open(outputFolderPath.joinpath('populationSpikeTimestamps.txt'), 'w') as stream:
-        for neuron in spikeSortingResult._neuronList:
-            if neuron.timestamps.size < 3:
-                continue
-            line = ''.join([f'{ts:.3f}, ' for ts in neuron.timestamps[:-1]])
-            line += f'{neuron.timestamps[-1]:.3f}\n'
-            stream.write(line)
-
-    #
-    data = sessionObject.load('visualStimuliData')['sn']
-    iterable = zip(
-        data['xy'][:, 0],
-        data['xy'][:, 1],
-        data['t1'],
-        data['t2']
-    )
-    with open(outputFolderPath.joinpath('sparseNoiseStimulus.txt'), 'w') as stream:
-        for x, y, t1, t2 in iterable:
-            stream.write(f'{x}, {y}, {t1}, {t2}\n')
-
-    #
-    data = sessionObject.load('visualStimuliData')['dg']
-    iterable = zip(
-        data['e'],
-        data['d'],
-        data['t']
-    )
-    probeIndex = 0
-    with open(outputFolderPath.joinpath('driftingGratingStimulus.txt'), 'w') as stream:
-        for e, d, t in iterable:
-            if e == 3:
-                stream.write(f'{probeIndex + 1}, {d:.0f}, {t}\n')
-                probeIndex += 1
-
-    return
+    def __getitem__(self, key):
+        if type(key) == slice:
+            if key.stop > len(self.sessionFolders):
+                raise Exception('Session index out of range')
+            if self._loaded:
+                return [session for session in self._sessions[key]]
+            else:
+                return [Session(sessionFolder) for sessionFolder in self.sessionFolders[key]]
+        else:
+            if key >= len(self.sessionFolders):
+                raise Exception('Session index out of range')
+            for sessionIndex in range(len(self.sessionFolders)):
+                if sessionIndex == key:
+                    if self._loaded:
+                        return self._sessions[sessionIndex]
+                    else:
+                        return Session(self.sessionFolders[sessionIndex])

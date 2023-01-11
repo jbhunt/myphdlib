@@ -1,3 +1,4 @@
+import os
 import pathlib as pl
 import subprocess as sp
 try:
@@ -5,7 +6,13 @@ try:
 except ImportError:
     cv = None
 
-def reflectVideo(video, flipAxis='hflip', suffix=' (reflected)', speed='medium'):
+def ffmpegInstalled():
+    """
+    """
+
+    return
+
+def reflectVideo(video, flipAxis='hflip', suffix=' (reflected)', speed='medium', deleteOriginalVideo=False):
     """
     """
 
@@ -22,7 +29,25 @@ def reflectVideo(video, flipAxis='hflip', suffix=' (reflected)', speed='medium')
         '-c:a', 'copy',
         reflectedVideoFilePath
     ]
-    sp.call(command)
+    if os.name == 'nt':
+        sp.call(command, shell=True)
+    else:
+        sp.call(command)
+
+    #
+    if deleteOriginalVideo:
+        checkPassed = False
+        try:
+            frameCountOriginal = countVideoFrames(str(videoFilePath), backend='OpenCV')
+            frameCountPost = countVideoFrames(str(reflectedVideoFilePath), backend='OpenCV')
+            if frameCountOriginal == frameCountPost:
+                checkPassed = True
+
+        except Exception as error:
+            checkPassed = False
+        
+        if checkPassed:
+            videoFilePath.unlink()
 
     return
 

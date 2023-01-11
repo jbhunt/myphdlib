@@ -7,6 +7,7 @@ class Neuron():
     """
 
     def __init__(self, clusterNumber, singleUnitData, samplingRate=30000):
+        self.cluster = clusterNumber
         self.clusterNumber = clusterNumber
         clusterMask = singleUnitData[:, 0] == clusterNumber
         self._timestamps = singleUnitData[clusterMask, 1] / samplingRate
@@ -36,13 +37,27 @@ class SpikeSortingResults():
     """
     """
 
-    def __init__(self, resultsFolder):
+    def __init__(self, resultsFolder, autoload=True):
         """
         """
 
-        resultsFolderPath = pl.Path(resultsFolder)
+        self.resultsFolderPath = pl.Path(resultsFolder)
+        self._neurons = list()
+        self._index = 0
+        if autoload:
+            self.load()
+
+        return
+
+    def load(self):
+        """
+        """
+
+        if self.isComplete() == False:
+            return
+
         clusterNumbers, clusterLabels = list(), list()
-        with open(resultsFolderPath.joinpath('cluster_group.tsv'), 'r') as stream:
+        with open(self.resultsFolderPath.joinpath('cluster_group.tsv'), 'r') as stream:
             for line in stream.readlines()[1:]:
                 clusterNumber, clusterLabel = line.rstrip('\n').split('\t')
                 clusterNumbers.append(int(clusterNumber))
@@ -50,51 +65,69 @@ class SpikeSortingResults():
 
         #
         singleUnitData = np.hstack([
-            np.load(resultsFolderPath.joinpath('spike_clusters.npy')),
-            np.load(resultsFolderPath.joinpath('spike_times.npy'))
+            np.load(self.resultsFolderPath.joinpath('spike_clusters.npy')),
+            np.load(self.resultsFolderPath.joinpath('spike_times.npy'))
         ])
 
         #
-        self._neuronList = list()
+        self._neurons = list()
         for clusterNumber in clusterNumbers:
-            self._neuronList.append(Neuron(clusterNumber, singleUnitData))
+            self._neurons.append(Neuron(clusterNumber, singleUnitData))
+        self._neurons = np.array(self._neurons)
 
         #
-        self._listIndex = 0
+        self._index = 0
 
         return
+
+    def isComplete(self):
+        """
+        """
+
+        filenames = (
+            'cluster_group.tsv',
+            'spike_clusters.npy',
+            'spike_times.npy'
+        )
+        for filename in filenames:
+            if self.resultsFolderPath.joinpath(filename).exists():
+                continue
+            else:
+                return False
+
+        return True
 
     def search(self, clusterNumber):
         """
         """
 
-        for neuron in self._neuronList:
+        for neuron in self._neurons:
             if neuron.clusterNumber == clusterNumber:
                 return neuron
 
         return None
 
     def __iter__(self):
-        self._listIndex =0
+        self._index =0
         return self
 
     def __next__(self):
-        if self._listIndex < len(self._neuronList):
-            neuron = self._neuronList[self._listIndex]
-            self._listIndex += 1
+        if self._index < len(self._neurons):
+            neuron = self._neurons[self._index]
+            self._index += 1
             return neuron
         else:
             raise StopIteration()
 
     def __len__(self):
-        return len(self._neuronList)
+        return len(self._neurons)
 
-    def __getitem__(self, listIndex):
+    def __getitem__(self, key):
         """
         """
 
         try:
-            neuron = self._neuronList[listIndex]
+            neuron = self._neurons[key]
         except:
             raise Exception() from None
 

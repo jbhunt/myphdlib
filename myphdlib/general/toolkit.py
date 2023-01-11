@@ -170,6 +170,44 @@ def psth(target_events, relative_events, binsize=0.01, window=(-0.5, 1), edges=N
     else:
         return edges, M
 
+def psth2(event1, event2, window=(-1, 1), binsize=None):
+    """
+    """
+
+    # Case of a single bin
+    if binsize is None:
+        nBins = 1
+        binEdges = window
+        t = window[0] + np.diff(window).item() / 2
+
+    # Check that the time range is evenly divisible by the binsize
+    else:
+        start, stop = np.around(window, 3)
+        residual = (Decimal(str(stop)) - Decimal(str(start))) % Decimal(str(binsize))
+        if residual != 0:
+            raise ValueError('PSTH window must be evenly divisible by binsize')
+
+        # TODO: In the above case figure out a way to determine the next best binsize
+
+        # Compute the bin edges
+        windowLength = float(Decimal(str(stop)) - Decimal(str(start)))
+        nBins = int(round(windowLength / binsize))
+        binEdges = np.linspace(start, stop, nBins + 1)
+        t = binEdges[:-1] + binsize / 2
+
+    #
+    M = np.full([event1.size, nBins], np.nan)
+    for rowIndex, timestamp in enumerate(event1):
+        relative = event2 - timestamp
+        withinWindowMask = np.logical_and(
+            relative >= window[0],
+            relative <= window[1]
+        )
+        binCounts, binEdges = np.histogram(relative[withinWindowMask], bins=binEdges)
+        M[rowIndex, :] = binCounts
+
+    return t, M
+
 def detectThresholdCrossing(a, threshold, timeout=None):
     """
     Determine where a threshold was crossing in a time series (agnostic of
@@ -255,6 +293,8 @@ def inrange(value, lowerBound, upperBound):
     return np.logical_and(value >= lowerBound, value <= upperBound)
 
 class DotDict(dict):
-    __getattr__ = dict.get
+    def __getattr__(*args):
+        val = dict.get(*args)
+        return DotDict(val) if type(val) is dict else val
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
