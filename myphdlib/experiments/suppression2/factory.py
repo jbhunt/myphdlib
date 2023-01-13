@@ -477,6 +477,24 @@ class Session(SessionBase):
 
         return self._motionOnsetTimestamps
 
+    def getMotionOnsetTimestamps(self, motion=-1):
+        """
+        """
+
+        data = self.load('visualStimuliData')['dg']
+        iterable = zip(
+            data['i'],
+            data['d'],
+            data['e'],
+            data['t']
+        )
+        motionOnsetTimestamps = list()
+        for i, d, e, t, in iterable:
+            if e == 2 and d == motion:
+                motionOnsetTimestamps.append(t)
+
+        return np.array(motionOnsetTimestamps)
+
     @property
     def itiOnsetTimestamps(self):
         """
