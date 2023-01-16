@@ -5,6 +5,7 @@ import string
 import pickle
 import numpy as np
 import pathlib as pl
+from datetime import datetime as dt
 from scipy.signal import find_peaks as findPeaks
 from myphdlib.general.session import saveSessionData, locateFactorySource, SessionBase
 from myphdlib.general.ephys import SpikeSortingResults
@@ -77,6 +78,8 @@ class Session(SessionBase):
                 for attribute in ('animal', 'date', 'experiment'):
                     if bool(re.search(f'{attribute}*', line.lower())) and line.startswith('-') == False:
                         value = line.lower().split(': ')[-1].rstrip('\n')
+                        if attribute == 'date':
+                            value = dt.strptime(value, '%Y-%m-%d')
                         setattr(self, attribute, value)
 
         #
@@ -494,6 +497,24 @@ class Session(SessionBase):
                 motionOnsetTimestamps.append(t)
 
         return np.array(motionOnsetTimestamps)
+
+    def getMotionOffsetTimestamps(self, motion=-1):
+        """
+        """
+
+        data = self.load('visualStimuliData')['dg']
+        iterable = zip(
+            data['i'],
+            data['d'],
+            data['e'],
+            data['t']
+        )
+        motionOffsetTimestamps = list()
+        for i, d, e, t, in iterable:
+            if e == 4 and d == motion:
+                motionOffsetTimestamps.append(t)
+
+        return np.array(motionOffsetTimestamps) 
 
     @property
     def itiOnsetTimestamps(self):

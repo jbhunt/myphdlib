@@ -865,3 +865,173 @@ class PerisaccadicModulationAnalysis():
             pickle.dump(self.result, stream)
 
         return
+
+class SaccadeFrequencyAnalysis():
+    """
+    """
+
+    def _organizeSessions(
+        self,
+        factory
+        ):
+        """
+        Orgainze sessions into AB patterns (A=saline, B=CNO)
+        """
+
+        sessions = [s for s in factory]
+        triplets = list()
+
+        for session2 in sessions:
+
+            # Only look at CNO-treated sessions
+            if session2.experiment != 'cno':
+                continue
+
+            # Find the saline session pre-treatment session
+            distances = np.array([
+                (s.date - session2.date).days
+                    for s in sessions
+                        if s.experiment == 'saline' and s.animal == session2.animal
+            ])
+            if distances[distances < 0].size == 0:
+                session1 = None
+            else:
+                iSession = np.argmax(distances[distances < 0])
+                session1 = np.array([
+                    s for s in sessions
+                        if s.experiment == 'saline' and s.animal == session2.animal
+                ])[distances < 0][iSession]
+
+            # Find the post-treatment session
+            if distances[distances > 0].size == 0:
+                session3 = None
+            else:
+                iSession = np.argmin(distances[distances > 0])
+                session3 = np.array([
+                    s for s in sessions
+                        if s.experiment == 'saline' and s.animal == session2.animal
+                ])[distances > 0][iSession]
+
+            #
+            triplet = (
+                session1,
+                session2,
+                session3
+            )
+            triplets.append(triplet)
+
+        return triplets
+
+    def _estimateSaccadeFrequency(
+        self,
+        session
+        ):
+        """
+        """
+
+        counts = {
+            'ipsi': list(),
+            'contra': list(),
+        }
+
+        for motion, direction in zip(['contra', 'ipsi'], ['ipsi', 'contra']):
+            
+            saccadeOnsetTimestamps = session.saccadeOnsetTimestamps()[direction]
+            gratingMotionTimestamps = zip(
+                session.getMotionOnsetTimestamps(-1 if motion == 'contra' else 1),
+                session.getMotionOffsetTimestamps(-1 if motion == 'contra' else 1)
+            )
+            for motionOnsetTimestamp, motionOffsetTimestamp in gratingMotionTimestamps:
+                mask = np.logical_and(
+                    saccadeOnsetTimestamps > motionOnsetTimestamp,
+                    saccadeOnsetTimestamps < motionOffsetTimestamp
+                )
+                nSaccades = mask.sum()
+                counts[direction].append(nSaccades)
+
+        estimates = {
+            'ipsi': round(np.mean(counts['ipsi']), 2),
+            'contra': round(np.mean(counts['contra']), 2)
+        }
+
+        return estimates
+
+    def run(
+        self,
+        factory,
+        ):
+        """
+        """
+
+        self.result = {
+            'ipsi': list(),
+            'contra': list()
+        }
+        self.metadata = list()
+        triplets = self._organizeSessions(factory)
+
+        #
+        for triplet in triplets:
+
+            #
+            lines = {
+                'ipsi': np.full(3, np.nan),
+                'contra': np.full(3, np.nan)
+            }
+
+            #
+            factors = self._estimateSaccadeFrequency(triplet[0])
+            for iSession, session in enumerate(triplet):
+                if session is None:
+                    continue
+                freqs = self._estimateSaccadeFrequency(session)
+                lines['ipsi'][iSession] = freqs['ipsi'] / factors['ipsi']
+                lines['contra'][iSession] = freqs['contra'] / factors['contra']
+            
+            #
+            self.result['ipsi'].append(lines['ipsi'])
+            self.result['contra'].append(lines['contra'])
+
+            #
+            # entry = (
+            #     (triplet[0].animal, triplet[0].date),
+            #     (triplet[1].animal, triplet[1].date),
+            #     (triplet[2].animal, triplet[2].date),
+            # )
+            # self.metadata.append(entry)
+
+        #
+        for direction in ('ipsi', 'contra'):
+            self.result[direction] = np.array(self.result[direction])
+
+        return self.result
+
+    def visualize(self, colors=['w', 'k']):
+        """
+        """
+
+        fig, ax = plt.subplots()
+        centers = {
+            'ipsi': np.arange(3) - 0.2,
+            'contra': np.arange(3) + 0.2
+        }
+        width = 0.3
+        for direction, color in zip(['ipsi', 'contra'], colors):
+            M = self.result[direction]
+            samples = list()
+            for sample in np.split(M, 3, axis=1):
+                mask = np.invert(np.isnan(sample.flatten()))
+                samples.append(sample.flatten()[mask])
+            ax.boxplot(
+                samples,
+                positions=centers[direction],
+                widths=np.full(3, width)
+            )
+            continue
+            x = centers[direction]
+            y = np.nanmean(self.result[direction], axis=0)
+            error = np.nanstd(self.result[direction], axis=0)
+            ax.bar(x, y, width=0.4, align='center', facecolor=color, edgecolor='k')
+            # ax.vlines(x, y - error, y + error, color='k')
+
+        return fig, ax
