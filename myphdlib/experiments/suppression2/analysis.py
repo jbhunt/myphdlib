@@ -2,6 +2,7 @@ import pickle
 import numpy as np
 from zetapy import getZeta
 from decimal import Decimal
+from datetime import datetime as dt
 from matplotlib import pylab as plt
 from joblib import delayed, Parallel
 from scipy.ndimage import gaussian_filter as gaussianFilter
@@ -922,9 +923,10 @@ class SaccadeFrequencyAnalysis():
 
         return triplets
 
-    def _estimateSaccadeFrequency(
+    def _estimateSaccadeFrequencyForSingleSession(
         self,
-        session
+        session,
+        frequency=True
         ):
         """
         """
@@ -947,91 +949,198 @@ class SaccadeFrequencyAnalysis():
                     saccadeOnsetTimestamps < motionOffsetTimestamp
                 )
                 nSaccades = mask.sum()
-                counts[direction].append(nSaccades)
+                if nSaccades == 0:
+                    value = np.nan
+                else:
+                    if frequency:
+                        dt = motionOffsetTimestamp - motionOnsetTimestamp
+                        value = nSaccades / dt
+                    else:
+                        value = nSaccades
+                counts[direction].append(value)
 
-        estimates = {
-            'ipsi': round(np.mean(counts['ipsi']), 2),
-            'contra': round(np.mean(counts['contra']), 2)
+        return counts
+
+    def _estimateBaselineSaccadeFrequencyByAnimal(
+        self,
+        factory,
+        measure='mean',
+        ):
+        """
+        """
+
+        #
+        animals = np.unique([
+            session.animal
+                for session in factory
+        ])
+        samples = {
+            animal: {'ipsi': list(), 'contra': list()}
+                for animal in animals
         }
 
-        return estimates
+        #
+        for session in factory:
+            if session.experiment == 'saline':
+                counts = self._estimateSaccadeFrequencyForSingleSession(session)
+                for direction in ('ipsi', 'contra'):
+                    for count in counts[direction]:
+                        samples[session.animal][direction].append(count)
 
-    def run(
+        #
+        baselines = {
+            animal: {'ipsi': None, 'contra': None}
+                for animal in animals
+        }
+        for animal in animals:
+            for direction in ('ipsi', 'contra'):
+                if measure == 'median':
+                    baselines[animal][direction] = round(np.nanmedian(samples[animal][direction]), 3)
+                elif measure == 'mean':
+                    baselines[animal][direction] = round(np.nanmean(samples[animal][direction]), 3)
+                else:
+                    raise Exception(f'{measure} is not a valid measure of central tendency')
+
+        return baselines, samples
+
+    def _estimateBaselineSaccadeFrequencyByAnimalOverTime(
         self,
         factory,
         ):
         """
         """
 
+        #
+        animals = np.unique([
+            session.animal
+                for session in factory
+        ])
+        output = {
+            animal: {
+                'ipsi': {
+                    'x': list(),
+                    'y': list(),
+                    'q1': list(),
+                    'q3': list()
+                },
+                'contra': {
+                    'x': list(),
+                    'y': list(),
+                    'q1': list(),
+                    'q3': list()
+                },
+            }
+                for animal in animals
+        }
+
+        #
+        for session in factory:
+            if session.experiment == 'saline':
+                counts = self._estimateSaccadeFrequencyForSingleSession(session)
+                for direction in ('ipsi', 'contra'):
+                    sample = counts[direction]
+                    q2 = np.median(sample)
+                    q1, q3 = np.percentile(sample, [25, 75])
+                    output[session.animal][direction]['x'].append(session.date)
+                    output[session.animal][direction]['y'].append(q2)
+                    output[session.animal][direction]['q1'].append(q1)
+                    output[session.animal][direction]['q3'].append(q3)
+
+        return output
+
+    def run(
+        self,
+        factory,
+        **kwargs_
+        ):
+        """
+        """
+
+        #
+        kwargs = {
+            'measure': 'mean',
+        }
+        kwargs.update(kwargs_)
+
+        #
+        animals = np.unique([
+            session.animal
+                for session in factory
+        ])
         self.result = {
-            'ipsi': list(),
-            'contra': list()
+            animal: {
+                'ipsi'  : {0: list(), 1: list(), 2: list()},
+                'contra': {0: list(), 1: list(), 2: list()}
+                }
+                for animal in animals
         }
         self.metadata = list()
         triplets = self._organizeSessions(factory)
+        baselines, samples = self._estimateBaselineSaccadeFrequencyByAnimal(factory)
 
         #
         for triplet in triplets:
 
-            #
-            lines = {
-                'ipsi': np.full(3, np.nan),
-                'contra': np.full(3, np.nan)
-            }
-
-            #
-            factors = self._estimateSaccadeFrequency(triplet[0])
+            # For each session in the triplet ...
             for iSession, session in enumerate(triplet):
                 if session is None:
                     continue
-                freqs = self._estimateSaccadeFrequency(session)
-                lines['ipsi'][iSession] = freqs['ipsi'] / factors['ipsi']
-                lines['contra'][iSession] = freqs['contra'] / factors['contra']
-            
-            #
-            self.result['ipsi'].append(lines['ipsi'])
-            self.result['contra'].append(lines['contra'])
 
-            #
-            # entry = (
-            #     (triplet[0].animal, triplet[0].date),
-            #     (triplet[1].animal, triplet[1].date),
-            #     (triplet[2].animal, triplet[2].date),
-            # )
-            # self.metadata.append(entry)
+                #
+                counts = self._estimateSaccadeFrequencyForSingleSession(session)
+
+                #
+                for direction in ('ipsi', 'contra'):
+
+                    # Baseline frequency for each animal for each direction of saccade
+                    baseline = baselines[session.animal][direction]
+
+                    # For each presentation of the grating ...
+                    for count in counts[direction]:
+                        if count == 0:
+                            value = np.nan
+                        else:
+                            value = round(baseline / count, 3)
+                        self.result[session.animal][direction][iSession].append(value)
+
+            # TODO: Save metadata
 
         #
-        for direction in ('ipsi', 'contra'):
-            self.result[direction] = np.array(self.result[direction])
 
         return self.result
 
-    def visualize(self, colors=['w', 'k']):
+    def visualize(self, colors=None, clip=3, sigma=0.02, measure='mean'):
         """
         """
 
-        fig, ax = plt.subplots()
-        centers = {
-            'ipsi': np.arange(3) - 0.2,
-            'contra': np.arange(3) + 0.2
-        }
-        width = 0.3
-        for direction, color in zip(['ipsi', 'contra'], colors):
-            M = self.result[direction]
-            samples = list()
-            for sample in np.split(M, 3, axis=1):
-                mask = np.invert(np.isnan(sample.flatten()))
-                samples.append(sample.flatten()[mask])
-            ax.boxplot(
-                samples,
-                positions=centers[direction],
-                widths=np.full(3, width)
-            )
-            continue
-            x = centers[direction]
-            y = np.nanmean(self.result[direction], axis=0)
-            error = np.nanstd(self.result[direction], axis=0)
-            ax.bar(x, y, width=0.4, align='center', facecolor=color, edgecolor='k')
-            # ax.vlines(x, y - error, y + error, color='k')
+        fig, (ax1, ax2) = plt.subplots(ncols=2, sharex=True, sharey=True)
 
-        return fig, ax
+        #
+        if colors is None:
+            colors = ['C0', 'C1', 'C2', 'C3']
+        offsets = (-0.15, -0.05, 0.05, 0.15)
+
+        #
+        for animal, color, offset in zip(self.result.keys(), colors, offsets):
+            for direction, ax in zip(['ipsi', 'contra'], [ax1, ax2]):
+                samples = self.result[animal][direction]
+                if measure == 'mean':
+                    line = [np.nanmean(sample) for sample in samples.values()]
+                elif measure == 'median':
+                    line = [np.nanmedian(sample) for sample in samples.values()]
+                ax.plot(np.arange(3), line, color=color)
+                for iSample, sample in enumerate(samples.values()):
+                    x = np.full(len(sample), iSample) + offset + np.random.normal(loc=0, scale=sigma, size=len(sample))
+                    if clip is not None:
+                        sample = np.clip(sample, a_min=0, a_max=clip)
+                    ax.scatter(x, sample, marker='.', edgecolors=None, alpha=0.3, s=3, c=color)
+
+        #
+        ax1.set_ylabel('Fraction of median frequency')
+        ax1.set_title('Ipsi.')
+        ax2.set_title('Contra.')
+        for ax in (ax1, ax2):
+            ax.set_xticks(range(3))
+            ax.set_xticklabels(['Pre-', 'Treatment', 'Post-'])
+
+        return fig, (ax1, ax2)
