@@ -1,9 +1,78 @@
 import serial
 import pathlib as pl
 
-HANDSHAKE = bytes('x', 'utf-8')
-ON        = bytes('a', 'utf-8')
+HANDSHAKE = bytes('h', 'utf-8')
+ON        = bytes('p', 'utf-8')
 OFF       = bytes('z', 'utf-8')
+RESET     = bytes('r', 'utf-8')
+
+commands = {
+    'signal' : bytes('s', 'utf-8'),
+    'connect': bytes('c', 'utf-8'),
+    'release': bytes('r', 'utf-8')
+}
+
+class Microcontroller():
+    """
+    """
+
+    def __init__(self):
+        """
+        """
+
+        self._connection = None
+
+
+        return
+
+    def connect(self, baudrate=9600, timeout=1):
+        """
+        """
+
+        connected = False
+        devices = pl.Path('/dev/').glob('*ttyACM*')
+        for device in devices:
+            try:
+                connection = serial.Serial(
+                    str(device),
+                    baudrate,
+                    timeout=timeout
+                )
+            except (serial.SerialException, serial.SerialTimeoutExeception):
+                continue
+            connection.write(commands['connect'])
+            message = connection.read()
+            if len(message) > 0 and message == commands['connect']:
+                self._connection = connection
+                connected = True
+                break
+
+        return connected
+
+    def release(self):
+        """
+        """
+
+        if self._connection is None:
+            return
+
+        self._connection.write(commands['release'])
+        self._connection.close()
+
+        return
+
+    def signal(self, t=1):
+        """
+        """
+
+        if self._connection is None:
+            return
+
+        self._connection.write(commands['signal'])
+        # message = str(round(t * 1000)).encode('utf-8')
+        # self._connection.write(message)
+
+        return
 
 class Teensy():
     """
@@ -56,6 +125,19 @@ class Teensy():
         else:
             if self._obj.is_open is False:
                 raise Exception('Serial port is closed')
+
+        return
+
+    def release(self):
+        """
+        """
+
+        if self._obj is None:
+            return
+
+        self._obj.write(RESET)
+        self._obj.close()
+        self._obj = None
 
         return
 
