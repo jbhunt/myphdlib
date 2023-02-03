@@ -585,7 +585,7 @@ class SessionFactory():
 
         sessionLocated = False
         for session in self:
-            if session.animal == animal and session.date == date:
+            if session.animal == animal and session.date == dt.strptime(date, '%Y-%m-%d'):
                 sessionLocated = True
                 break
         

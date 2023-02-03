@@ -2,6 +2,7 @@ import numpy as np
 from matplotlib import pylab as plt
 from matplotlib import widgets as wid
 from matplotlib import lines
+from matplotlib.backend_bases import MouseButton
 
 class VerticalLineBuilder():
     """
@@ -247,3 +248,248 @@ class SaccadeLabelingGUI():
         y = self.y[mask, :]
 
         return X, y
+
+class MarkerPlacer():
+    """
+    """
+
+    def __init__(self, image=None, ax=None, fig=None, color='r'):
+        """
+        """
+
+        #
+        self.markers = None
+        self.points = list()
+        if ax is None and fig is None:
+            self.fig, self.ax = plt.subplots()
+        else:
+            self.fig, self.ax = fig, ax
+        if image is not None:
+            self.image = self.ax.imshow(image, cmap='binary_r')
+        else:
+            self.image = None
+        self.color = color
+        self.fig.show()
+        self.fig.canvas.callbacks.connect('button_press_event', self.onClick)
+        self.fig.canvas.callbacks.connect('key_press_event', self.onPress)
+
+        return
+
+    def drawPoints(self):
+        """
+        """
+
+        #
+        if self.markers is not None:
+            self.markers.remove()
+        
+        #
+        x = [point[0] for point in self.points]
+        y = [point[1] for point in self.points]
+        self.markers = self.ax.scatter(x, y, color=self.color)
+
+        #
+        self.fig.canvas.draw()
+
+        return
+
+    def onClick(self, event):
+        """
+        """
+
+        if event.button == MouseButton.LEFT and event.key == 'shift':
+            point = (event.xdata, event.ydata)
+            self.points.append(point)
+        self.drawPoints()
+
+        return
+
+    def onPress(self, event):
+        """
+        """
+        
+        if event.key == 'ctrl+z':
+            if self.points:
+                point = self.points.pop()
+        self.drawPoints()
+
+        return
+
+def placeMarkers(image=None):
+    """
+    """
+
+    return
+
+class BodypartLabelingGUI():
+    """
+    """
+
+    def __init__(self, bodyparts=('nasal', 'temporal'), figsize=(5, 5)):
+        """
+        """
+
+        #
+        self.fig, self.ax = plt.subplots()
+        self.fig.subplots_adjust(left=0.35)
+        self.fig.set_figwidth(figsize[0])
+        self.fig.set_figheight(figsize[1])
+
+        #
+        self.imageList = list()
+        self.imageIndex = 0
+        self.imageObject = None
+        self.bodypartPositions = list()
+        self.bodyparts = bodyparts
+        self.markers = [self.ax.scatter([0], [0], alpha=0) for i in range(len(self.bodyparts))]
+
+        # Checkbox panel
+        self.checkboxPanel = wid.RadioButtons(
+            plt.axes([0.02, 0.5, 0.2, 0.2]),
+            labels=bodyparts,
+            active=0
+        )
+        self.checkboxPanel.on_clicked(self.onCheckboxClick)
+
+        # Previous button
+        self.previousButton = wid.Button(
+            plt.axes([0.02, 0.4, 0.15, 0.05]), 
+            label='Previous',
+            color='white',
+            hovercolor='grey'
+        )
+        self.previousButton.on_clicked(self.onPreviousButtonClick)
+
+        # Next button
+        self.nextButton = wid.Button(
+            plt.axes([0.02, 0.3, 0.15, 0.05]),
+            label='Next',
+            color='white',
+            hovercolor='grey'
+        )
+        self.nextButton.on_clicked(self.onNextButtonClick)
+
+        # Exit button
+        self.exitButton = wid.Button(
+            plt.axes([0.02, 0.2, 0.15, 0.05]),
+            label='Exit',
+            color='white',
+            hovercolor='grey'
+        )
+        self.exitButton.on_clicked(self.onExitButtonClick)
+
+        #
+        self.fig.canvas.callbacks.connect('button_press_event', self.onMouseClick)
+        self.fig.canvas.callbacks.connect('key_press_event', self.onKeyPress)
+
+        #
+        self.ax.set_xticks([])
+        self.ax.set_yticks([])
+        self.fig.show()
+
+        return
+
+    def onKeyPress(self, event):
+        """
+        """
+
+        # ctrl+z
+
+        # shift+Arrows
+
+        return
+
+    def onMouseClick(self, event):
+        """
+        """
+
+        # shift+left click
+        if event.button == MouseButton.LEFT and event.key == 'shift':
+            self.bodypartPositions[self.imageIndex][self.bodypart] = (event.xdata, event.ydata)
+
+        #
+        offsets = list()
+        alphas = list()
+        for bodypart in self.bodyparts:
+            entry = self.bodypartPositions[self.imageIndex]
+            if entry[bodypart] is not None:
+                offsets.append([entry[bodypart]])
+                alphas.append(1)
+            else:
+                offsets.append([(0, 0)])
+                alphas.append(0)
+
+        #
+        for marker, offset, alpha in zip(self.markers, offsets, alphas):
+            marker.set_offsets(offset)
+            marker.set_alpha(alpha)
+
+        #
+        self.updatePlot()
+
+        return
+
+    def onCheckboxClick(self, bodypart):
+        """
+        """
+
+        self.bodypart = bodypart
+
+        return
+
+    def onNextButtonClick(self, event):
+        """
+        """
+
+        self.imageIndex = np.take(np.arange(len(self.imageList)), self.imageIndex + 1, mode='wrap')
+        self.updatePlot()
+
+        return
+
+    def onPreviousButtonClick(self, event):
+        """
+        """
+
+        self.imageIndex = np.take(np.arange(len(self.imageList)), self.imageIndex - 1, mode='wrap')
+        self.updatePlot()
+
+        return
+
+    def onExitButtonClick(self, event):
+        """
+        """
+
+        plt.close(self.fig)
+
+        return
+
+    def updatePlot(self):
+        """
+        """
+
+        image = self.imageList[self.imageIndex]
+        if self.imageObject is None:
+            self.imageObject = self.ax.imshow(image)
+        else:
+            self.imageObject.set_data(image)
+        self.fig.canvas.draw()
+
+        return
+
+    def inputImages(self, images, resetImageList=False):
+        """
+        """
+
+        if resetImageList:
+            self.bodypartPositions = list()
+            self.imageList = list()
+
+        for image in images:
+            self.imageList.append(image)
+            self.bodypartPositions.append({bodypart: None for bodypart in self.bodyparts})
+
+        #
+        self.updatePlot()
+
+        return
+    
