@@ -10,24 +10,6 @@ from scipy.signal import find_peaks as findPeaks
 from myphdlib.general.session import saveSessionData, locateFactorySource, SessionBase
 from myphdlib.general.ephys import SpikeSortingResults
 
-class EgocentricBilateralDirection():
-
-    def __init__(self, value=None):
-        self.value = None
-
-    @property
-    def opposite(self):
-        if self.value is None:
-            return None
-        elif self.value == 'ipsi':
-            return 'contra'
-        else:
-            return 'ipsi'
-    
-    @property
-    def value(self):
-        return self.value
-
 class Session(SessionBase):
     def __init__(self, sessionFolder):
         """
@@ -232,8 +214,11 @@ class Session(SessionBase):
         """
         """
 
+
         #
         outputFolderPath = pl.Path(outputFolder)
+        if outputFolderPath.exists() == False:
+            outputFolderPath.mkdir()
         spikesFilePath = outputFolderPath.joinpath('spikes.txt')
         eventsFilePath = outputFolderPath.joinpath('events.txt')
         if overwrite == False:
@@ -247,6 +232,8 @@ class Session(SessionBase):
         spikeTimestamps = np.full([nSpikes, 2], np.nan)
 
         #
+        probes = self.parseVisualProbes()
+        saccades = self.saccadeOnsetTimestamps()
         events = (
             self.spotOnsetTimestamps,
             self.spotOffsetTimestamps,
@@ -254,13 +241,32 @@ class Session(SessionBase):
             self.barOffsetTimestamps,
             self.gratingOnsetTimestamps,
             self.motionOnsetTimestamps,
-            self.probeOnsetTimestamps
+            probes['extrasaccadic']['ipsi']['timestamps'],
+            probes['extrasaccadic']['contra']['timestamps'],
+            saccades['ipsi'],
+            saccades['contra']
         )
+
+        #
         nEvents = 0
         for event in events:
             mask = np.invert(np.isnan(event))
             nEvents += mask.sum()
         eventTimestamps = np.full([nEvents, 2], np.nan)
+
+        #
+        aliases = (
+            'Spot onset',
+            'Spot offset',
+            'Bar onset',
+            'Bar offset',
+            'Grating onset',
+            'Grating offset',
+            'Ipsi probe onset',
+            'Contra probe onset',
+            'Ipsi saccade onset',
+            'Contra saccade onset',
+        )
 
         #
         rowIndex = 0
@@ -292,11 +298,27 @@ class Session(SessionBase):
         )
 
         #
+        header = ''.join([
+            'Timestamp, ',
+            'Event ',
+            '(1=Spot onset, ',
+            '2=Spot offset, ',
+            '3=Bar onset, ',
+            '4=Bar offset, ',
+            '5=Grating onset, ',
+            '6=Grating offset, ',
+            '7=Ipsi probe onset, ',
+            '8=Contra probe onset, ',
+            '9=Ipsi saccade onset, ',
+            '10=Contra saccade onset)',
+        ])
+
+        #
         np.savetxt(
             str(eventsFilePath),
             eventTimestamps[eventTimestampsIndex, :],
             fmt=['%.3f', '%d'],
-            header=f'Timestamps, Event (1=Spot onset, 2=Spot offset, 3=Bar onset, 4=Bar offset, 5=Grating onset, 6=Motion Onset, 7=Probe onset)',
+            header=header,
             comments='',
             delimiter=', '
         )
@@ -636,3 +658,39 @@ class SessionFactory():
                         return self._sessions[sessionIndex]
                     else:
                         return Session(self.sessionFolders[sessionIndex])
+                    
+def organizeSessionsIntoPattern(factory, pattern='AB'):
+    """
+    """
+
+    animals = np.unique([session.animal for session in factory]).tolist()
+    sessions = {
+        animal: list() for animal in animals
+    }
+    labels = {
+        animal: list() for animal in animals
+    }
+
+    #
+    for animal in animals:
+
+        #
+        sessionsByAnimal = np.array([
+            session for session in factory
+                if session.animal == animal
+        ], dtype=object)
+
+        #
+        index = np.argsort([session.date for session in sessionsByAnimal])
+
+        #
+        for session in sessionsByAnimal[index]:
+            sessions[animal].append(session)
+            if session.experiment == 'saline':
+                labels[animal].append('A')
+            else:
+                labels[animal].append('B')
+
+    return sessions, labels
+
+    return

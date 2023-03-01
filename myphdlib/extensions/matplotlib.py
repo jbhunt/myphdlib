@@ -147,9 +147,11 @@ class SaccadeLabelingGUI():
         #
         self.ylim = np.array([0, nFeatures - 1])
         self.xlim = np.array([
-            self.xTrain.min() * gain,
-            self.xTrain.max() * gain
+            np.nanmin(self.xTrain) * gain,
+            np.nanmax(self.xTrain) * gain
         ])
+        if np.any(np.isnan(self.xlim)):
+            raise Exception('Fuck')
 
         #
         if nFeatures % 2 == 0:

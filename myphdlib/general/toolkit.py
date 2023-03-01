@@ -170,7 +170,7 @@ def psth(target_events, relative_events, binsize=0.01, window=(-0.5, 1), edges=N
     else:
         return edges, M
 
-def psth2(event1, event2, window=(-1, 1), binsize=None):
+def psth2(event1, event2, window=(-1, 1), binsize=None, returnZeroIndex=False):
     """
     """
 
@@ -179,6 +179,7 @@ def psth2(event1, event2, window=(-1, 1), binsize=None):
         nBins = 1
         binEdges = window
         t = window[0] + np.diff(window).item() / 2
+        i = None
 
     # Check that the time range is evenly divisible by the binsize
     else:
@@ -195,6 +196,11 @@ def psth2(event1, event2, window=(-1, 1), binsize=None):
         binEdges = np.linspace(start, stop, nBins + 1)
         t = binEdges[:-1] + binsize / 2
 
+        #
+        right = np.where(t > 0)[0].min()
+        left = right - 1
+        i = int((left + right) / 2)
+
     #
     M = np.full([event1.size, nBins], np.nan)
     for rowIndex, timestamp in enumerate(event1):
@@ -206,7 +212,11 @@ def psth2(event1, event2, window=(-1, 1), binsize=None):
         binCounts, binEdges = np.histogram(relative[withinWindowMask], bins=binEdges)
         M[rowIndex, :] = binCounts
 
-    return t, M
+    #
+    if returnZeroIndex:
+        return t, M, i
+    else:
+        return t, M
 
 def detectThresholdCrossing(a, threshold, timeout=None):
     """

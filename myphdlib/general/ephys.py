@@ -24,8 +24,8 @@ class Neuron():
             window=window,
             binsize=binsize
         )
-        mu = M.flatten().mean() / binsize
-        sigma = M.flatten().std() / binsize
+        mu = np.mean(M.mean(1) / binsize)
+        sigma = np.std(M.mean(1) / binsize)
 
         return mu, sigma
 
