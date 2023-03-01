@@ -4,7 +4,7 @@ import pandas as pd
 import pathlib as pl
 from myphdlib.interface.session import SessionBase
 
-def readExperimentLog(log, animal, date, side='left', key='treatment'):
+def readExperimentLog(log, animal, date, key='treatment'):
     """
     """
 
@@ -19,14 +19,7 @@ def readExperimentLog(log, animal, date, side='left', key='treatment'):
         raise Exception(f'{animal} is not a valid sheet name') from None
     
     #
-    sheet.date = sheet.date.interpolate(method='ffill')
-
-    #
-    mask = np.logical_and(
-        sheet.date == date,
-        sheet.side == side
-    )
-    row = sheet[mask].squeeze()
+    row = sheet[sheet.Date == date].squeeze()
 
     #
     if key in row.keys():
