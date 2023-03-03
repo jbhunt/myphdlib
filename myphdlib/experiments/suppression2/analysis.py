@@ -2,11 +2,14 @@ import pickle
 import numpy as np
 from zetapy import getZeta
 from decimal import Decimal
+from datetime import datetime as dt
 from matplotlib import pylab as plt
 from joblib import delayed, Parallel
 from scipy.ndimage import gaussian_filter as gaussianFilter
+from sklearn.decomposition import PCA
 from myphdlib.general.toolkit import psth, psth2, smooth, DotDict
 from myphdlib.general.ephys import SpikeSortingResults
+# from myphdlib.experiments.suppression2.factory import organizeSessionsIntoPattern
 
 def computeSRF(
     neuronObject, 
@@ -922,9 +925,10 @@ class SaccadeFrequencyAnalysis():
 
         return triplets
 
-    def _estimateSaccadeFrequency(
+    def _estimateSaccadeFrequencyForSingleSession(
         self,
-        session
+        session,
+        frequency=True
         ):
         """
         """
@@ -947,91 +951,682 @@ class SaccadeFrequencyAnalysis():
                     saccadeOnsetTimestamps < motionOffsetTimestamp
                 )
                 nSaccades = mask.sum()
-                counts[direction].append(nSaccades)
+                if nSaccades == 0:
+                    value = np.nan
+                else:
+                    if frequency:
+                        dt = motionOffsetTimestamp - motionOnsetTimestamp
+                        value = nSaccades / dt
+                    else:
+                        value = nSaccades
+                counts[direction].append(value)
 
-        estimates = {
-            'ipsi': round(np.mean(counts['ipsi']), 2),
-            'contra': round(np.mean(counts['contra']), 2)
+        return counts
+
+    def _estimateBaselineSaccadeFrequencyByAnimal(
+        self,
+        factory,
+        measure='mean',
+        ):
+        """
+        """
+
+        #
+        animals = np.unique([
+            session.animal
+                for session in factory
+        ])
+        samples = {
+            animal: {'ipsi': list(), 'contra': list()}
+                for animal in animals
         }
 
-        return estimates
+        #
+        for session in factory:
+            if session.experiment == 'saline':
+                counts = self._estimateSaccadeFrequencyForSingleSession(session)
+                for direction in ('ipsi', 'contra'):
+                    for count in counts[direction]:
+                        samples[session.animal][direction].append(count)
 
-    def run(
+        #
+        baselines = {
+            animal: {'ipsi': None, 'contra': None}
+                for animal in animals
+        }
+        for animal in animals:
+            for direction in ('ipsi', 'contra'):
+                if measure == 'median':
+                    baselines[animal][direction] = round(np.nanmedian(samples[animal][direction]), 3)
+                elif measure == 'mean':
+                    baselines[animal][direction] = round(np.nanmean(samples[animal][direction]), 3)
+                else:
+                    raise Exception(f'{measure} is not a valid measure of central tendency')
+
+        return baselines, samples
+
+    def _estimateBaselineSaccadeFrequencyByAnimalOverTime(
         self,
         factory,
         ):
         """
         """
 
+        #
+        animals = np.unique([
+            session.animal
+                for session in factory
+        ])
+        output = {
+            animal: {
+                'ipsi': {
+                    'x': list(),
+                    'y': list(),
+                    'q1': list(),
+                    'q3': list()
+                },
+                'contra': {
+                    'x': list(),
+                    'y': list(),
+                    'q1': list(),
+                    'q3': list()
+                },
+            }
+                for animal in animals
+        }
+
+        #
+        for session in factory:
+            if session.experiment == 'saline':
+                counts = self._estimateSaccadeFrequencyForSingleSession(session)
+                for direction in ('ipsi', 'contra'):
+                    sample = counts[direction]
+                    q2 = np.median(sample)
+                    q1, q3 = np.percentile(sample, [25, 75])
+                    output[session.animal][direction]['x'].append(session.date)
+                    output[session.animal][direction]['y'].append(q2)
+                    output[session.animal][direction]['q1'].append(q1)
+                    output[session.animal][direction]['q3'].append(q3)
+
+        return output
+
+    def run(
+        self,
+        factory,
+        **kwargs_
+        ):
+        """
+        """
+
+        #
+        kwargs = {
+            'measure': 'mean',
+        }
+        kwargs.update(kwargs_)
+
+        #
+        animals = np.unique([
+            session.animal
+                for session in factory
+        ])
         self.result = {
-            'ipsi': list(),
-            'contra': list()
+            animal: {
+                'ipsi'  : {0: list(), 1: list(), 2: list()},
+                'contra': {0: list(), 1: list(), 2: list()}
+                }
+                for animal in animals
         }
         self.metadata = list()
         triplets = self._organizeSessions(factory)
+        baselines, samples = self._estimateBaselineSaccadeFrequencyByAnimal(factory)
 
         #
         for triplet in triplets:
 
-            #
-            lines = {
-                'ipsi': np.full(3, np.nan),
-                'contra': np.full(3, np.nan)
-            }
-
-            #
-            factors = self._estimateSaccadeFrequency(triplet[0])
+            # For each session in the triplet ...
             for iSession, session in enumerate(triplet):
                 if session is None:
                     continue
-                freqs = self._estimateSaccadeFrequency(session)
-                lines['ipsi'][iSession] = freqs['ipsi'] / factors['ipsi']
-                lines['contra'][iSession] = freqs['contra'] / factors['contra']
-            
-            #
-            self.result['ipsi'].append(lines['ipsi'])
-            self.result['contra'].append(lines['contra'])
 
-            #
-            # entry = (
-            #     (triplet[0].animal, triplet[0].date),
-            #     (triplet[1].animal, triplet[1].date),
-            #     (triplet[2].animal, triplet[2].date),
-            # )
-            # self.metadata.append(entry)
+                #
+                counts = self._estimateSaccadeFrequencyForSingleSession(session)
+
+                #
+                for direction in ('ipsi', 'contra'):
+
+                    # Baseline frequency for each animal for each direction of saccade
+                    baseline = baselines[session.animal][direction]
+
+                    # For each presentation of the grating ...
+                    for count in counts[direction]:
+                        if count == 0:
+                            value = np.nan
+                        else:
+                            value = round(baseline / count, 3)
+                        self.result[session.animal][direction][iSession].append(value)
+
+            # TODO: Save metadata
 
         #
-        for direction in ('ipsi', 'contra'):
-            self.result[direction] = np.array(self.result[direction])
 
         return self.result
 
-    def visualize(self, colors=['w', 'k']):
+    def visualize(self, colors=None, clip=3, sigma=0.02, measure='mean'):
         """
         """
 
-        fig, ax = plt.subplots()
-        centers = {
-            'ipsi': np.arange(3) - 0.2,
-            'contra': np.arange(3) + 0.2
+        fig, (ax1, ax2) = plt.subplots(ncols=2, sharex=True, sharey=True)
+
+        #
+        if colors is None:
+            colors = ['C0', 'C1', 'C2', 'C3']
+        offsets = (-0.15, -0.05, 0.05, 0.15)
+
+        #
+        for animal, color, offset in zip(self.result.keys(), colors, offsets):
+            for direction, ax in zip(['ipsi', 'contra'], [ax1, ax2]):
+                samples = self.result[animal][direction]
+                if measure == 'mean':
+                    line = [np.nanmean(sample) for sample in samples.values()]
+                elif measure == 'median':
+                    line = [np.nanmedian(sample) for sample in samples.values()]
+                ax.plot(np.arange(3), line, color=color)
+                for iSample, sample in enumerate(samples.values()):
+                    x = np.full(len(sample), iSample) + offset + np.random.normal(loc=0, scale=sigma, size=len(sample))
+                    if clip is not None:
+                        sample = np.clip(sample, a_min=0, a_max=clip)
+                    ax.scatter(x, sample, marker='.', edgecolors=None, alpha=0.3, s=3, c=color)
+
+        #
+        ax1.set_ylabel('Fraction of median frequency')
+        ax1.set_title('Ipsi.')
+        ax2.set_title('Contra.')
+        for ax in (ax1, ax2):
+            ax.set_xticks(range(3))
+            ax.set_xticklabels(['Pre-', 'Treatment', 'Post-'])
+
+        return fig, (ax1, ax2)
+    
+class SaccadeFrequencyAnalysis2():
+    """
+    """
+
+    def __init__(self):
+        return
+    
+    def _organizeSessions(self, factory):
+        """
+        """
+
+        animals = np.unique([session.animal for session in factory]).tolist()
+        sessions = {
+            animal: list() for animal in animals
         }
-        width = 0.3
-        for direction, color in zip(['ipsi', 'contra'], colors):
-            M = self.result[direction]
-            samples = list()
-            for sample in np.split(M, 3, axis=1):
-                mask = np.invert(np.isnan(sample.flatten()))
-                samples.append(sample.flatten()[mask])
-            ax.boxplot(
-                samples,
-                positions=centers[direction],
-                widths=np.full(3, width)
+        labels = {
+            animal: list() for animal in animals
+        }
+
+        #
+        for animal in animals:
+
+            #
+            sessionsByAnimal = np.array([
+                session for session in factory
+                    if session.animal == animal
+            ], dtype=object)
+
+            #
+            index = np.argsort([session.date for session in sessionsByAnimal])
+
+            #
+            for session in sessionsByAnimal[index]:
+                sessions[animal].append(session)
+                if session.experiment == 'saline':
+                    labels[animal].append('A')
+                else:
+                    labels[animal].append('B')
+
+        return sessions, labels
+    
+    def _estimateSaccadeFrequencyForSingleSession(
+        self,
+        session,
+        ):
+        """
+        """
+
+        counts = {
+            'ipsi': 0,
+            'contra': 0,
+        }
+        duration = {
+            'ipsi': 0,
+            'contra': 0
+        }
+
+        for motion, direction in zip(['contra', 'ipsi'], ['ipsi', 'contra']):
+            
+            saccadeOnsetTimestamps = session.saccadeOnsetTimestamps()[direction]
+            gratingMotionTimestamps = zip(
+                session.getMotionOnsetTimestamps(-1 if motion == 'contra' else 1),
+                session.getMotionOffsetTimestamps(-1 if motion == 'contra' else 1)
             )
-            continue
-            x = centers[direction]
-            y = np.nanmean(self.result[direction], axis=0)
-            error = np.nanstd(self.result[direction], axis=0)
-            ax.bar(x, y, width=0.4, align='center', facecolor=color, edgecolor='k')
-            # ax.vlines(x, y - error, y + error, color='k')
+            for motionOnsetTimestamp, motionOffsetTimestamp in gratingMotionTimestamps:
+                mask = np.logical_and(
+                    saccadeOnsetTimestamps > motionOnsetTimestamp,
+                    saccadeOnsetTimestamps < motionOffsetTimestamp
+                )
+                nSaccades = mask.sum()
+                dt = motionOffsetTimestamp - motionOnsetTimestamp
+                counts[direction] += nSaccades
+                duration[direction] += dt
+
+        #
+        frequency = {
+            'ipsi': round(counts['ipsi'] / duration['ipsi'], 2),
+            'contra': round(counts['contra'] / duration['contra'], 2)
+        }
+        
+        return frequency
+    
+    def run(self, factory):
+        """
+        """
+
+        animals = np.unique([session.animal for session in factory]).tolist()
+        self.result = {
+            animal: list()
+                for animal in animals
+        }
+
+        #
+        sessions, labels = self._organizeSessions(factory)
+
+        #
+        for animal in animals:
+            for session, label in zip(sessions[animal], labels[animal]):
+                counts = self._estimateSaccadeFrequencyForSingleSession(session)
+                entry = (
+                    counts,
+                    session.date,
+                    label
+                )
+                self.result[animal].append(entry)
+
+        return self.result
+    
+    def visualize(self):
+        """
+        """
+
+        nRows = len(self.result.keys())
+        fig, axs = plt.subplots(nrows=nRows, sharex=False, sharey=True)
+        for animal, ax in zip(self.result.keys(), axs):
+            for direction, color in zip(['ipsi', 'contra'], ['b', 'r']):
+                x = [entry[1] for entry in self.result[animal]]
+                y = [entry[0][direction] for entry in self.result[animal]]
+                ax.plot(x, y, color=color)
+                xlabels = [entry[2] for entry in self.result[animal]]
+                ax.set_xticks(x)
+                ax.set_xticklabels(xlabels)
+            
+            #
+            ax.set_title(animal)
+        
+        #
+        axs[-1].set_xlabel('Time (by treatment)')
+        axs[-1].set_ylabel('Saccades/second')
+        return fig, axs
+    
+class SaccadeAmplitudeAnalysis():
+    """
+    """
+
+    def __init__(self):
+        """
+        """
+
+        self.result = None
+        self.metadata = None
+
+        return
+    
+    def _estimateSaccadeAmplitudeForSingleSession(
+        self,
+        session,
+        pointsForComparison=(35, 51)
+        ):
+        """
+        """
+
+        amplitudes = {
+            'ipsi': list(),
+            'contra': list()
+        }
+
+        saccadesWaveforms = session.load('saccadeWaveformsClassified')
+        for direction in ('ipsi', 'contra'):
+            for saccadeWaveform in saccadesWaveforms[direction]:
+                # TODO: Measure amplitude
+                pass
+
+        return
+    
+    def run(self, factory):
+        """
+        """
+
+        sessions, labels = organizeSessionsIntoPattern(factory, pattern='AB')
+
+        return
+    
+class ResponseClusteringAnalysis():
+    """
+    """
+
+    def __init__(self):
+        """
+        """
+
+        self.result = None
+        self.metadata = None
+
+        return
+    
+    def run(
+        self,
+        factory,
+        experiment='saline',
+        windows={
+            'visual': (0, 0.5),
+            'motor' : (-0.2, 0.3),
+        },
+        binsize=0.02,
+        nComponents=10,
+        response='visuomotor',
+        scale=False,
+        ):
+        """
+        """
+
+        X = list()
+
+        for session in factory:
+            if session.experiment != experiment:
+                continue
+            probes = session.parseVisualProbes()
+            saccades = session.saccadeOnsetTimestamps()
+            for neuron in session.spikeSortingResults:
+
+                # Ipsi motion probes
+                t, m1 = psth2(
+                    probes['extrasaccadic']['ipsi']['timestamps'],
+                    neuron.timestamps,
+                    window=windows['visual'],
+                    binsize=binsize 
+                )
+                fr1 = m1.mean(0) / binsize
+                mu1, sigma1 = neuron.describe(probes['extrasaccadic']['ipsi']['timestamps'], window=(-0.2, 0))
+                if sigma1 == 0:
+                    x1 = np.full(fr1.size, 0)
+                else:
+                    x1 = (fr1 - mu1) / sigma1
+
+                # Contra motion probes
+                t, m2 = psth2(
+                    probes['extrasaccadic']['contra']['timestamps'],
+                    neuron.timestamps,
+                    window=windows['visual'],
+                    binsize=binsize,
+                )
+                fr2 = m2.mean(0) / binsize
+                mu2, sigma2 = neuron.describe(probes['extrasaccadic']['contra']['timestamps'], window=(-0.2, 0))
+                if sigma2 == 0:
+                    x2 = np.full(fr2.size, 0)
+                else:
+                    x2 = (fr2 - mu2) / sigma2
+
+                # Ipsi saccades
+                t, m3 = psth2(
+                    saccades['ipsi'],
+                    neuron.timestamps,
+                    window=windows['motor'],
+                    binsize=binsize
+                )
+                fr3 = m3.mean(0) / binsize
+                mu3, sigma3 = neuron.describe(saccades['ipsi'], window=(-0.4, -0.2))
+                if sigma3 == 0:
+                    x3 = np.full(fr3.size, 0)
+                else:
+                    x3 = (fr3 - mu3) / sigma3
+
+                # Contra saccades
+                t, m4 = psth2(
+                    saccades['contra'],
+                    neuron.timestamps,
+                    window=windows['motor'],
+                    binsize=binsize
+                )
+                fr4 = m4.mean(0) / binsize
+                mu4, sigma4 = neuron.describe(saccades['contra'], window=(-0.4, -0.2))
+                if sigma4 == 0:
+                    x4 = np.full(fr4.size, 0)
+                else:
+                    x4 = (fr4 - mu4) / sigma4
+
+                # Concatenate PSTHs
+                sample = list()
+
+                # Normalize to minimum and maximum and concatenate
+                if response == 'visuomotor':
+                    iterable = (x1, x2, x3, x4)
+                elif response == 'visual':
+                    iterable = (x1, x2)
+                elif response == 'motor':
+                    iterable = (x3, x4)
+
+                #
+                for x in iterable:
+                    if scale:
+                        normed = np.interp(x, (x.min(), x.max()), (0, 1))
+                        if np.all(normed == 1.0):
+                            normed = np.zeros(normed.size)
+                        for feature in normed:
+                            sample.append(feature)
+                    else:
+                        for feature in x:
+                            sample.append(feature)
+
+                #
+                X.append(np.array(sample))
+
+        #
+        model = PCA(n_components=nComponents)
+        y = model.fit_transform(np.array(X))
+        self.result = {
+            'X': np.array(X),
+            'y': y
+        }
+
+        return self.result
+    
+    def visualizeResponseSpace(self, histogram=True, **kwargs_):
+        """
+        """
+
+        #
+        kwargs = {
+            'gridsize': 50,
+        }
+        kwargs.update(kwargs_)
+
+        #
+        fig, ax = plt.subplots()
+        x = self.result['y'][:, 0]
+        y = self.result['y'][:, 1]
+        if histogram:
+            margin = np.mean([x.max() - x.min(), y.max() - y.min()]) * 0.05
+            extent = (
+                x.min() + margin,
+                x.max() + margin,
+                y.min() + margin,
+                y.max() + margin,
+            )
+            ax.hexbin(x, y, extent=extent, **kwargs)
+        else:
+            ax.scatter(x, y, color='k', s=5, alpha=0.3)
 
         return fig, ax
+    
+    def visualizePrincipalComponents(
+        self,
+        percentile=90,
+        **kwargs_
+        ):
+        """
+        """
+
+        #
+        kwargs = {
+            'color': 'k',
+            'alpha': 0.3
+        }
+        kwargs.update(kwargs_)
+
+        # Identify the most extreme units
+        y1 = self.result['y'][:, :2]
+        centroid = np.median(y1, axis=0)
+        distances = np.linalg.norm(y1 - centroid, axis=1)
+        threshold = np.percentile(distances, percentile)
+        indices = np.arange(y1.shape[0])[distances > threshold]
+
+        #
+        fig, ax = plt.subplots()
+        y2 = self.result['y']
+        nUnits = indices.size
+        nComponents = y2.shape[1]
+        for iRow in indices:
+            features = y2[iRow, :]
+            ax.plot(np.arange(nComponents), features, **kwargs)
+
+        #
+        ax.set_xticks(np.arange(nComponents))
+        ax.set_xticklabels(np.arange(nComponents) + 1)
+        ax.set_xlabel('PCs (ranked)')
+        ax.set_ylabel('PC value (a.u.)')
+
+        return
+    
+class PremotorActivityAnalysis():
+    """
+    """
+
+    def __init__(self):
+        """
+        """
+        self.result = None
+        self.zero   = None
+        return
+    
+    def run(
+        self,
+        factory,
+        window=(-0.5, 0.5),
+        binsize=0.02,
+        matrixSortingParams={
+            'metric'   : 'sum',
+            'direction': 'contra',
+            'window'   : (-0.05, 0.1),
+        },
+        ):
+        """
+        """
+
+        self.result = dict()
+
+        for session in factory:
+            saccades = session.saccadeOnsetTimestamps()
+            heatmaps = {
+                'ipsi': list(),
+                'contra': list(),
+            }
+            for iRow, neuron in enumerate(session.spikeSortingResults):
+
+                #
+                for direction in ('ipsi', 'contra'):
+                    mu, sigma = neuron.describe(
+                        saccades[direction],
+                        window=np.array(window) - np.diff(window).item(),
+                        binsize=binsize
+                    )
+                    if sigma == 0:
+                        z = np.full(M.shape[1], 0)
+                    else:
+                        t, M = psth2(
+                            saccades[direction],
+                            neuron.timestamps,
+                            window=window,
+                            binsize=binsize
+                        )
+                        self.zero = np.where(t > 0)[0].min()
+                        fr = M.mean(0) / binsize
+                        z = (fr - mu) / sigma
+                    heatmaps[direction].append(z)
+            
+            #
+            heatmap = np.array(heatmaps[matrixSortingParams['direction']])
+            mask = np.logical_and(
+                t > matrixSortingParams['window'][0],
+                t < matrixSortingParams['window'][1]
+            )
+            if matrixSortingParams['metric'] == 'amplitude':
+                index = np.argsort([
+                    np.nanmax(row[mask])
+                        for row in heatmap
+                ])
+            elif matrixSortingParams['metric'] == 'sum':
+                index = np.argsort([
+                    np.nansum(row[mask])
+                        for row in heatmap
+                ])
+            else:
+                index = np.arange(heatmap.shape[0])
+
+            for direction in ('ipsi', 'contra'):
+                heatmap = np.array(heatmaps[direction])
+                self.result[(session.animal, session.date, direction)] = heatmap[index, :]
+
+        return self.result
+    
+    def visualize(
+        self,
+        vmin=-1,
+        vmax=1,
+        cmap='binary_r',
+        ):
+        """
+        """
+
+        nRows = int(len(self.result.keys()) / 2)
+        nCols = 2
+        fig, axs = plt.subplots(nrows=nRows, ncols=nCols)
+        if len(axs.shape) == 1:
+            axs = axs.reshape(-1, 2)
+        iRow = 0
+        for count, (animal, date, direction) in enumerate(list(self.result.keys())):
+
+            #
+            iCol = 0 if direction == 'ipsi' else 1
+            ax = axs[iRow, iCol]
+            heatmap = self.result[(animal, date, direction)]
+
+            #
+            mask = np.invert(np.all(heatmap == 0, axis=1))
+
+            #
+            mesh = ax.pcolormesh(heatmap[mask, :], vmin=vmin, vmax=vmax, cmap=cmap)
+            ax.vlines(self.zero + 1, 0, mask.sum(), color='r')
+            if count != 0 and count % 2 == 0:
+                iRow += 1
+
+        return fig, axs

@@ -7,8 +7,8 @@ OFF       = bytes('z', 'utf-8')
 RESET     = bytes('r', 'utf-8')
 
 commands = {
-    'signal' : bytes('s', 'utf-8'),
-    'connect': bytes('c', 'utf-8'),
+    'signal' : bytes('p', 'utf-8'),
+    'connect': bytes('h', 'utf-8'),
     'release': bytes('r', 'utf-8')
 }
 
@@ -38,7 +38,11 @@ class Microcontroller():
                     baudrate,
                     timeout=timeout
                 )
+<<<<<<< HEAD
             except (Exception, serial.SerialException):
+=======
+            except (serial.SerialException, serial.SerialTimeoutException):
+>>>>>>> b4f99f0f58a31161b68f58ca4f1f255a3f50d97e
                 continue
             connection.write(commands['connect'])
             message = connection.read()
