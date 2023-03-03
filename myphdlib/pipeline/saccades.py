@@ -651,7 +651,7 @@ def determineSaccadeOnset(session, deviations=1, tolerance=0.025, baseline=0.1):
 
     return
 
-def process(session):
+def process(session, pupilCenterName='pupilCenter'):
     """
     """
 
@@ -665,6 +665,9 @@ def process(session):
     ]
 
     for module_ in modules_:
-        module_(session)
+        if module_.__name__ == 'extractEyePosition':
+            module_(session, pupilCenterName=pupilCenterName)
+        else:
+            module_(session)
 
     return
