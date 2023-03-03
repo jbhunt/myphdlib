@@ -38,7 +38,11 @@ class Microcontroller():
                     baudrate,
                     timeout=timeout
                 )
+<<<<<<< HEAD
+            except (Exception, serial.SerialException):
+=======
             except (serial.SerialException, serial.SerialTimeoutException):
+>>>>>>> b4f99f0f58a31161b68f58ca4f1f255a3f50d97e
                 continue
             connection.write(commands['connect'])
             message = connection.read()
@@ -58,6 +62,7 @@ class Microcontroller():
 
         self._connection.write(commands['release'])
         self._connection.close()
+        self._connection = None
 
         return
 
