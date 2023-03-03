@@ -330,7 +330,7 @@ def detectPutativeSaccades(
 
         # Check for NaN values
         if np.isnan(eyePositionFiltered[:, columnIndex]).all():
-            for feature in ('waveforms', 'indices', 'amplitude'):
+            for feature in ('waveforms', 'indices', 'amplitudes'):
                 saccadeDetectionResults[feature][eye] = None
             continue
         
