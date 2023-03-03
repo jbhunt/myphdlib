@@ -2,37 +2,45 @@ import pickle
 import pathlib as pl
 from datetime import date
 
-def updateSessionMetadata(session, key, value):
+def updateSessionMetadata(session, key, value, intitialize=True):
     """
     Update the metadata dictionary at the head of the session folder
     """
 
+    #
     filename = session.home.joinpath('metadata.txt')
-    if filename.exists():
-        with open(filename, 'r') as stream:
-            lines = stream.readlines()
-        metadata = dict()
-        for line in lines:
-
-            #
-            key_, value_ = line.rstrip('\n').split(': ')
-            if key == 'Cohort':
-                value_ = int(value_)
-            elif key == 'Date':
-                value_ = date.fromisoformat(value_)
-            elif key == 'Session' and value_ == 'None':
-                value_ = None
-            metadata[key_] = value_
+    if filename.exists() == False:
+        if intitialize:
+            with open(filename, 'w'):
+                pass
+        else:
+            raise Exception('Metadata file does not exist')
+        
+    #
+    with open(filename, 'r') as stream:
+        lines = stream.readlines()
+    metadata = dict()
+    for line in lines:
 
         #
-        metadata[key] = value
+        key_, value_ = line.rstrip('\n').split(': ')
+        if key_ == 'Cohort':
+            value_ = int(value_)
+        elif key_ == 'Date':
+            value_ = date.fromisoformat(value_)
+        elif key_ == 'Session' and value_ == 'None':
+            value_ = None
+        metadata[key_] = value_
 
-        #
-        filename.unlink()
-        with open(filename, 'w') as stream:
-            for key_, value_ in metadata.items():
-                line = f'{key_}: {value_}\n'
-                stream.write(line)
+    #
+    metadata[key] = value
+
+    #
+    filename.unlink()
+    with open(filename, 'w') as stream:
+        for key_, value_ in metadata.items():
+            line = f'{key_}: {value_}\n'
+            stream.write(line)
 
     return
 
@@ -159,24 +167,6 @@ class SessionBase(object):
         return list(container.keys())
     
     @property
-    def animal(self): return
-
-    @property
-    def date(self): return
-
-    @property
-    def cohort(self): return
-
-    @property
-    def experiment(self): return
-
-    @property
-    def treatment(self): return
-
-    @property
-    def fps(self): return
-    
-    @property
     def leftCameraMovie(self): return
     
     @property
@@ -187,12 +177,6 @@ class SessionBase(object):
     
     @property
     def leftEyePose(self): return
-
-    @property
-    def leftCameraIFIs(self): return
-
-    @property
-    def rightCameraIFIs(self): return
 
     @property
     def outputFilePath(self):
@@ -234,7 +218,7 @@ class SessionBase(object):
     @property
     def cohort(self):
         if self._metadata is not None:
-            return self._metadata['Cohort'].lower()
+            return self._metadata['Cohort']
         
     @property
     def experiment(self):
