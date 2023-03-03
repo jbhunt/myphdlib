@@ -152,6 +152,7 @@ def decomposeEyePosition(session, nNeighbors=5, benchmark=False):
 
         # Check for missing eye position data
         if np.isnan(X1).all(0).all():
+            missingDataMask[side] = np.full(eyePositionCorrected.shape[0], True)
             continue
 
         # Impute NaN values
