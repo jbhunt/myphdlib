@@ -66,3 +66,14 @@ class GonogoSession(SessionBase):
             raise Exception('Could not locate the right camera timestamps')
         else:
             return result.pop()
+
+    @property
+    def leftCameraTimestamps(self):
+        """
+        """
+
+        result = list(self.sessionFolderPath.joinpath('videos').glob('*leftCam_timestamps.txt'))
+        if len(result) != 1:
+            raise Exception('Could not locate the left camera timestamps')
+        else:
+            return result.pop()
