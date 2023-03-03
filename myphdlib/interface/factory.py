@@ -67,12 +67,13 @@ class SessionFactory(object):
         
         return
     
-    def filter(
+    def produce(
         self,
         experiment=None,
         cohort=None,
         animals=None,
         dates=(None, None),
+        letters=(None, 'a', 'b', 'c'),
         ):
         """
         """
@@ -82,7 +83,7 @@ class SessionFactory(object):
             if experiment is not None and experiment_ != experiment:
                 continue
             for cohort_ in self.metadata[experiment_].keys():
-                if cohort is not None and cohort_ != cohort:
+                if cohort is not None and int(cohort_[-1]) != cohort:
                     continue
                 for animal_ in self.metadata[experiment_][cohort_].keys():
                     if animals is not None and animal_ not in animals:
@@ -94,13 +95,14 @@ class SessionFactory(object):
                         if dates[1] is not None:
                             if date_ > date.fromisoformat(dates[1]):
                                 continue
-                        entry = (
-                            experiment_,
-                            cohort_,
-                            animal_,
-                            date_
-                        )
-                        keys.append(entry)
+                        for letter in letters:
+                            entry = (
+                                experiment_,
+                                cohort_,
+                                animal_ if letter is None else animal_ + letter,
+                                date_
+                            )
+                            keys.append(entry)
 
         #
         sessions = list()

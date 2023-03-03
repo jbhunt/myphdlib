@@ -4,7 +4,7 @@ import pandas as pd
 import pathlib as pl
 from myphdlib.interface.session import SessionBase
 
-def readExperimentLog(log, animal, date, key='treatment'):
+def readExperimentLog(log, animal, date, letter=None, key='treatment'):
     """
     """
 
@@ -19,7 +19,11 @@ def readExperimentLog(log, animal, date, key='treatment'):
         raise Exception(f'{animal} is not a valid sheet name') from None
     
     #
-    row = sheet[sheet.Date == date].squeeze()
+    if letter is None:
+        row = sheet[sheet.Date == date].squeeze()
+    else:
+        mask = np.logical_and(sheet.Date == date, sheet.Letter == letter)
+        row = sheet[mask].squeeze()
 
     #
     if key in row.keys():
@@ -45,7 +49,11 @@ class MuscimolSession(SessionBase):
         """
         """
 
-        result = list(self.sessionFolderPath.joinpath('videos').glob('*video-acquisition-metadata*'))
+        if self.cohort == 1:
+            tag = 'video-acquisition-metadata'
+        elif self.cohort == 2:
+            tag = 'metadata'
+        result = list(self.sessionFolderPath.joinpath('videos').glob(f'*{tag}*'))
         if len(result) != 1:
             raise Exception('Could not locate video acquisition metadata file')
         with open(result.pop(), 'r')  as stream:
@@ -57,6 +65,36 @@ class MuscimolSession(SessionBase):
                     fps = int(metadata[key]['framerate'])
 
         return fps
+    
+    @property
+    def leftCameraMovie(self):
+        """
+        """
+
+        if self.cohort == 1:
+            tag = 'left-camera-movie'
+        elif self.cohort == 2:
+            tag = 'leftCam-0000_reflected'
+        result = list(self.sessionFolderPath.joinpath('videos').glob(f'*{tag}.mp4'))
+        if len(result) != 1:
+            return None
+        else:
+            return result.pop()
+    
+    @property
+    def rightCameraMovie(self):
+        """
+        """
+
+        if self.cohort == 1:
+            tag = 'right-camera-movie'
+        elif self.cohort == 2:
+            tag = 'rightCam-0000'
+        result = list(self.sessionFolderPath.joinpath('videos').glob(f'*{tag}*.mp4'))
+        if len(result) != 1:
+            return None
+        else:
+            return result.pop()   
     
     @property
     def leftEyePose(self):
