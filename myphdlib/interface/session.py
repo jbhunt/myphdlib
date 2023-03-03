@@ -57,7 +57,7 @@ class SessionBase(object):
             self.home = home
         elif type(home) == str:
             self.sessionFolderPath = pl.Path(home)
-            self.home =  home
+            self.home = pl.Path(home)
         else:
             raise Exception('session folder must be of type str of pathlib.Path')
 
@@ -176,7 +176,7 @@ class SessionBase(object):
     def leftEyePose(self): return
     
     @property
-    def leftEyePose(self): return
+    def rightEyePose(self): return
 
     @property
     def outputFilePath(self):
