@@ -379,6 +379,12 @@ def detectPutativeSaccades(
     # Filter out saccades that violate the minimum ISI
     if enforceMinimumISI:
         for eye in ('left', 'right'):
+
+            # Skip for missing data
+            if saccadeDetectionResults['waveforms'][eye] is None:
+                continue
+
+            #
             print(f'INFO[animal={session.animal}, date={session.date}]: Filtering saccades for the {eye} eye (n=?)', end='\r')
             while True:
                 nSaccades = saccadeDetectionResults['waveforms'][eye].shape[0]
