@@ -299,6 +299,13 @@ def detectPutativeSaccades(
     eyePositionFiltered = session.read('eyePositionFiltered')
     eyePositionImputed = np.full_like(eyePositionFiltered, np.nan)
     for iColumn, column in enumerate(eyePositionFiltered.T):
+
+        # Skip over columns that are entirely NaNs
+        if np.isnan(column).all():
+            eyePositionImputed[:, iColumn] = column
+            continue
+
+        # Impute missing data
         eyePositionImputed[:, iColumn] = np.interp(
             np.arange(column.size),
             np.arange(column.size)[np.isfinite(column)],
