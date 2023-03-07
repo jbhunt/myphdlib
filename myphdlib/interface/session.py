@@ -44,6 +44,22 @@ def updateSessionMetadata(session, key, value, intitialize=True):
 
     return
 
+def mapSaccadeDirection(eye, hemisphere):
+    """
+    Map eye movement direction to egocentric space (i.e., ipsi/contra)
+    """
+
+    if eye == 'left' and hemisphere == 'left':
+        ipsi, contra = 'temporal', 'nasal'
+    elif eye == 'left' and hemisphere == 'right':
+        ipsi, contra = 'nasal', 'temporal'
+    elif eye == 'right' and hemisphere == 'left':
+        ipsi, contra = 'nasal', 'temporal'
+    elif eye == 'right' and hemisphere == 'right':
+        ipsi, contra = 'temporal', 'nasal'
+
+    return ipsi, contra
+
 class SessionBase(object):
     """
     """
@@ -148,6 +164,28 @@ class SessionBase(object):
         """
         """
 
+        if key not in self.keys():
+            raise Exception(f'{key} is not a valid key')
+
+        if self.outputFilePath.exists() == False:
+            raise Exception('Could not locate output file')
+
+        with open(self.outputFilePath, 'rb') as stream:
+            try:
+                container = pickle.load(stream)
+            except EOFError as error:
+                raise Exception(f'Ouptut file is corrupted') from None
+            
+        #
+        container_ = dict()
+        for key_, value_ in container.items():
+            if key_ == key:
+                continue
+            container_[key_] = value_
+        self.outputFilePath.unlink()
+        with open(str(self.outputFilePath), 'wb') as stream:
+            pickle.dump(container_, stream)
+
         return
     
     def keys(self):
@@ -239,21 +277,21 @@ class SessionBase(object):
     def eye(self):
         return self._eye
     
+    @eye.setter
+    def eye(self, value):
+        if value in ('left', 'right'):
+            self._eye = value
+        return
+    
     @property
     def saccadeWaveformsIpsi(self):
         """
         Get the ipsilateral saccade waveforms
         """
 
+        ipsi, contra = mapSaccadeDirection(self.eye, self.hemisphere)
         saccadeClassificationResults = self.read('saccadeClassificationResults')
-        if self.eye == 'left' and self.hemisphere == 'left':
-            waves = saccadeClassificationResults[self.eye]['temporal']['waveforms']
-        elif self.eye == 'left' and self.hemisphere == 'right':
-            waves = saccadeClassificationResults[self.eye]['nasal']['waveforms']
-        elif self.eye == 'right' and self.hemisphere == 'left':
-            waves = saccadeClassificationResults[self.eye]['nasal']['waveforms']
-        elif self.eye == 'right' and self.hemisphere == 'right':
-            waves = saccadeClassificationResults[self.eye]['temporal']['waveforms']
+        waves = saccadeClassificationResults[self.eye][ipsi]['waveforms']
 
         return waves
     
@@ -263,15 +301,31 @@ class SessionBase(object):
         Get the ipsilateral saccade waveforms
         """
 
+        ipsi, contra = mapSaccadeDirection(self.eye, self.hemisphere)
         saccadeClassificationResults = self.read('saccadeClassificationResults')
-        if self.eye == 'left' and self.hemisphere == 'left':
-            waves = saccadeClassificationResults[self.eye]['nasal']['waveforms']
-        elif self.eye == 'left' and self.hemisphere == 'right':
-            waves = saccadeClassificationResults[self.eye]['temporal']['waveforms']
-        elif self.eye == 'right' and self.hemisphere == 'left':
-            waves = saccadeClassificationResults[self.eye]['temporal']['waveforms']
-        elif self.eye == 'right' and self.hemisphere == 'right':
-            waves = saccadeClassificationResults[self.eye]['nasal']['waveforms']
+        waves = saccadeClassificationResults[self.eye][contra]['waveforms']
 
         return waves
+    
+    @property
+    def saccadeIndicesIpsi(self):
+        """
+        """
+
+        ipsi, contra = mapSaccadeDirection(self.eye, self.hemisphere)
+        saccadeClassificationResults = self.read('saccadeClassificationResults')
+        indices = saccadeClassificationResults[self.eye][ipsi]['indices']
+
+        return indices
+    
+    @property
+    def saccadeIndicesContra(self):
+        """
+        """
+
+        ipsi, contra = mapSaccadeDirection(self.eye, self.hemisphere)
+        saccadeClassificationResults = self.read('saccadeClassificationResults')
+        indices = saccadeClassificationResults[self.eye][contra]['indices']
+
+        return indices
 
