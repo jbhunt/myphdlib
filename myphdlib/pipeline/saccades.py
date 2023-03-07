@@ -1,10 +1,11 @@
 import time
 import numpy as np
 import pandas as pd
-from sklearn.impute import KNNImputer, SimpleImputer
-from sklearn.decomposition import PCA, IncrementalPCA
+from sklearn.impute import SimpleImputer
+from sklearn.decomposition import PCA
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import GridSearchCV
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from scipy.stats import pearsonr
 from scipy.signal import find_peaks as findPeaks
 from scipy.optimize import curve_fit as fitCurve
@@ -235,16 +236,16 @@ def filterEyePosition(session, t=25):
         smoothingWindowSize += 1
 
     # Filter
-    eyePositionDecomposed = session.eyePositionDecomposed
-    eyePositionFiltered = np.full_like(eyePositionDecomposed, np.nan)
-    for columnIndex in range(eyePositionDecomposed.shape[1]):
+    eyePositionReoriented = session.eyePositionReoriented
+    eyePositionFiltered = np.full_like(eyePositionReoriented, np.nan)
+    for columnIndex in range(eyePositionReoriented.shape[1]):
 
         #
-        if np.isnan(eyePositionDecomposed[:, columnIndex]).all():
+        if np.isnan(eyePositionReoriented[:, columnIndex]).all():
             continue
 
         # Interpolate missing values
-        interpolated = interpolate(eyePositionDecomposed[:, columnIndex])
+        interpolated = interpolate(eyePositionReoriented[:, columnIndex])
 
         #
         smoothed = smooth(interpolated, smoothingWindowSize)
@@ -416,6 +417,7 @@ def detectPutativeSaccades(
 
 # TODO: Exclude duplicate labeled saccades
 # TODO: Implement a method for NOT overwriting previously collected saccades waveforms
+
 def labelPutativeSaccades(session, nSamplesPerEye=30):
     """
     """
@@ -461,63 +463,86 @@ def labelPutativeSaccades(session, nSamplesPerEye=30):
 
     return
 
-def classifyPutativeSaccades(factory, **classifierKwargs):
+def _trainSaccadeClassifier(sessions, classifier='lda'):
     """
     """
-
-    # Collect the training dataset
-    X = list()
-    y = list()
-    for session in factory:
-        if 'saccadeWaveformsLabeled' not in session.keys():
-            continue
-        saccadeWaveformsLabeled = session.read('saccadeWaveformsLabeled')
-        for eye in ('left', 'right'):
-            if saccadeWaveformsLabeled[eye]['X'] is None:
-                continue
-            samples = list()
-            labels = list()
-            iterable = zip(
-                saccadeWaveformsLabeled[eye]['X'],
-                saccadeWaveformsLabeled[eye]['y']
-            )
-            for sample, label in iterable:
-                if np.isnan(sample).any():
-                    continue
-                else:
-                    samples.append(sample)
-                    labels.append(label)
-            samples = np.diff(np.array(samples), axis=1)
-            labels = np.array(labels)
-            mask = np.invert(np.isnan(labels)).flatten()
-            for sample, label in zip(samples[mask, :], labels[mask, :]):
-                X.append(sample)
-                y.append(label)
-
-    X = np.array(X)
-    y = np.array(y).reshape(-1, 1)
-
-    # Init and fit the classifier
-    # TODO: grid search CV
-    grid = {
-        'hidden_layer_sizes': [
-            (10 , 10 , 10 ),
-            (100, 100, 100),
-            (200, 200, 200),
-            (300, 300, 300)
-        ],
-        'max_iter': [
-            1000000,
-        ]
-    }
-    grid.update(classifierKwargs)
-    net = MLPClassifier()
-    search = GridSearchCV(net, grid)
-    search.fit(X, y.ravel())
-    clf = search.best_estimator_
 
     #
-    for session in factory:
+    pca = PCA(n_components=2)
+    xTrain = list()
+    xTest = list()
+    y = list()
+
+    #
+    for session in sessions:
+
+        #
+        if 'saccadeDetectionResults' in session.keys():
+            saccadeDetectionResults = session.read('saccadeDetectionResults')
+            for eye in ('left', 'right'):
+                saccadeWaveformsUnlabeled = saccadeDetectionResults['waveforms'][eye]
+                for sample in saccadeWaveformsUnlabeled:
+                    if np.isnan(sample).any():
+                        continue
+                    xTest.append(np.diff(sample))
+        
+        #
+        if 'saccadeWaveformsLabeled' in session.keys():
+            saccadeLabelingResults = session.read('saccadeWaveformsLabeled')
+            for eye in ('left', 'right'):
+                saccadeWaveformsLabeled = saccadeLabelingResults[eye]
+                iterable = zip(
+                    saccadeWaveformsLabeled['X'],
+                    saccadeWaveformsLabeled['y']
+                )
+                for sample, label in iterable:
+                    if np.isnan(sample).any():
+                        continue
+                    xTrain.append(np.diff(sample))
+                    y.append(label.item())
+
+    #
+    xTrain = np.array(xTrain)
+    xTest = np.array(xTest)
+    y = np.array(y)
+
+    # Decompose
+    pca.fit(np.vstack([xTrain, xTest]))
+    xTrainDecomposed = pca.transform(xTrain)
+
+    # Fit
+    if classifier == 'net':
+        grid = {
+            'hidden_layer_sizes': [
+                (10 , 10 , 10 ),
+                (100, 100, 100),
+                (200, 200, 200),
+                (300, 300, 300)
+            ],
+            'max_iter': [
+                1000000,
+            ]
+        }
+        clf = MLPClassifier()
+        search = GridSearchCV(clf, grid)
+        search.fit(xTrainDecomposed, y.ravel())
+        return pca, search.best_estimator_
+    
+    #
+    elif classifier == 'lda':
+        lda = LinearDiscriminantAnalysis()
+        lda.fit(xTrainDecomposed, y.ravel())
+        return pca, lda
+
+def classifyPutativeSaccades(sessions, classifier='lda'):
+    """
+    """
+
+    #
+    pca, clf = _trainSaccadeClassifier(sessions)
+
+    #
+    for session in sessions:
 
         #
         if 'saccadeWaveformsClassified' in session.keys():
@@ -564,7 +589,9 @@ def classifyPutativeSaccades(factory, **classifierKwargs):
                     continue
                 else:
                     waveforms.append(wave)
-            samples = np.diff(np.array(waveforms), axis=1)
+            samples = pca.transform(
+                np.diff(np.array(waveforms), axis=1)
+            )
             labels = clf.predict(samples)
 
             #

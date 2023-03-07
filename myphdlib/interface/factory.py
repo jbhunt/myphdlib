@@ -31,17 +31,25 @@ class SessionFactory(object):
         """
 
         self.volumes = list()
+
+        # Windows
         if os.name == 'nt':
             for letter in letters:
                 drive = pl.Path(f'{letter}:/')
                 if drive.exists() == False:
                     continue
                 name, serialno, mcl, flags, system = win32api.GetVolumeInformation(str(drive))
-                if bool(re.search(f'{tag}*\d', name)):
+                if bool(re.search(f'.*{tag}.*', name)):
                     self.volumes.append(drive)
 
+        # Linux
         elif os.name == 'posix':
-            pass
+            for user in pl.Path('/media/').iterdir():
+                for drive in user.iterdir():
+                    if bool(re.search(f'.*{tag}.*'), str(drive.name)):
+                        self.volumes.append(drive)
+
+        #
         else:
             raise Exception(f'{os.name} is not a supported OS')
         
