@@ -50,10 +50,10 @@ class MuscimolSession(SessionBase):
         """
 
         if self.cohort == 1:
-            tag = 'video-acquisition-metadata'
+            tail = 'video-acquisition-metadata.yml'
         elif self.cohort == 2:
-            tag = 'metadata'
-        result = list(self.sessionFolderPath.joinpath('videos').glob(f'*{tag}*'))
+            tail = 'metadata.yaml'
+        result = list(self.sessionFolderPath.joinpath('videos').glob(f'*{tail}'))
         if len(result) != 1:
             raise Exception('Could not locate video acquisition metadata file')
         with open(result.pop(), 'r')  as stream:
@@ -101,7 +101,11 @@ class MuscimolSession(SessionBase):
         """
         """
 
-        result = list(self.sessionFolderPath.joinpath('videos').glob('*left-camera-movie*.csv'))
+        if self.cohort == 1:
+            tail = 'left-camera-movieDLC_resnet50_GazerMay24shuffle1_1030000.csv'
+        elif self.cohort == 2:
+            tail = 'leftCam-0000_reflectedDLC_resnet50_GazerMay24shuffle1_1030000.csv'
+        result = list(self.sessionFolderPath.joinpath('videos').glob(f'*{tail}'))
         if len(result) != 1:
             return None
         else:
@@ -112,7 +116,11 @@ class MuscimolSession(SessionBase):
         """
         """
 
-        result = list(self.sessionFolderPath.joinpath('videos').glob('*right-camera-movie*.csv'))
+        if self.cohort == 1:
+            tail = 'right-camera-movie-reflectedDLC_resnet50_GazerMay24shuffle1_1030000.csv'
+        elif self.cohort == 2:
+            tail = 'rightCam-0000DLC_resnet50_GazerMay24shuffle1_1030000.csv'
+        result = list(self.sessionFolderPath.joinpath('videos').glob(f'*{tail}'))
         if len(result) != 1:
             return None
         else:
@@ -123,7 +131,11 @@ class MuscimolSession(SessionBase):
         """
         """
 
-        result = list(self.sessionFolderPath.joinpath('videos').glob('*left-camera-timestamps*'))
+        if self.cohort == 1:
+            tag = 'left-camera-timestamps'
+        elif self.cohort == 2:
+            tag = 'leftCam_timestamps'
+        result = list(self.sessionFolderPath.joinpath('videos').glob(f'*{tag}*'))
         if len(result) != 1:
             return None
         else:
@@ -134,7 +146,11 @@ class MuscimolSession(SessionBase):
         """
         """
         
-        result = list(self.sessionFolderPath.joinpath('videos').glob('*right-camera-timestamps*'))
+        if self.cohort == 1:
+            tag = 'right-camera-timestamps'
+        elif self.cohort == 2:
+            tag = 'rightCam_timestamps'
+        result = list(self.sessionFolderPath.joinpath('videos').glob(f'*{tag}*'))
         if len(result) != 1:
             return None
         else:
