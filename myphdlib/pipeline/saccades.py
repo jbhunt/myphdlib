@@ -463,7 +463,12 @@ def labelPutativeSaccades(session, nSamplesPerEye=30):
 
     return
 
-def _trainSaccadeClassifier(sessions, classifier='lda'):
+def _trainSaccadeClassifier(
+    sessions,
+    classifier='net',
+    decompose=False,
+    features='position'
+    ):
     """
     """
 
@@ -484,7 +489,10 @@ def _trainSaccadeClassifier(sessions, classifier='lda'):
                 for sample in saccadeWaveformsUnlabeled:
                     if np.isnan(sample).any():
                         continue
-                    xTest.append(np.diff(sample))
+                    if features == 'position':
+                        xTest.append(sample)
+                    elif features == 'velocity':
+                        xTest.append(np.diff(sample))
         
         #
         if 'saccadeWaveformsLabeled' in session.keys():
@@ -498,7 +506,10 @@ def _trainSaccadeClassifier(sessions, classifier='lda'):
                 for sample, label in iterable:
                     if np.isnan(sample).any():
                         continue
-                    xTrain.append(np.diff(sample))
+                    if features == 'position':
+                        xTrain.append(sample)
+                    elif features == 'velocity':
+                        xTrain.append(np.diff(sample))
                     y.append(label.item())
 
     #
@@ -507,8 +518,12 @@ def _trainSaccadeClassifier(sessions, classifier='lda'):
     y = np.array(y)
 
     # Decompose
-    pca.fit(np.vstack([xTrain, xTest]))
-    xTrainDecomposed = pca.transform(xTrain)
+    if decompose:
+        pca.fit(np.vstack([xTrain, xTest]))
+        xTrainDecomposed = pca.transform(xTrain)
+        X = xTrainDecomposed
+    else:
+        X = xTrain
 
     # Fit
     if classifier == 'net':
@@ -523,23 +538,35 @@ def _trainSaccadeClassifier(sessions, classifier='lda'):
                 1000000,
             ]
         }
-        clf = MLPClassifier()
-        search = GridSearchCV(clf, grid)
-        search.fit(xTrainDecomposed, y.ravel())
-        return pca, search.best_estimator_
+        net = MLPClassifier()
+        search = GridSearchCV(net, grid)
+        search.fit(X, y.ravel())
+        clf = search.best_estimator_
     
     #
     elif classifier == 'lda':
         lda = LinearDiscriminantAnalysis()
-        lda.fit(xTrainDecomposed, y.ravel())
-        return pca, lda
+        lda.fit(X, y.ravel())
+        clf = lda
 
-def classifyPutativeSaccades(sessions, classifier='lda'):
+    return pca, clf
+
+def classifyPutativeSaccades(
+    sessions,
+    classifier='net',
+    decompose=False,
+    features='position'
+    ):
     """
     """
 
     #
-    pca, clf = _trainSaccadeClassifier(sessions)
+    pca, clf = _trainSaccadeClassifier(
+        sessions,
+        classifier,
+        decompose,
+        features
+    )
 
     #
     for session in sessions:
@@ -584,34 +611,42 @@ def classifyPutativeSaccades(sessions, classifier='lda'):
 
             #
             waveforms = list()
-            for wave in saccadeDetectionResults['waveforms'][eye]:
-                if np.isnan(wave).any():
+            indices = list()
+            for index, waveform in enumerate(saccadeDetectionResults['waveforms'][eye]):
+                if np.isnan(waveform).any():
                     continue
-                else:
-                    waveforms.append(wave)
-            samples = pca.transform(
-                np.diff(np.array(waveforms), axis=1)
-            )
+                if features == 'position':
+                    waveforms.append(waveform)
+                elif features == 'velocity':
+                    waveforms.append(np.diff(waveform))
+                indices.append(saccadeDetectionResults['indices'][eye][index])
+            
+            #
+            if decompose:
+                samples = pca.transform(
+                    np.diff(np.array(waveforms), axis=1)
+                )
+            else:
+                samples = np.array(waveforms)
+
+            #
             labels = clf.predict(samples)
 
             #
-            directions = list()
-            for label in labels.flatten():
-                if label == -1:
-                    directions.append('temporal')
-                elif label == 1:
-                    directions.append('nasal')
-                else:
-                    directions.append(None)
-
-            # Parse the putative saccades into classes
-            for sampleIndex, (sample, direction) in enumerate(zip(samples, directions)):
-                if direction is None:
+            iterable = zip(
+                waveforms,
+                labels,
+                indices
+            )
+            for waveform, label, index in iterable:
+                if label == 0:
                     continue
-                saccadeOnsetIndex = saccadeDetectionResults['indices'][eye][sampleIndex]
-                saccadeClassificationResults[eye][direction]['indices'].append(saccadeOnsetIndex)
-                saccadeWaveform = saccadeDetectionResults['waveforms'][eye][sampleIndex, :]
-                saccadeClassificationResults[eye][direction]['waveforms'].append(saccadeWaveform)
+                elif label == 1:
+                    direction = 'nasal'
+                elif label == -1:
+                    direction = 'temporal'
+                saccadeClassificationResults[eye][direction]['waveforms'].append(waveform)
+                saccadeClassificationResults[eye][direction]['indices'].append(index) 
     
         # Save the results
         for eye in ('left', 'right'):
