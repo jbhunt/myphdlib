@@ -33,6 +33,16 @@ class GonogoSession(SessionBase):
                     fps = int(metadata[key]['framerate'])
 
         return fps
+    @property
+    def probeMetadata(self):
+        """
+        """
+
+        result = list(self.sessionFolderPath.joinpath('videos').glob('*ProbeMetadata.txt'))
+        if len(result) != 1:
+            raise Exception('Could not locate the probe metadata')
+        else:
+            return result.pop()
 
     @property
     def rightCameraMovie(self):
