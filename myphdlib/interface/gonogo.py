@@ -55,6 +55,16 @@ class GonogoSession(SessionBase):
             raise Exception('Could not locate the left eye pose estimate')
         else:
             return result.pop()
+    @property
+    def tonguePose(self):
+        """
+        """
+
+        result = list(self.sessionFolderPath.joinpath('videos').glob('*licksNov3shuffle1*'))
+        if len(result) != 1:
+            raise Exception('Could not locate the tongue pose estimate')
+        else:
+            return result.pop()
 
     @property
     def rightCameraTimestamps(self):
