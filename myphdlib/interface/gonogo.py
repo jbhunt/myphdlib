@@ -77,3 +77,14 @@ class GonogoSession(SessionBase):
             raise Exception('Could not locate the left camera timestamps')
         else:
             return result.pop()
+
+    @property
+    def labjackFolder(self):
+        """
+        """
+
+        result = list(self.sessionFolderPath.joinpath('labjack').glob('*test*'))
+        if len(result) != 1:
+            raise Exception('Could not locate the Labjack folder')
+        else:
+            return result.pop()
