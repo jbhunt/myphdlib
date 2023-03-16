@@ -142,15 +142,15 @@ class GonogoSession(SessionBase):
         """
         Extract timestamps of licks recorded by DLC and synchronized with Labjack data and return lick timestamps
         """
-         csv = session.tonguePose
-         spoutLikelihood = loadBodypartData(csv, bodypart='spout', feature='likelihood')
-         M = np.diff(spoutLikelihood, n=1)
-         M1 = M*-1
-         peaks, _ = sp.signal.find_peaks(M1, height=0.9, threshold=None, distance=None, prominence=None, width=None, wlen=None, rel_height=0.5, plateau_size=None)
-         frameIndex = np.arange(len(loadBodypartData(csv, bodypart='spout', feature='likelihood')))
-         peakFrames = frameIndex[peaks]
-         lickTimestamps = frameTimestamps[peakFrames]
-         return lickTimestamps
+        csv = session.tonguePose
+        spoutLikelihood = loadBodypartData(csv, bodypart='spout', feature='likelihood')
+        M = np.diff(spoutLikelihood, n=1)
+        M1 = M*-1
+        peaks, _ = sp.signal.find_peaks(M1, height=0.9, threshold=None, distance=None, prominence=None, width=None, wlen=None, rel_height=0.5, plateau_size=None)
+        frameIndex = np.arange(len(loadBodypartData(csv, bodypart='spout', feature='likelihood')))
+        peakFrames = frameIndex[peaks]
+        lickTimestamps = frameTimestamps[peakFrames]
+        return lickTimestamps
 
     def createLickRaster(self):
         """
