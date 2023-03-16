@@ -129,7 +129,7 @@ class GonogoSession(SessionBase):
         probeTimestamps = timestamps[probeIndices]
         return probeTimestamps
 
-     def extractFrameTimestamps(self):
+    def extractFrameTimestamps(self):
         """
         Extract timestamps of frames from Labjack data and return frame timestamps
         """
