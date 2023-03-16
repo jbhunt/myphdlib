@@ -4,7 +4,7 @@ import yaml
 if os.name == 'nt':
     import win32api
 import pathlib as pl
-from datetime import dated
+#from datetime import dated
 from string import ascii_uppercase as letters
 from myphdlib.interface.muscimol import MuscimolSession
 
