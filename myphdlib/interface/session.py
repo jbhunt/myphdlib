@@ -1,6 +1,7 @@
 import pickle
 import pathlib as pl
 from datetime import date
+from types import SimpleNamespace
 
 def updateSessionMetadata(session, key, value, intitialize=True):
     """
@@ -83,6 +84,7 @@ class SessionBase(object):
 
         #
         self._eye = eye
+        self._folders = None
 
         return
     
@@ -328,4 +330,34 @@ class SessionBase(object):
         indices = saccadeClassificationResults[self.eye][contra]['indices']
 
         return indices
+    
+    @property
+    def folders(self):
+        """
+        """
+
+        if self._folders is None:
+            folders_ = {
+                'videos': None,
+                'labjack': None,
+                'ephys': None
+            }
+            for folder in ('videos', 'Videos'):
+                path = self.home.joinpath(folder)
+                if path.exists():
+                    folders_['videos'] = path
+                    break
+            for folder in ('labjack', 'LabJack'):
+                path = self.home.joinpath(folder)
+                if path.exists():
+                    folders_['labjack'] = path
+                    break
+            for folder in ('ephys', 'neuropixels'):
+                path = self.home.joinpath(folder)
+                if path.exists():
+                    folders_['ephys'] = path
+                    break
+            self._folders = SimpleNamespace(**folders_)
+
+        return self._folders
 
