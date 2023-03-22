@@ -486,6 +486,8 @@ def _trainSaccadeClassifier(
             saccadeDetectionResults = session.read('saccadeDetectionResults')
             for eye in ('left', 'right'):
                 saccadeWaveformsUnlabeled = saccadeDetectionResults['waveforms'][eye]
+                if saccadeWaveformsUnlabeled is None:
+                    continue
                 for sample in saccadeWaveformsUnlabeled:
                     if np.isnan(sample).any():
                         continue
