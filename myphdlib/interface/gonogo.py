@@ -3,6 +3,11 @@ import numpy as np
 import pandas as pd
 import pathlib as pl
 from myphdlib.interface.session import SessionBase
+from myphdlib.general.labjack import loadLabjackData
+from myphdlib.general.labjack import extractLabjackEvent
+from myphdlib.extensions.deeplabcut import loadBodypartData
+import scipy as sp
+from matplotlib import pylab as plt
 
 class GonogoSession(SessionBase):
     """
@@ -120,25 +125,32 @@ class GonogoSession(SessionBase):
 
         return labjackData
 
-    def extractProbeTimestamps(self):
+    def extractProbeTimestamps(self, session):
         """
         Extract timestamps of probes from Labjack data and return probe timestamps
         """
+        labjackDirectory = session.labjackFolder
+        labjackData = loadLabjackData(labjackDirectory)
         timestamps = labjackData[:, 0]
-        probeOnset, probeIndices = extractLabjackEvent(data, 6, edge = 'rising', pulseWidthRange = (20, 700))
+        probeOnset, probeIndices = extractLabjackEvent(labjackData, 6, edge = 'rising', pulseWidthRange = (20, 700))
         probeTimestamps = timestamps[probeIndices]
+        self.probeTimestamps = probeTimestamps
         return probeTimestamps
 
-    def extractFrameTimestamps(self):
+    def extractFrameTimestamps(self, session):
         """
         Extract timestamps of frames from Labjack data and return frame timestamps
         """
+        labjackDirectory = session.labjackFolder
+        labjackData = loadLabjackData(labjackDirectory)
         timestamps = labjackData[:, 0]
-        frameOnset, frameIndices = extractLabjackEvent(data, 7, edge = 'both')
+        frameOnset, frameIndices = extractLabjackEvent(labjackData, 7, edge = 'both')
         frameTimestamps = timestamps[frameIndices]
-        return frameTimestamps   
+        self.frameTimestamps = frameTimestamps
+        return frameTimestamps 
+          
 
-    def extractLickTimestamps(self):
+    def extractLickTimestamps(self, session):
         """
         Extract timestamps of licks recorded by DLC and synchronized with Labjack data and return lick timestamps
         """
@@ -149,7 +161,8 @@ class GonogoSession(SessionBase):
         peaks, _ = sp.signal.find_peaks(M1, height=0.9, threshold=None, distance=None, prominence=None, width=None, wlen=None, rel_height=0.5, plateau_size=None)
         frameIndex = np.arange(len(loadBodypartData(csv, bodypart='spout', feature='likelihood')))
         peakFrames = frameIndex[peaks]
-        lickTimestamps = frameTimestamps[peakFrames]
+        lickTimestamps = self.frameTimestamps[peakFrames]
+        self.lickTimestamps = lickTimestamps
         return lickTimestamps
 
     def createLickRaster(self):
@@ -157,8 +170,8 @@ class GonogoSession(SessionBase):
         Find licks within a given range of each probe and plot in a raster, return plot
         """
         L = list()
-        for probe in probeTimestamps:
-            lickRelative = (lickTimestamps - probe)
+        for probe in self.probeTimestamps:
+            lickRelative = (self.lickTimestamps - probe)
             mask = np.logical_and(
                 lickRelative > -2,
                 lickRelative < 5,
@@ -181,7 +194,7 @@ class GonogoSession(SessionBase):
         fig.set_figwidth(6)
         return fig
 
-    def extractContrastValues(self):
+    def extractContrastValues(self, session):
         """
         Reads probe metadata file and zips array of contrast values with probe timestamps, returns zipped list of contrast values
         """
@@ -196,18 +209,19 @@ class GonogoSession(SessionBase):
             indStop = lines.find(', ');
             contrastValues.append(lines[(indStart + 1):(indStop + 6)])
         contrastValues = np.array(contrastValues)
-        zipped = zip(contrastValues, probeTimestamps)
-        return zipped
+        self.contrastValues = contrastValues
+        return contrastValues
     
     def sortUniqueContrasts(self):
         """
         Sorts the array of contrast values into a dictionary with 4 keys representing the unique contrast values, returns the dictionary
         """
         dictionary = dict() # Initialize an empty dictionary
-        uniqueContrastValues = np.unique(contrastValues) # Find the unique constrast values
+        uniqueContrastValues = np.unique(self.contrastValues) # Find the unique constrast values
         for uniqueContrastValue in uniqueContrastValues: # Iterterate through the unique contrast values
-            mask = contrastValues == uniqueContrastValue # Create a mask for each unique contrast value
-            dictionary[uniqueContrastValue] = np.array(probeTimestamps)[mask]
+            mask = self.contrastValues == uniqueContrastValue # Create a mask for each unique contrast value
+            dictionary[uniqueContrastValue] = np.array(self.probeTimestamps)[mask]
+        self.dictionary = dictionary
         return dictionary
 
     def createContrastRaster(self):
@@ -220,9 +234,9 @@ class GonogoSession(SessionBase):
         list5 = list()
         listtemp = list()
 
-        for key in dictionary:
-            for probeTimestamp in dictionary[key]:
-                lickRelative = (lickTimestamps - probeTimestamp)
+        for key in self.dictionary:
+            for probeTimestamp in self.dictionary[key]:
+                lickRelative = (self.lickTimestamps - probeTimestamp)
                 mask = np.logical_and(
                     lickRelative > min,
                     lickRelative < max,
@@ -323,7 +337,7 @@ class GonogoSession(SessionBase):
         ax.set_xlabel('Trials by Contrast Change')
         return fig
 
-    count1 = 0
+        count1 = 0
         count6 = 0
         count5 = 0
         count4 = 0
@@ -365,3 +379,6 @@ class GonogoSession(SessionBase):
         ax.set_ylabel('Fraction of Response Trials')
         ax.set_xlabel('Trials by Contrast Change')
         return fig
+
+    def test(self): return
+    def test2(self): return
