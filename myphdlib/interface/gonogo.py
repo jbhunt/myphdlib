@@ -150,7 +150,7 @@ class GonogoSession(SessionBase):
         return frameTimestamps 
           
 
-    def extractLickTimestamps(self, session):
+    def extractLickTimestamps(self, session, frameTimestamps):
         """
         Extract timestamps of licks recorded by DLC and synchronized with Labjack data and return lick timestamps
         """
@@ -165,7 +165,7 @@ class GonogoSession(SessionBase):
         self.lickTimestamps = lickTimestamps
         return lickTimestamps
 
-    def createLickRaster(self):
+    def createLickRaster(self, probeTimestamps, lickTimestamps):
         """
         Find licks within a given range of each probe and plot in a raster, return plot
         """
@@ -212,7 +212,7 @@ class GonogoSession(SessionBase):
         self.contrastValues = contrastValues
         return contrastValues
     
-    def sortUniqueContrasts(self):
+    def sortUniqueContrasts(self, probeTimestamps, contrastValues):
         """
         Sorts the array of contrast values into a dictionary with 4 keys representing the unique contrast values, returns the dictionary
         """
@@ -224,7 +224,7 @@ class GonogoSession(SessionBase):
         self.dictionary = dictionary
         return dictionary
 
-    def createContrastRaster(self):
+    def createContrastRaster(self, probeTimestamps, lickTimestamps, dictionary):
         """
         Create a raster sorted by contrast, returns plot
         """
@@ -289,96 +289,112 @@ class GonogoSession(SessionBase):
             ax.vlines(x, y0, y1, color='r')
         return fig
 
+    def extractSaccadeTimestamps(self, session, frameTimestamps):
+        """
+        Extract indices of saccades and use frame timestamps to extract total saccade timestamps, not nasal vs temporal
+        """
+        res = session.read('saccadeClassificationResults')
+        nasalIndices = res['left']['nasal']['indices']
+        temporalIndices = res['left']['temporal']['indices']
+        nasalSaccades = self.frameTimestamps[nasalIndices]
+        temporalSaccades = self.frameTimestamps[temporalIndices]
+        totalSaccades = np.concatenate((nasalSaccades, temporalSaccades))
+        self.totalSaccades = totalSaccades
+        return totalSaccades
+
+    def createZippedList(self, probeTimestamps, totalSaccades):
+        """
+        Create a boolean variable to determine whether trial is perisaccadic and create zipped list of probetimestamps, contrast values, and boolean variable
+        """
+        perisaccadicProbeBool = list()
+        for probe in self.probeTimestamps:
+            saccadesRelative = (self.totalSaccades - probe)
+            mask = np.logical_and(
+                saccadesRelative > -0.05,
+                saccadesRelative < 0.05
+            )
+            perisaccades = saccadesRelative[mask]
+            if any(perisaccades):
+                perisaccadicTrial = True
+            else:
+                perisaccadicTrial = False
+            perisaccadicProbeBool.append(perisaccadicTrial)
+    
+        perisaccadicProbeBool = np.array(perisaccadicProbeBool)
+
+        zipped3 = list(zip(self.probeTimestamps, self.contrastValues, perisaccadicProbeBool))
+        self.zipped3 = zipped3
+        self.perisaccadicProbeBool = perisaccadicProbeBool
+        return zipped3, perisaccadicProbeBool
+
+    def createPeriAndExtraSaccadicLists(self, perisaccadicProbeBool, probeTimestamps, contrastValues):
+        """
+        Based on boolean variable, separates probetimestamps and contrast values into zipped lists of perisaccadic and extrasaccadic trials
+        """
+        listPT = list()
+        listCT = list()
+        listPF = list()
+        listCF = list()
+        probeBoolIndex = 0
+        for probeBool in self.perisaccadicProbeBool:
+            if probeBool == True:
+                listPT.append(self.probeTimestamps[probeBoolIndex])
+                listCT.append(self.contrastValues[probeBoolIndex])
+            else:
+                listPF.append(self.probeTimestamps[probeBoolIndex])
+                listCF.append(self.contrastValues[probeBoolIndex])
+            probeBoolIndex = probeBoolIndex + 1
+
+        zipTrue = zip(listCT, listPT)
+        zipFalse = zip(listCF, listPF)
+        self.listCT = listCT
+        self.listPT = listPT
+        self.listCF = listCF
+        self.listPF = listPF
+        self.zipTrue = zipTrue
+        self.zipFalse = zipFalse
+        return zipTrue, zipFalse, listCT, listPT, listCF, listPF
+
+    def createPerisaccadicDictionary(self, listCT, listPT):
+        """
+        Compile probetimestamps from zipTrue (listPT) into a dictionary based on contrast values
+        """
+        dictionaryTrue = dict() # Initialize an empty dictionary
+        uniqueContrastValuesTrue = np.unique(self.listCT) # Find the unique constrast values
+        for uniqueContrastValueTrue in uniqueContrastValuesTrue: # Iterterate through the unique contrast values
+            mask = np.array(self.listCT) == uniqueContrastValueTrue # Create a mask for each unique contrast value
+            dictionaryTrue[uniqueContrastValueTrue] = np.array(self.listPT)[mask]
+        self.dictionaryTrue = dictionaryTrue
+        return dictionaryTrue
+
+
+    def createExtrasaccadicDictionary(self, listCF, listPF):
+        """
+        Compile probetimestamps from zipFalse (listPF) into a dictionary based on contrast values
+        """
+        dictionaryFalse = dict() # Initialize an empty dictionary
+        uniqueContrastValuesFalse = np.unique(self.listCF) # Find the unique constrast values
+        for uniqueContrastValueFalse in uniqueContrastValuesFalse: # Iterterate through the unique contrast values
+            mask = np.array(self.listCF) == uniqueContrastValueFalse # Create a mask for each unique contrast value
+            dictionaryFalse[uniqueContrastValueFalse] = np.array(self.listPF)[mask]
+        self.dictionaryFalse = dictionaryFalse
+        return dictionaryFalse
+
+    def calculateExtrasaccadicResponsePercentages(self):
+        """
+        Calculate the percentage of response trials for each contrast in extrasaccadic trials
+        """
+
+    def calculatePerisaccadicResponsePercentages(self):
+        """
+        Calculate the percentage of resposne trials for each contrast in perisaccadic trials
+        """
+
+
+    
     def createPsychometricSaccadeCurve(self):
         """
         Calculate the number of response trials for each contrast and plot it as psychometric curve, return plot
         """
 
-        count1 = 0
-        count6 = 0
-        count5 = 0
-        count4 = 0
-        tempcount = 0
-
-        for key in dictionary:
-            for probeTimestamp in dictionary[key]:
-                for lick in lickTimestamps:
-                    lickRelative = (lick - probeTimestamp)
-                    if lickRelative > 0 and lickRelative < responseTime:
-                        tempcount = (tempcount + 1)
-                        break
-        if key == ' contrast4':
-            count1 = tempcount
-            tempcount = 0
-        if key == ' contrast3':
-            count6 = tempcount
-            tempcount = 0
-        if key == ' contrast2':
-            count5 = tempcount
-            tempcount = 0
-        if key == ' contrast1':
-            count4 = tempcount
-            tempcount = 0       
-        
-        percentage1 = count1/len(dictionary[' contrast4'])
-        percentage6 = count6/len(dictionary[' contrast3'])
-        percentage5 = count5/len(dictionary[' contrast2'])
-        percentage4 = count4/len(dictionary[' contrast1'])
-        
-        normal1 = percentage1/percentage1
-        normal6 = percentage6/percentage1
-        normal5 = percentage5/percentage1
-        normal4 = percentage4/percentage1
-        
-        fig, ax = plt.subplots()
-        plt.plot(['0%', '5%', '10%', '30%'], [normal4, normal5, normal6, normal1])
-        plt.ylim([0.0, 1.5])
-        ax.set_ylabel('Fraction of Response Trials')
-        ax.set_xlabel('Trials by Contrast Change')
-        return fig
-
-        count1 = 0
-        count6 = 0
-        count5 = 0
-        count4 = 0
-        tempcount = 0
-
-        for key in dictionary:
-            for probeTimestamp in dictionary[key]:
-                for lick in lickTimestamps:
-                    lickRelative = (lick - probeTimestamp)
-                    if lickRelative > 0 and lickRelative < responseTime:
-                        tempcount = (tempcount + 1)
-                        break
-        if key == ' contrast4':
-            count1 = tempcount
-            tempcount = 0
-        if key == ' contrast3':
-            count6 = tempcount
-            tempcount = 0
-        if key == ' contrast2':
-            count5 = tempcount
-            tempcount = 0
-        if key == ' contrast1':
-            count4 = tempcount
-            tempcount = 0       
-        
-        percentage1 = count1/len(dictionary[' contrast4'])
-        percentage6 = count6/len(dictionary[' contrast3'])
-        percentage5 = count5/len(dictionary[' contrast2'])
-        percentage4 = count4/len(dictionary[' contrast1'])
-        
-        normal1 = percentage1/percentage1
-        normal6 = percentage6/percentage1
-        normal5 = percentage5/percentage1
-        normal4 = percentage4/percentage1
-        
-        fig, ax = plt.subplots()
-        plt.plot(['0%', '5%', '10%', '30%'], [normal4, normal5, normal6, normal1])
-        plt.ylim([0.0, 1.5])
-        ax.set_ylabel('Fraction of Response Trials')
-        ax.set_xlabel('Trials by Contrast Change')
-        return fig
-
-    def test(self): return
-    def test2(self): return
+       
