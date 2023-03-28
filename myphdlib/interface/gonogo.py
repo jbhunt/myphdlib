@@ -521,7 +521,6 @@ class GonogoSession(SessionBase):
         res = session.read('saccadeClassificationResults')
         nasalWaveforms = res['left']['nasal']['waveforms']
         temporalWaveforms = res['left']['temporal']['waveforms']
-        figure()
         plot(nasalWaveforms.mean(0), color='k', alpha=1)
         plot(temporalWaveforms.mean(0), color='k', alpha=1)
         for wave in nasalWaveforms:
