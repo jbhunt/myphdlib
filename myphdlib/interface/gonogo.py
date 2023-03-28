@@ -380,16 +380,90 @@ class GonogoSession(SessionBase):
         self.dictionaryFalse = dictionaryFalse
         return dictionaryFalse
 
-    def calculateExtrasaccadicResponsePercentages(self):
+    def calculateExtrasaccadicResponsePercentages(self, dictionaryFalse, lickTimestamps):
         """
         Calculate the percentage of response trials for each contrast in extrasaccadic trials
         """
+        count1 = 0
+        count6 = 0
+        count5 = 0
+        count4 = 0
+        tempcount = 0
+        percentage1 = 0
+        percentage6 = 0
+        percentage5 = 0
+        percentage4 = 0
 
-    def calculatePerisaccadicResponsePercentages(self):
+        for key in self.dictionaryFalse:
+            for probeTimestamp in self.dictionaryFalse[key]:
+                for lick in self.lickTimestamps:
+                    lickRelative = (lick - probeTimestamp)
+                    if lickRelative > 0 and lickRelative < 0.5:
+                        tempcount = (tempcount + 1)
+                        break
+            if key == ' 0.80':
+                count1 = tempcount
+                tempcount = 0
+                percentage1 = count1/len(self.dictionaryFalse[' 0.80'])
+            if key == ' 0.60':
+                count6 = tempcount
+                tempcount = 0
+                percentage6 = count6/len(self.dictionaryFalse[' 0.60'])
+            if key == ' 0.55':
+                count5 = tempcount
+                tempcount = 0
+                percentage5 = count5/len(self.dictionaryFalse[' 0.55'])
+            if key == ' 0.50':
+                count4 = tempcount
+                tempcount = 0
+                percentage4 = count4/len(self.dictionaryFalse[' 0.50'])
+        percentList = (percentage4, percentage5, percentage6, percentage1)
+        percentArrayExtrasaccadic = np.array(percentList)
+        self.percentArrayExtrasaccadic = percentArrayExtrasaccadic
+        return percentArrayExtrasaccadic
+
+    def calculatePerisaccadicResponsePercentages(self, dictionaryTrue, lickTimestamps):
         """
         Calculate the percentage of resposne trials for each contrast in perisaccadic trials
         """
+        count1T = 0
+        count6T = 0
+        count5T = 0
+        count4T = 0
+        tempcountT = 0
+        percentage1T = 0
+        percentage6T = 0
+        percentage5T = 0
+        percentage4T = 0
 
+        for key in self.dictionaryTrue:
+            for probeTimestamp in self.dictionaryTrue[key]:
+                for lick in self.lickTimestamps:
+                    lickRelative = (lick - probeTimestamp)
+                    if lickRelative > 0 and lickRelative < 0.5:
+                        tempcountT = (tempcountT + 1)
+                        break
+            if key == ' 0.80':
+                count1T = tempcountT
+                tempcountT = 0
+                percentage1T = count1T/len(self.dictionaryTrue[' 0.80'])
+            if key == ' 0.60':
+                count6T = tempcountT
+                tempcountT = 0
+                percentage6T = count6T/len(self.dictionaryTrue[' 0.60'])
+            if key == ' 0.55':
+                count5T = tempcountT
+                tempcountT = 0
+                percentage5T = count5T/len(self.dictionaryTrue[' 0.55'])
+            if key == ' 0.50':
+                count4T = tempcountT
+                tempcountT = 0
+                percentage4T = count4T/len(self.dictionaryTrue[' 0.50'])
+
+        percentListT = (percentage4T, percentage5T, percentage6T, percentage1T)
+        percentArrayPerisaccadic = np.array(percentList)
+        self.percentArrayPerisaccadic = percentArrayPerisaccadic
+        return percentArrayPerisaccadic
 
     
     def createPsychometricSaccadeCurve(self):
