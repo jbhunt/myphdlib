@@ -462,7 +462,7 @@ class GonogoSession(SessionBase):
                 percentage4T = count4T/len(self.dictionaryTrue[' 0.50'])
 
         percentListT = (percentage4T, percentage5T, percentage6T, percentage1T)
-        percentArrayPerisaccadic = np.array(percentList)
+        percentArrayPerisaccadic = np.array(percentListT)
         self.percentArrayPerisaccadic = percentArrayPerisaccadic
         return percentArrayPerisaccadic
 
