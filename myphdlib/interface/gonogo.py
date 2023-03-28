@@ -529,3 +529,23 @@ class GonogoSession(SessionBase):
         for waveT in temporalWaveforms:
             plt.plot(waveT, color='r', alpha=0.05)
         return fig
+
+    def processLickSession(self, session):
+        """
+        This takes the unprocessed Labjack and DLC CSV data, analyzes it, and creates a psychometric curve for perisaccadic and extrasaccadic trials
+        """
+        probeTimestamps = session.extractProbeTimestamps(session)
+        frameTimestamps = session.extractFrameTimestamps(session)
+        lickTimestamps = session.extractLickTimestamps(session, frameTimestamps)
+        contrastValues = session.extractContrastValues(session)
+        totalSaccades = session.extractSaccadeTimestamps(session, frameTimestamps)
+        zipped3, perisaccadicProbeBool = session.createZippedList(probeTimestamps, totalSaccades)
+        zipTrue, zipFalse, listCT, listPT, listCF, listPF = session.createPeriAndExtraSaccadicLists(perisaccadicProbeBool, probeTimestamps, contrastValues)
+        dictionaryTrue = session.createPerisaccadicDictionary(listCT, listPT)
+        dictionaryFalse = session.createExtrasaccadicDictionary(listCF, listPF)
+        percentArrayExtrasaccadic, percentage1 = session.calculateExtrasaccadicResponsePercentages(dictionaryFalse, lickTimestamps)
+        percentArrayPerisaccadic = session.calculatePerisaccadicResponsePercentages(dictionaryTrue, lickTimestamps)
+        normalExtrasaccadic = session.calculateNormalizedResponseRateExtrasaccadic(percentArrayExtrasaccadic, percentage1)
+        normalPerisaccadic = session.calculateNormalizedResponseRatePerisaccadic(percentArrayPerisaccadic, percentage1)
+        fig = session.createPsychometricSaccadeCurve(normalExtrasaccadic, normalPerisaccadic)
+        return fig
