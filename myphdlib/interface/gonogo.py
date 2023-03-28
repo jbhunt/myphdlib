@@ -420,7 +420,8 @@ class GonogoSession(SessionBase):
         percentList = (percentage4, percentage5, percentage6, percentage1)
         percentArrayExtrasaccadic = np.array(percentList)
         self.percentArrayExtrasaccadic = percentArrayExtrasaccadic
-        return percentArrayExtrasaccadic
+        self.percentage1 = percentage1
+        return percentArrayExtrasaccadic, percentage1
 
     def calculatePerisaccadicResponsePercentages(self, dictionaryTrue, lickTimestamps):
         """
@@ -465,10 +466,31 @@ class GonogoSession(SessionBase):
         self.percentArrayPerisaccadic = percentArrayPerisaccadic
         return percentArrayPerisaccadic
 
-    
-    def createPsychometricSaccadeCurve(self):
+    def calculateNormalizedResponseRateExtrasaccadic(self, percentArrayExtrasaccadic, percentage1):
         """
-        Calculate the number of response trials for each contrast and plot it as psychometric curve, return plot
+        Normalizes response rate for extrasaccadic trials by dividing percent response from all contrasts by percent response of the highest contrast
         """
+        normalExtrasaccadic = self.percentArrayExtrasaccadic/self.percentage1
+        self.normalExtrasaccadic = normalExtrasaccadic
+        return normalExtrasaccadic
 
+    def calculateNormalizedResponseRatePerisaccadic(self, percentArrayPerisaccadic, percentage1):
+        """
+        Normalizes response rate for perisaccadic trials by dividing percent response from all contrasts by percent response of the highest contrast of extrasaccadic trials, since we don't always have perisaccadic trials at highest contrast
+        """
+        normalPerisaccadic = self.percentArrayPerisaccadic/self.percentage1
+        self.normalPerisaccadic = normalPerisaccadic
+        return normalPerisaccadic
+    
+    def createPsychometricSaccadeCurve(self, normalExtrasaccadic, normalPerisaccadic):
+        """
+        Plot the normalized response rates for extrasaccadic (red) and perisaccadic (blue) trials
+        """
+        fig, ax = plt.subplots()
+        plt.plot(['0%', '5%', '10%', '30%'], self.normalExtrasaccadic, color='r')
+        plt.plot(['0%', '5%', '10%', '30%'], self.normalPerisaccadic, color='b')
+        plt.ylim([0.0, 1.5])
+        ax.set_ylabel('Fraction of Response Trials')
+        ax.set_xlabel('Trials by Contrast Change')
+        return fig
        
