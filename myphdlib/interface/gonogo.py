@@ -494,3 +494,38 @@ class GonogoSession(SessionBase):
         ax.set_xlabel('Trials by Contrast Change')
         return fig
        
+    def createPerisaccadicStimHistogram(self, totalSaccades, probeTimestamps):
+        """
+        Create histogram showing how many perisaccadic probes in a session
+        """
+        perisaccadicStimList = list()
+        for saccade in self.totalSaccades:
+            probeRelative = np.around(self.probeTimestamps - saccade, 2)
+            mask = np.logical_and(
+                probeRelative > -1,
+                probeRelative < 1,
+            )
+            if mask.sum() == 1:
+                probeRelativeFiltered = probeRelative[mask]
+                perisaccadicStimList.append(probeRelativeFiltered)
+
+        perisaccadicStimArray = np.array(perisaccadicStimList)
+        fig, ax = plt.subplots()
+        ax.hist(perisaccadicStimArray, range=(-0.1, 0.15), bins=10, facecolor='w', edgecolor='k')
+        return fig
+
+    def plotSaccadeWaveforms(self, session):
+        """
+        Plot nasal and temporal saccade individual and average waveforms
+        """
+        res = session.read('saccadeClassificationResults')
+        nasalWaveforms = res['left']['nasal']['waveforms']
+        temporalWaveforms = res['left']['temporal']['waveforms']
+        figure()
+        plot(nasalWaveforms.mean(0), color='k', alpha=1)
+        plot(temporalWaveforms.mean(0), color='k', alpha=1)
+        for wave in nasalWaveforms:
+            plot(wave, color='b', alpha=0.05)
+        for waveT in temporalWaveforms:
+            plot(waveT, color='r', alpha=0.05)
+        return figure
