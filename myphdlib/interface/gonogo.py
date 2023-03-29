@@ -642,4 +642,4 @@ class GonogoSession(SessionBase):
         dictionaryFalse = session.createExtrasaccadicDictionary(listCF, listPF)
         countArrayExtrasaccadic, dictArrayExtrasaccadic = session.calculateExtrasaccadicResponseNumbers(dictionaryFalse, lickTimestamps)
         countArrayPerisaccadic, dictArrayPerisaccadic = session.calculatePerisaccadicResponseNumbers(dictionaryTrue, lickTimestamps)
-        return 
+        return countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic
