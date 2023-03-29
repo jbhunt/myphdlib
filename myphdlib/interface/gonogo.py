@@ -238,8 +238,8 @@ class GonogoSession(SessionBase):
             for probeTimestamp in self.dictionary[key]:
                 lickRelative = (self.lickTimestamps - probeTimestamp)
                 mask = np.logical_and(
-                    lickRelative > min,
-                    lickRelative < max,
+                    lickRelative > -2,
+                    lickRelative < 5,
                 )
                 lickRelativeFiltered = lickRelative[mask]
     
