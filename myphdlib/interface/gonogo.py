@@ -651,3 +651,16 @@ class GonogoSession(SessionBase):
         countArrayExtrasaccadic, dictArrayExtrasaccadic = session.calculateExtrasaccadicResponseNumbers(dictionaryFalse, lickTimestamps)
         countArrayPerisaccadic, dictArrayPerisaccadic = session.calculatePerisaccadicResponseNumbers(dictionaryTrue, lickTimestamps)
         return countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic
+
+    def createLickRasterProcess(self, session):
+        """
+        This takes unprocessed Labjack and DLC CSV data, analyzes it, and returns two raster plots - one normal lick raster and one lick raster separated out by contrasts
+        """
+        probeTimestamps = session.extractProbeTimestamps(session)
+        frameTimestamps = session.extractFrameTimestamps(session)
+        lickTimestamps = session.extractLickTimestamps(session, frameTimestamps)
+        contrastValues = session.extractContrastValues(session)
+        dictionary = session.sortUniqueContrasts(probeTimestamps, contrastValues)
+        figRaster = session.createLickRaster(probeTimestamps, lickTimestamps)
+        figContrasts = session.createContrastRaster(probeTimestamps, lickTimestamps, dictionary)
+        return figRaster, figContrasts
