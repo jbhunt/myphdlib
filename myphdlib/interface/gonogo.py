@@ -513,6 +513,10 @@ class GonogoSession(SessionBase):
         count5T = 0
         count4T = 0
         tempcountT = 0
+        length4 = 0
+        length5 = 0
+        length6 = 0
+        length1 = 0
 
         for key in self.dictionaryTrue:
             for probeTimestamp in self.dictionaryTrue[key]:
@@ -524,19 +528,23 @@ class GonogoSession(SessionBase):
             if key == ' 0.80':
                 count1T = tempcountT
                 tempcountT = 0
+                length1 = len(self.dictionaryTrue[' 0.80'])
             if key == ' 0.60':
                 count6T = tempcountT
                 tempcountT = 0
+                length6 = len(self.dictionaryTrue[' 0.60'])
             if key == ' 0.55':
                 count5T = tempcountT
                 tempcountT = 0
+                length5 = len(self.dictionaryTrue[' 0.55'])
             if key == ' 0.50':
                 count4T = tempcountT
                 tempcountT = 0
+                length4 = len(self.dictionaryTrue[' 0.50'])
 
         countListT = (count4T, count5T, count6T, count1T)
         countArrayPerisaccadic = np.array(countListT)
-        dictLengthT = (len(self.dictionaryTrue[' 0.50']), len(self.dictionaryTrue[' 0.55']), len(self.dictionaryTrue[' 0.60']), len(self.dictionaryTrue[' 0.80']))
+        dictLengthT = (length4, length5, length6, length1)
         dictArrayPerisaccadic = np.array(dictLengthT)
         self.countArrayPerisaccadic = countArrayPerisaccadic
         self.dictArrayPerisaccadic = dictArrayPerisaccadic
