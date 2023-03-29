@@ -418,10 +418,10 @@ class GonogoSession(SessionBase):
                 tempcount = 0
                 percentage4 = count4/len(self.dictionaryFalse[' 0.50'])
         percentList = (percentage4, percentage5, percentage6, percentage1)
-        percentArrayExtrasaccadic = np.array(percentList)
-        self.percentArrayExtrasaccadic = percentArrayExtrasaccadic
+        percentExtrasaccadic = np.array(percentList)
+        self.percentExtrasaccadic = percentExtrasaccadic
         self.percentage1 = percentage1
-        return percentArrayExtrasaccadic, percentage1
+        return percentExtrasaccadic, percentage1
 
     def calculateExtrasaccadicResponseNumbers(self, dictionaryFalse, lickTimestamps):
         """
@@ -500,9 +500,9 @@ class GonogoSession(SessionBase):
                 percentage4T = count4T/len(self.dictionaryTrue[' 0.50'])
 
         percentListT = (percentage4T, percentage5T, percentage6T, percentage1T)
-        percentArrayPerisaccadic = np.array(percentListT)
-        self.percentArrayPerisaccadic = percentArrayPerisaccadic
-        return percentArrayPerisaccadic
+        percentPerisaccadic = np.array(percentListT)
+        self.percentPerisaccadic = percentPerisaccadic
+        return percentPerisaccadic
 
     def calculatePerisaccadicResponseNumbers(self, dictionaryTrue, lickTimestamps):
         """
@@ -551,29 +551,29 @@ class GonogoSession(SessionBase):
         return countArrayPerisaccadic, dictArrayPerisaccadic
 
 
-    def calculateNormalizedResponseRateExtrasaccadic(self, percentArrayExtrasaccadic, percentage1):
+    def calculateNormalizedResponseRateExtrasaccadic(self, percentExtrasaccadic, percentage1):
         """
         Normalizes response rate for extrasaccadic trials by dividing percent response from all contrasts by percent response of the highest contrast
         """
-        normalExtrasaccadic = self.percentArrayExtrasaccadic/self.percentage1
+        normalExtrasaccadic = self.percentExtrasaccadic/self.percentage1
         self.normalExtrasaccadic = normalExtrasaccadic
         return normalExtrasaccadic
 
-    def calculateNormalizedResponseRatePerisaccadic(self, percentArrayPerisaccadic, percentage1):
+    def calculateNormalizedResponseRatePerisaccadic(self, percentPerisaccadic, percentage1):
         """
         Normalizes response rate for perisaccadic trials by dividing percent response from all contrasts by percent response of the highest contrast of extrasaccadic trials, since we don't always have perisaccadic trials at highest contrast
         """
-        normalPerisaccadic = self.percentArrayPerisaccadic/self.percentage1
+        normalPerisaccadic = self.percentPerisaccadic/self.percentage1
         self.normalPerisaccadic = normalPerisaccadic
         return normalPerisaccadic
     
-    def createPsychometricSaccadeCurve(self, normalExtrasaccadic, normalPerisaccadic):
+    def createPsychometricSaccadeCurve(self, percentExtrasaccadic, percentPerisaccadic):
         """
         Plot the normalized response rates for extrasaccadic (red) and perisaccadic (blue) trials
         """
         fig, ax = plt.subplots()
-        plt.plot(['0%', '5%', '10%', '30%'], self.normalExtrasaccadic, color='r')
-        plt.plot(['0%', '5%', '10%', '30%'], self.normalPerisaccadic, color='b')
+        plt.plot(['0%', '5%', '10%', '30%'], self.percentExtrasaccadic, color='r')
+        plt.plot(['0%', '5%', '10%', '30%'], self.percentPerisaccadic, color='b')
         plt.ylim([0.0, 1.5])
         ax.set_ylabel('Fraction of Response Trials')
         ax.set_xlabel('Trials by Contrast Change')
