@@ -281,18 +281,18 @@ class GonogoSession(SessionBase):
         ax.set_xlabel('Time (sec)')
         fig.set_figheight(10)
         fig.set_figwidth(6)
-        for rowIndex, row in enumerate(self.array8):
-            x = row
+        for rowIndex1, row1 in enumerate(self.array8):
+            x = row1
             y0 = rowIndex + (rowIndex1 - 0.5)
             y1 = rowIndex + (rowIndex1 + 0.5)
             ax.vlines(x, y0, y1, color='b')
-        for rowIndex, row in enumerate(self.array6):
-            x = row
+        for rowIndex2, row2 in enumerate(self.array6):
+            x = row2
             y0 = rowIndex + rowIndex1 + (rowIndex2 - 0.5)
             y1 = rowIndex + rowIndex1 + (rowIndex2 + 0.5)
             ax.vlines(x, y0, y1, color='g')
-        for rowIndex, row in enumerate(self.array5):
-            x = row
+        for rowIndex3, row3 in enumerate(self.array5):
+            x = row3
             y0 = rowIndex + rowIndex1 + rowIndex2 + (rowIndex3 - 0.5)
             y1 = rowIndex + rowIndex1 + rowIndex2 + (rowIndex3 + 0.5)
             ax.vlines(x, y0, y1, color='r')
