@@ -226,7 +226,7 @@ class GonogoSession(SessionBase):
 
     def createContrastRaster(self, probeTimestamps, lickTimestamps, dictionary):
         """
-        Create a raster sorted by contrast, returns plot
+        Create a raster sorted by contrast, returns arrays to plot
         """
         list1 = list()
         list8 = list()
@@ -261,9 +261,18 @@ class GonogoSession(SessionBase):
                 list5 = listtemp
                 array5 = np.array(list5)
                 listtemp.clear()
-            
+        self.array1 = array1
+        self.array8 = array8
+        self.array6 = array6
+        self.array5 = array5
+        return array1, array8, array6, array5
+
+    def plotContrastRaster(self, array1, array8, array6, array5):
+        """
+        Actually plots the contrast raster
+        """        
         fig, ax = plt.subplots()
-        for rowIndex, row in enumerate(array1):
+        for rowIndex, row in enumerate(self.array1):
             x = row
             y0 = rowIndex - 0.5
             y1 = rowIndex + 0.5
@@ -272,17 +281,17 @@ class GonogoSession(SessionBase):
         ax.set_xlabel('Time (sec)')
         fig.set_figheight(10)
         fig.set_figwidth(6)
-        for rowIndex, row in enumerate(array8):
+        for rowIndex, row in enumerate(self.array8):
             x = row
             y0 = rowIndex + (rowIndex1 - 0.5)
             y1 = rowIndex + (rowIndex1 + 0.5)
             ax.vlines(x, y0, y1, color='b')
-        for rowIndex, row in enumerate(array6):
+        for rowIndex, row in enumerate(self.array6):
             x = row
             y0 = rowIndex + rowIndex1 + (rowIndex2 - 0.5)
             y1 = rowIndex + rowIndex1 + (rowIndex2 + 0.5)
             ax.vlines(x, y0, y1, color='g')
-        for rowIndex, row in enumerate(array5):
+        for rowIndex, row in enumerate(self.array5):
             x = row
             y0 = rowIndex + rowIndex1 + rowIndex2 + (rowIndex3 - 0.5)
             y1 = rowIndex + rowIndex1 + rowIndex2 + (rowIndex3 + 0.5)
