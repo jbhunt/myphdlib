@@ -245,19 +245,19 @@ class GonogoSession(SessionBase):
     
                 listtemp.append(lickRelativeFiltered)
 
-            if key == ' 0.50':
+            if key == ' 0.80':
                 list1 = listtemp
                 array1 = np.array(list1)
                 listtemp.clear()
-            if key == ' 0.55':
+            if key == ' 0.60':
                 list8 = listtemp
                 array8 = np.array(list8)
                 listtemp.clear()
-            if key == ' 0.60':
+            if key == ' 0.55':
                 list6 = listtemp
                 array6 = np.array(list6)
                 listtemp.clear()
-            if key == ' 0.80':
+            if key == ' 0.50':
                 list5 = listtemp
                 array5 = np.array(list5)
                 listtemp.clear()
