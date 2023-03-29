@@ -671,5 +671,6 @@ class GonogoSession(SessionBase):
         contrastValues = session.extractContrastValues(session)
         dictionary = session.sortUniqueContrasts(probeTimestamps, contrastValues)
         figRaster = session.createLickRaster(probeTimestamps, lickTimestamps)
-        figContrasts = session.createContrastRaster(probeTimestamps, lickTimestamps, dictionary)
+        array1, array8, array6, array5 = session.createContrastRaster(probeTimestamps, lickTimestamps, dictionary)
+        figContrasts = session.plotContrastRaster(array1, array8, array6, array5)
         return figRaster, figContrasts
