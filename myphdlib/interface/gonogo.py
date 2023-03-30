@@ -674,3 +674,28 @@ class GonogoSession(SessionBase):
         array1, array8, array6, array5 = session.createContrastRaster(probeTimestamps, lickTimestamps, dictionary)
         figContrasts = session.plotContrastRaster(array1, array8, array6, array5)
         return figRaster, figContrasts
+
+    def lickAnalysis(self, sessions):
+        """
+        This takes multiple sessions as input and creates a psychometric curve comparing extrasaccadic and perisaccadic responses - this is the big overarching function
+        """
+        responseExtrasaccadic = np.array([0, 0, 0, 0])
+        totalExtrasaccadic = np.array([0, 0, 0, 0])
+        responsePerisaccadic = np.array([0, 0, 0, 0])
+        totalPerisaccadic = np.array([0, 0, 0, 0])
+        for session in sessions:
+            countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic = session.processMultipleLickSessions(session)
+            responseExtrasaccadic = np.add(responseExtrasaccadic, countArrayExtrasaccadic)
+            totalExtrasaccadic = np.add(totalExtrasaccadic, dictArrayExtrasaccadic)
+            responsePerisaccadic = np.add(responsePerisaccadic, countArrayPerisaccadic)
+            totalPerisaccadic = np.add(totalPerisaccadic, dictArrayPerisaccadic)
+    
+        percentExtrasaccadic = np.divide(responseExtrasaccadic, totalExtrasaccadic)
+        percentPerisaccadic = np.divide(responsePerisaccadic, totalPerisaccadic)
+        fig, ax = plt.subplots()
+        plt.plot(['0%', '5%', '10%', '30%'], percentExtrasaccadic, color='r')
+        plt.plot(['0%', '5%', '10%', '30%'], percentPerisaccadic, color='b')
+        plt.ylim([0.0, 1.5])
+        ax.set_ylabel('Fraction of Response Trials')
+        ax.set_xlabel('Trials by Contrast Change')
+        return fig
