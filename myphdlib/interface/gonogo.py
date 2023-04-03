@@ -750,7 +750,7 @@ class GonogoSession(SessionBase):
         """
         Plot response (blue) and non-response (red) trials according to the amount of dilation or constriction in the 50 frames (1/3 of a second) before the probe
         """
-        fig = figure()
+        fig = plt.plot()
         for probe in self.probeTimestamps:
             f1 = findClosestFrame(probe, self.frameTimestamps)
             f5 = f1 - 50
@@ -768,7 +768,7 @@ class GonogoSession(SessionBase):
         """ 
         Plot pupil trace for response (blue) and non-response (red) trials
         """
-        fig = figure()
+        fig = plt.plot()
         for probe in self.probeTimestamps:
             f1 = findClosestFrame(probe, self.frameTimestamps)
             f0 = f1 - 300
