@@ -125,52 +125,72 @@ class GonogoSession(SessionBase):
 
         return labjackData
 
-    def extractProbeTimestamps(self, session):
+    def extractProbeTimestamps(self):
         """
         Extract timestamps of probes from Labjack data and return probe timestamps
         """
-        labjackDirectory = session.labjackFolder
+        labjackDirectory = self.labjackFolder
         labjackData = loadLabjackData(labjackDirectory)
         timestamps = labjackData[:, 0]
         probeOnset, probeIndices = extractLabjackEvent(labjackData, 6, edge = 'rising', pulseWidthRange = (20, 700))
         probeTimestamps = timestamps[probeIndices]
-        self.probeTimestamps = probeTimestamps
-        return probeTimestamps
+        self.write(probeTimestamps, 'probeTimestamps')
+        return
 
-    def extractFrameTimestamps(self, session):
+    def loadProbeTimestamps(self):
+        """
+        """
+
+        if 'probeTimestamps' not in self.keys():
+            raise Exception('Probe timestamps not extracted')
+        else:
+            return self.read('probeTimestamps')
+
+    def extractFrameTimestamps(self):
         """
         Extract timestamps of frames from Labjack data and return frame timestamps
         """
-        labjackDirectory = session.labjackFolder
+        labjackDirectory = self.labjackFolder
         labjackData = loadLabjackData(labjackDirectory)
         timestamps = labjackData[:, 0]
         frameOnset, frameIndices = extractLabjackEvent(labjackData, 7, edge = 'both')
         frameTimestamps = timestamps[frameIndices]
-        self.frameTimestamps = frameTimestamps
-        return frameTimestamps 
+        self.write(frameTimestamps, 'frameTimestamps')
+        return
+
+    def loadFrameTimestamps(self):
+        """
+        """
+
+        if 'frameTimestamps' not in self.keys():
+            raise Exception('Frame timestamps not extracted')
+        else:
+            return self.read('frameTimestamps')
           
 
-    def extractLickTimestamps(self, session, frameTimestamps):
+    def extractLickTimestamps(self):
         """
         Extract timestamps of licks recorded by DLC and synchronized with Labjack data and return lick timestamps
         """
-        csv = session.tonguePose
+        frameTimestamps = self.loadFrameTimestamps()
+        csv = self.tonguePose
         spoutLikelihood = loadBodypartData(csv, bodypart='spout', feature='likelihood')
         M = np.diff(spoutLikelihood, n=1)
         M1 = M*-1
         peaks, _ = sp.signal.find_peaks(M1, height=0.9, threshold=None, distance=None, prominence=None, width=None, wlen=None, rel_height=0.5, plateau_size=None)
         frameIndex = np.arange(len(loadBodypartData(csv, bodypart='spout', feature='likelihood')))
         peakFrames = frameIndex[peaks]
-        lickTimestamps = self.frameTimestamps[peakFrames]
+        lickTimestamps = frameTimestamps[peakFrames]
         self.lickTimestamps = lickTimestamps
         return lickTimestamps
 
-    def createLickRaster(self, probeTimestamps, lickTimestamps):
+    def createLickRaster(self, lickTimestamps):
         """
         Find licks within a given range of each probe and plot in a raster, return plot
         """
+        probeTimestamps = self.loadProbeTimestamps()
         L = list()
-        for probe in self.probeTimestamps:
+        for probe in probeTimestamps:
             lickRelative = (self.lickTimestamps - probe)
             mask = np.logical_and(
                 lickRelative > -2,
@@ -194,11 +214,11 @@ class GonogoSession(SessionBase):
         fig.set_figwidth(6)
         return fig
 
-    def extractContrastValues(self, session):
+    def extractContrastValues(self):
         """
         Reads probe metadata file and zips array of contrast values with probe timestamps, returns zipped list of contrast values
         """
-        metadata = session.probeMetadata
+        metadata = self.probeMetadata
         fn = open(metadata, 'r'); # open the file
         allText = fn.readlines() # read the lines of text
         text = allText[1:] # remove the header
@@ -212,22 +232,24 @@ class GonogoSession(SessionBase):
         self.contrastValues = contrastValues
         return contrastValues
     
-    def sortUniqueContrasts(self, probeTimestamps, contrastValues):
+    def sortUniqueContrasts(self, contrastValues):
         """
         Sorts the array of contrast values into a dictionary with 4 keys representing the unique contrast values, returns the dictionary
         """
+        probeTimestamps = self.loadProbeTimestamps()
         dictionary = dict() # Initialize an empty dictionary
         uniqueContrastValues = np.unique(self.contrastValues) # Find the unique constrast values
         for uniqueContrastValue in uniqueContrastValues: # Iterterate through the unique contrast values
             mask = self.contrastValues == uniqueContrastValue # Create a mask for each unique contrast value
-            dictionary[uniqueContrastValue] = np.array(self.probeTimestamps)[mask]
+            dictionary[uniqueContrastValue] = np.array(probeTimestamps)[mask]
         self.dictionary = dictionary
         return dictionary
 
-    def createContrastRaster(self, probeTimestamps, lickTimestamps, dictionary):
+    def createContrastRaster(self, lickTimestamps, dictionary):
         """
         Create a raster sorted by contrast, returns arrays to plot
         """
+        probeTimestamps = self.loadProbeTimestamps()
         list1 = list()
         list8 = list()
         list6 = list()
@@ -298,25 +320,27 @@ class GonogoSession(SessionBase):
             ax.vlines(x, y0, y1, color='r')
         return fig
 
-    def extractSaccadeTimestamps(self, session, frameTimestamps):
+    def extractSaccadeTimestamps(self, frameTimestamps):
         """
         Extract indices of saccades and use frame timestamps to extract total saccade timestamps, not nasal vs temporal
         """
-        res = session.read('saccadeClassificationResults')
+        frameTimestamps = self.loadFrameTimestamps()
+        res = self.read('saccadeClassificationResults')
         nasalIndices = res['left']['nasal']['indices']
         temporalIndices = res['left']['temporal']['indices']
-        nasalSaccades = self.frameTimestamps[nasalIndices]
-        temporalSaccades = self.frameTimestamps[temporalIndices]
+        nasalSaccades = frameTimestamps[nasalIndices]
+        temporalSaccades = frameTimestamps[temporalIndices]
         totalSaccades = np.concatenate((nasalSaccades, temporalSaccades))
         self.totalSaccades = totalSaccades
         return totalSaccades
 
-    def createZippedList(self, probeTimestamps, totalSaccades):
+    def createZippedList(self, totalSaccades):
         """
         Create a boolean variable to determine whether trial is perisaccadic and create zipped list of probetimestamps, contrast values, and boolean variable
         """
+        probeTimestamps = self.loadProbeTimestamps()
         perisaccadicProbeBool = list()
-        for probe in self.probeTimestamps:
+        for probe in probeTimestamps:
             saccadesRelative = (self.totalSaccades - probe)
             mask = np.logical_and(
                 saccadesRelative > -0.05,
@@ -331,15 +355,16 @@ class GonogoSession(SessionBase):
     
         perisaccadicProbeBool = np.array(perisaccadicProbeBool)
 
-        zipped3 = list(zip(self.probeTimestamps, self.contrastValues, perisaccadicProbeBool))
+        zipped3 = list(zip(probeTimestamps, self.contrastValues, perisaccadicProbeBool))
         self.zipped3 = zipped3
         self.perisaccadicProbeBool = perisaccadicProbeBool
         return zipped3, perisaccadicProbeBool
 
-    def createPeriAndExtraSaccadicLists(self, perisaccadicProbeBool, probeTimestamps, contrastValues):
+    def createPeriAndExtraSaccadicLists(self, perisaccadicProbeBool, contrastValues):
         """
         Based on boolean variable, separates probetimestamps and contrast values into zipped lists of perisaccadic and extrasaccadic trials
         """
+        probeTimestamps = self.loadProbeTimestamps()
         listPT = list()
         listCT = list()
         listPF = list()
@@ -347,11 +372,11 @@ class GonogoSession(SessionBase):
         probeBoolIndex = 0
         for probeBool in self.perisaccadicProbeBool:
             if probeBool == True:
-                listPT.append(self.probeTimestamps[probeBoolIndex])
-                listCT.append(self.contrastValues[probeBoolIndex])
+                listPT.append(probeTimestamps[probeBoolIndex])
+                listCT.append(contrastValues[probeBoolIndex])
             else:
-                listPF.append(self.probeTimestamps[probeBoolIndex])
-                listCF.append(self.contrastValues[probeBoolIndex])
+                listPF.append(probeTimestamps[probeBoolIndex])
+                listCF.append(contrastValues[probeBoolIndex])
             probeBoolIndex = probeBoolIndex + 1
 
         zipTrue = zip(listCT, listPT)
@@ -588,13 +613,14 @@ class GonogoSession(SessionBase):
         ax.set_xlabel('Trials by Contrast Change')
         return fig
        
-    def createPerisaccadicStimHistogram(self, totalSaccades, probeTimestamps):
+    def createPerisaccadicStimHistogram(self, totalSaccades):
         """
         Create histogram showing how many perisaccadic probes in a session
         """
+        probeTimestamps = self.loadProbeTimestamps()
         perisaccadicStimList = list()
         for saccade in self.totalSaccades:
-            probeRelative = np.around(self.probeTimestamps - saccade, 2)
+            probeRelative = np.around(probeTimestamps - saccade, 2)
             mask = np.logical_and(
                 probeRelative > -1,
                 probeRelative < 1,
@@ -608,11 +634,11 @@ class GonogoSession(SessionBase):
         ax.hist(perisaccadicStimArray, range=(-0.1, 0.15), bins=10, facecolor='w', edgecolor='k')
         return fig
 
-    def plotSaccadeWaveforms(self, session):
+    def plotSaccadeWaveforms(self):
         """
         Plot nasal and temporal saccade individual and average waveforms
         """
-        res = session.read('saccadeClassificationResults')
+        res = self.read('saccadeClassificationResults')
         nasalWaveforms = res['left']['nasal']['waveforms']
         temporalWaveforms = res['left']['temporal']['waveforms']
         fig = plt.plot()
@@ -624,55 +650,49 @@ class GonogoSession(SessionBase):
             plt.plot(waveT, color='r', alpha=0.05)
         return fig
 
-    def processLickSession(self, session):
+    def processLickSession(self):
         """
         This takes the unprocessed Labjack and DLC CSV data, analyzes it, and creates a psychometric curve for perisaccadic and extrasaccadic trials
         """
-        probeTimestamps = session.extractProbeTimestamps(session)
-        frameTimestamps = session.extractFrameTimestamps(session)
-        lickTimestamps = session.extractLickTimestamps(session, frameTimestamps)
-        contrastValues = session.extractContrastValues(session)
-        totalSaccades = session.extractSaccadeTimestamps(session, frameTimestamps)
-        zipped3, perisaccadicProbeBool = session.createZippedList(probeTimestamps, totalSaccades)
-        zipTrue, zipFalse, listCT, listPT, listCF, listPF = session.createPeriAndExtraSaccadicLists(perisaccadicProbeBool, probeTimestamps, contrastValues)
-        dictionaryTrue = session.createPerisaccadicDictionary(listCT, listPT)
-        dictionaryFalse = session.createExtrasaccadicDictionary(listCF, listPF)
-        percentArrayExtrasaccadic, percentage1 = session.calculateExtrasaccadicResponsePercentages(dictionaryFalse, lickTimestamps)
-        percentArrayPerisaccadic = session.calculatePerisaccadicResponsePercentages(dictionaryTrue, lickTimestamps)
-        normalExtrasaccadic = session.calculateNormalizedResponseRateExtrasaccadic(percentArrayExtrasaccadic, percentage1)
-        normalPerisaccadic = session.calculateNormalizedResponseRatePerisaccadic(percentArrayPerisaccadic, percentage1)
-        fig = session.createPsychometricSaccadeCurve(normalExtrasaccadic, normalPerisaccadic)
+        lickTimestamps = self.extractLickTimestamps()
+        contrastValues = self.extractContrastValues()
+        totalSaccades = self.extractSaccadeTimestamps()
+        zipped3, perisaccadicProbeBool = self.createZippedList(totalSaccades)
+        zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicLists(perisaccadicProbeBool, contrastValues)
+        dictionaryTrue = self.createPerisaccadicDictionary(listCT, listPT)
+        dictionaryFalse = self.createExtrasaccadicDictionary(listCF, listPF)
+        percentArrayExtrasaccadic, percentage1 = self.calculateExtrasaccadicResponsePercentages(dictionaryFalse, lickTimestamps)
+        percentArrayPerisaccadic = self.calculatePerisaccadicResponsePercentages(dictionaryTrue, lickTimestamps)
+        normalExtrasaccadic = self.calculateNormalizedResponseRateExtrasaccadic(percentArrayExtrasaccadic, percentage1)
+        normalPerisaccadic = self.calculateNormalizedResponseRatePerisaccadic(percentArrayPerisaccadic, percentage1)
+        fig = self.createPsychometricSaccadeCurve(normalExtrasaccadic, normalPerisaccadic)
         return fig
 
-    def processMultipleLickSessions(self, session):
+    def processMultipleLickSessions(self):
         """
         This takes unprocessed Labjack and DLC CSV data, analyzes it, and returns the number of response trials and total trials for a session for each contrast, so we can combine data across sessions
         """
-        probeTimestamps = session.extractProbeTimestamps(session)
-        frameTimestamps = session.extractFrameTimestamps(session)
-        lickTimestamps = session.extractLickTimestamps(session, frameTimestamps)
-        contrastValues = session.extractContrastValues(session)
-        totalSaccades = session.extractSaccadeTimestamps(session, frameTimestamps)
-        zipped3, perisaccadicProbeBool = session.createZippedList(probeTimestamps, totalSaccades)
-        zipTrue, zipFalse, listCT, listPT, listCF, listPF = session.createPeriAndExtraSaccadicLists(perisaccadicProbeBool, probeTimestamps, contrastValues)
-        dictionaryTrue = session.createPerisaccadicDictionary(listCT, listPT)
-        dictionaryFalse = session.createExtrasaccadicDictionary(listCF, listPF)
-        countArrayExtrasaccadic, dictArrayExtrasaccadic = session.calculateExtrasaccadicResponseNumbers(dictionaryFalse, lickTimestamps)
-        countArrayPerisaccadic, dictArrayPerisaccadic = session.calculatePerisaccadicResponseNumbers(dictionaryTrue, lickTimestamps)
+        lickTimestamps = self.extractLickTimestamps()
+        contrastValues = self.extractContrastValues()
+        totalSaccades = self.extractSaccadeTimestamps()
+        zipped3, perisaccadicProbeBool = self.createZippedList(totalSaccades)
+        zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicLists(perisaccadicProbeBool, contrastValues)
+        dictionaryTrue = self.createPerisaccadicDictionary(listCT, listPT)
+        dictionaryFalse = self.createExtrasaccadicDictionary(listCF, listPF)
+        countArrayExtrasaccadic, dictArrayExtrasaccadic = self.calculateExtrasaccadicResponseNumbers(dictionaryFalse, lickTimestamps)
+        countArrayPerisaccadic, dictArrayPerisaccadic = self.calculatePerisaccadicResponseNumbers(dictionaryTrue, lickTimestamps)
         return countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic
 
-    def createLickRasterProcess(self, session):
+    def createLickRasterProcess(self):
         """
         This takes unprocessed Labjack and DLC CSV data, analyzes it, and returns two raster plots - one normal lick raster and one lick raster separated out by contrasts
         """
-        probeTimestamps = session.extractProbeTimestamps(session)
-        frameTimestamps = session.extractFrameTimestamps(session)
-        lickTimestamps = session.extractLickTimestamps(session, frameTimestamps)
-        contrastValues = session.extractContrastValues(session)
-        dictionary = session.sortUniqueContrasts(probeTimestamps, contrastValues)
-        figRaster = session.createLickRaster(probeTimestamps, lickTimestamps)
-        array1, array8, array6, array5 = session.createContrastRaster(probeTimestamps, lickTimestamps, dictionary)
-        figContrasts = session.plotContrastRaster(array1, array8, array6, array5)
+         lickTimestamps = self.extractLickTimestamps()
+        contrastValues = self.extractContrastValues()
+        dictionary = self.sortUniqueContrasts(contrastValues)
+        figRaster = self.createLickRaster(lickTimestamps)
+        array1, array8, array6, array5 = self.createContrastRaster(lickTimestamps, dictionary)
+        figContrasts = self.plotContrastRaster(array1, array8, array6, array5)
         return figRaster, figContrasts
 
     def lickAnalysis(self, sessions):
@@ -700,11 +720,11 @@ class GonogoSession(SessionBase):
         ax.set_xlabel('Trials by Contrast Change')
         return fig
 
-    def extractPupilRadius(self, session):
+    def extractPupilRadius(self):
         """
         Loads pupil position data from DLC CSV and extract radius
         """
-        csvPupil = session.leftEyePose
+        csvPupil = self.leftEyePose
         centerX = loadBodypartData(csvPupil, bodypart = 'center', feature = 'x')
         centerY = loadBodypartData(csvPupil, bodypart = 'center', feature = 'y')
         centerXY = np.hstack([
@@ -721,11 +741,12 @@ class GonogoSession(SessionBase):
         self.pupilRadius = pupilRadius
         return pupilRadius
     
-    def findClosestFrame(self, t, frameTimestamps):
+    def findClosestFrame(self, t):
         """
         Finds frame closest to time t 
         """
-        frameTimestampsRelative = self.frameTimestamps - t
+        frameTimestamps = self.loadFrameTimestamps()
+        frameTimestampsRelative = frameTimestamps - t
         closestFrameIndex = np.argmin(np.abs(frameTimestampsRelative))
         self.closestFrameIndex = closestFrameIndex
         return closestFrameIndex
@@ -733,12 +754,7 @@ class GonogoSession(SessionBase):
     def findResponseTrials(self, probe, lickTimestamps):
         """
         Define whether a trial is a response or non-response trial
-        """
-        lickRelative = (self.lickTimestamps - probe)
-        mask = np.logical_and(
-            lickRelative > 0,
-            lickRelative < 0.5
-        )
+        """session
         if any(mask):
             trialResponse = True
         else:
@@ -746,49 +762,54 @@ class GonogoSession(SessionBase):
         self.trialResponse = trialResponse
         return trialResponse
 
-    def plotPeristimulusDilation(self, session, probeTimestamps, frameTimestamps, lickTimestamps, pupilRadius):
+    def plotPeristimulusDilation(self, lickTimestamps, pupilRadius):
         """
         Plot response (blue) and non-response (red) trials according to the amount of dilation or constriction in the 50 frames (1/3 of a second) before the probe
         """
-        fig = plt.plot()
-        for probe in self.probeTimestamps:
-            f1 = session.findClosestFrame(probe, self.frameTimestamps)
+        probeTimestamps = self.loadProbeTimestamps()
+        frameTimestamps = self.loadFrameTimestamps()
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        for probe in probeTimestamps:
+            f1 = self.findClosestFrame(probe, frameTimestamps)
             f5 = f1 - 50
             pupilDiff = self.pupilRadius[f1] - self.pupilRadius[f5]
-            trialResponse = session.findResponseTrials(probe, self.lickTimestamps)
+            trialResponse = self.findResponseTrials(probe, self.lickTimestamps)
             if trialResponse == True:
-                plt.plot(probe, pupilDiff, 'o', color = 'b')
+                ax.plot(probe, pupilDiff, 'o', color = 'b')
             else:
-                plt.plot(probe, pupilDiff, 'o', color = 'r')
-            plt.axhline(y = 0, color = 'k', linestyle = '-')
+                ax.plot(probe, pupilDiff, 'o', color = 'r')
+        x1, x2 = ax.get_xlim()
+        ax.hlines(0, x1, x2, color = 'k', linestyle = '-')
 
         return fig
 
-    def plotPeristimulusPupilTrace(self, session, probeTimestamps, frameTimestamps, lickTimestamps, pupilRadius):
+    def plotPeristimulusPupilTrace(self, lickTimestamps, pupilRadius):
         """ 
         Plot pupil trace for response (blue) and non-response (red) trials
         """
-        fig = plt.plot()
-        for probe in self.probeTimestamps:
-            f1 = session.findClosestFrame(probe, self.frameTimestamps)
+        probeTimestamps = self.loadProbeTimestamps()
+        frameTimestamps = self.loadFrameTimestamps()
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        for probe in probeTimestamps:
+            f1 = self.findClosestFrame(probe, frameTimestamps)
             f0 = f1 - 300
             f2 = f1 + 300
             wave = self.pupilRadius[f0:f2]
-            trialResponse = session.findResponseTrials(probe, self.lickTimestamps)
+            trialResponse = self.findResponseTrials(probe, self.lickTimestamps)
             if trialResponse == True:
-                plt.plot(wave, color = 'b', alpha=0.1)
+                ax.plot(wave, color = 'b', alpha=0.1)
             else:
-                plt.plot(wave, color = 'r', alpha=0.1)
+                ax.plot(wave, color = 'r', alpha=0.1)
         return fig
 
-    def plotPupilData(self, session):
+    def plotPupilData(self):
         """
         Combine multiple functions to make 2 plots to look at pupil radius and dilation in a session
         """
-        probeTimestamps = session.extractProbeTimestamps(session)
-        frameTimestamps = session.extractFrameTimestamps(session)
-        lickTimestamps = session.extractLickTimestamps(session, frameTimestamps)
-        pupilRadius = session.extractPupilRadius(session)
-        figDilation = session.plotPeristimulusDilation(session, probeTimestamps, frameTimestamps, lickTimestamps, pupilRadius)
-        figTrace = session.plotPeristimulusPupilTrace(session, probeTimestamps, frameTimestamps, lickTimestamps, pupilRadius)
+        lickTimestamps = self.extractLickTimestamps()
+        pupilRadius = self.extractPupilRadius()
+        figDilation = self.plotPeristimulusDilation(lickTimestamps, pupilRadius)
+        figTrace = self.plotPeristimulusPupilTrace(lickTimestamps, pupilRadius)
         return figDilation, figTrace
