@@ -780,3 +780,15 @@ class GonogoSession(SessionBase):
             else:
                 plt.plot(wave, color = 'r', alpha=0.1)
         return fig
+
+    def plotPupilData(self, session):
+        """
+        Combine multiple functions to make 2 plots to look at pupil radius and dilation in a session
+        """
+        probeTimestamps = session.extractProbeTimestamps(session)
+        frameTimestamps = session.extractFrameTimestamps(session)
+        lickTimestamps = session.extractLickTimestamps(session, frameTimestamps)
+        pupilRadius = session.extractPupilRadius(session)
+        figDilation = session.plotPeristimulusDilation(session, probeTimestamps, frameTimestamps, lickTimestamps, pupilRadius)
+        figTrace = session.plotPeristimulusPupilTrace(session, probeTimestamps, frameTimestamps, lickTimestamps, pupilRadius)
+        return figDilation, figTrace
