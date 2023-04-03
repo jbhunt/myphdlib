@@ -746,7 +746,7 @@ class GonogoSession(SessionBase):
         self.trialResponse = trialResponse
         return trialResponse
 
-    def plotPeristimulusDilation(self, probeTimestamps, frameTimestamps, lickTimestamps):
+    def plotPeristimulusDilation(self, session, probeTimestamps, frameTimestamps, lickTimestamps):
         """
         Plot response (blue) and non-response (red) trials according to the amount of dilation or constriction in the 50 frames (1/3 of a second) before the probe
         """
@@ -764,7 +764,7 @@ class GonogoSession(SessionBase):
 
         return fig
 
-    def plotPeristimulusPupilTrace(self, probeTimestamps, frameTimestamps, lickTimestamps):
+    def plotPeristimulusPupilTrace(self, session, probeTimestamps, frameTimestamps, lickTimestamps):
         """ 
         Plot pupil trace for response (blue) and non-response (red) trials
         """
