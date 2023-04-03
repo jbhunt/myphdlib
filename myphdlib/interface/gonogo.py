@@ -687,7 +687,7 @@ class GonogoSession(SessionBase):
         """
         This takes unprocessed Labjack and DLC CSV data, analyzes it, and returns two raster plots - one normal lick raster and one lick raster separated out by contrasts
         """
-         lickTimestamps = self.extractLickTimestamps()
+        lickTimestamps = self.extractLickTimestamps()
         contrastValues = self.extractContrastValues()
         dictionary = self.sortUniqueContrasts(contrastValues)
         figRaster = self.createLickRaster(lickTimestamps)
