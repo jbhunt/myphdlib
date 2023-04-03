@@ -734,7 +734,7 @@ class GonogoSession(SessionBase):
         """
         Define whether a trial is a response or non-response trial
         """
-        lickRelative = (self.lickTimestamps - self.probe)
+        lickRelative = (self.lickTimestamps - probe)
         mask = np.logical_and(
             lickRelative > 0,
             lickRelative < 0.5
