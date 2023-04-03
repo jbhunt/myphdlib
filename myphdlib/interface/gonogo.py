@@ -752,10 +752,10 @@ class GonogoSession(SessionBase):
         """
         fig = plt.plot()
         for probe in self.probeTimestamps:
-            f1 = findClosestFrame(probe, self.frameTimestamps)
+            f1 = session.findClosestFrame(probe, self.frameTimestamps)
             f5 = f1 - 50
             pupilDiff = pupilRadius[f1] - pupilRadius[f5]
-            trialResponse = findResponseTrials(probe, self.lickTimestamps)
+            trialResponse = session.findResponseTrials(probe, self.lickTimestamps)
             if trialResponse == True:
                 plt.plot(probe, pupilDiff, 'o', color = 'b')
             else:
@@ -770,11 +770,11 @@ class GonogoSession(SessionBase):
         """
         fig = plt.plot()
         for probe in self.probeTimestamps:
-            f1 = findClosestFrame(probe, self.frameTimestamps)
+            f1 = session.findClosestFrame(probe, self.frameTimestamps)
             f0 = f1 - 300
             f2 = f1 + 300
             wave = pupilRadius[f0:f2]
-            trialResponse = findResponseTrials(probe, self.lickTimestamps)
+            trialResponse = session.findResponseTrials(probe, self.lickTimestamps)
             if trialResponse == True:
                 plt.plot(wave, color = 'b', alpha=0.1)
             else:
