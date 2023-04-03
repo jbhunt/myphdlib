@@ -746,7 +746,7 @@ class GonogoSession(SessionBase):
         self.trialResponse = trialResponse
         return trialResponse
 
-    def plotPeristimulusDilation(self, session, probeTimestamps, frameTimestamps, lickTimestamps):
+    def plotPeristimulusDilation(self, session, probeTimestamps, frameTimestamps, lickTimestamps, pupilRadius):
         """
         Plot response (blue) and non-response (red) trials according to the amount of dilation or constriction in the 50 frames (1/3 of a second) before the probe
         """
@@ -754,7 +754,7 @@ class GonogoSession(SessionBase):
         for probe in self.probeTimestamps:
             f1 = session.findClosestFrame(probe, self.frameTimestamps)
             f5 = f1 - 50
-            pupilDiff = pupilRadius[f1] - pupilRadius[f5]
+            pupilDiff = self.pupilRadius[f1] - self.pupilRadius[f5]
             trialResponse = session.findResponseTrials(probe, self.lickTimestamps)
             if trialResponse == True:
                 plt.plot(probe, pupilDiff, 'o', color = 'b')
@@ -764,7 +764,7 @@ class GonogoSession(SessionBase):
 
         return fig
 
-    def plotPeristimulusPupilTrace(self, session, probeTimestamps, frameTimestamps, lickTimestamps):
+    def plotPeristimulusPupilTrace(self, session, probeTimestamps, frameTimestamps, lickTimestamps, pupilRadius):
         """ 
         Plot pupil trace for response (blue) and non-response (red) trials
         """
@@ -773,7 +773,7 @@ class GonogoSession(SessionBase):
             f1 = session.findClosestFrame(probe, self.frameTimestamps)
             f0 = f1 - 300
             f2 = f1 + 300
-            wave = pupilRadius[f0:f2]
+            wave = self.pupilRadius[f0:f2]
             trialResponse = session.findResponseTrials(probe, self.lickTimestamps)
             if trialResponse == True:
                 plt.plot(wave, color = 'b', alpha=0.1)
