@@ -320,7 +320,7 @@ class GonogoSession(SessionBase):
             ax.vlines(x, y0, y1, color='r')
         return fig
 
-    def extractSaccadeTimestamps(self, frameTimestamps):
+    def extractSaccadeTimestamps(self):
         """
         Extract indices of saccades and use frame timestamps to extract total saccade timestamps, not nasal vs temporal
         """
