@@ -754,7 +754,12 @@ class GonogoSession(SessionBase):
     def findResponseTrials(self, probe, lickTimestamps):
         """
         Define whether a trial is a response or non-response trial
-        """session
+        """
+        lickRelative = (self.lickTimestamps - probe)
+        mask = np.logical_and(
+            lickRelative > 0,
+            lickRelative < 0.5
+        )
         if any(mask):
             trialResponse = True
         else:
