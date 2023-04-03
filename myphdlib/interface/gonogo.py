@@ -704,7 +704,7 @@ class GonogoSession(SessionBase):
         responsePerisaccadic = np.array([0, 0, 0, 0])
         totalPerisaccadic = np.array([0, 0, 0, 0])
         for session in sessions:
-            countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic = session.processMultipleLickSessions(session)
+            countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic = session.processMultipleLickSessions()
             responseExtrasaccadic = np.add(responseExtrasaccadic, countArrayExtrasaccadic)
             totalExtrasaccadic = np.add(totalExtrasaccadic, dictArrayExtrasaccadic)
             responsePerisaccadic = np.add(responsePerisaccadic, countArrayPerisaccadic)
