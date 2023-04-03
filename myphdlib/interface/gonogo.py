@@ -699,3 +699,84 @@ class GonogoSession(SessionBase):
         ax.set_ylabel('Fraction of Response Trials')
         ax.set_xlabel('Trials by Contrast Change')
         return fig
+
+    def extractPupilRadius(self, session):
+        """
+        Loads pupil position data from DLC CSV and extract radius
+        """
+        csvPupil = session.leftEyePose
+        centerX = loadBodypartData(csvPupil, bodypart = 'center', feature = 'x')
+        centerY = loadBodypartData(csvPupil, bodypart = 'center', feature = 'y')
+        centerXY = np.hstack([
+            centerX.reshape(-1, 1),
+            centerY.reshape(-1, 1)
+        ])
+        nasalX = loadBodypartData(csvPupil, bodypart = 'nasal', feature = 'x')
+        nasalY = loadBodypartData(csvPupil, bodypart = 'nasal', feature = 'y')
+        nasalXY = np.hstack([
+            nasalX.reshape(-1, 1),
+            nasalY.reshape(-1, 1)
+        ])
+        pupilRadius = np.linalg.norm(centerXY - nasalXY, axis=1)
+        self.pupilRadius = pupilRadius
+        return pupilRadius
+    
+    def findClosestFrame(self, t, frameTimestamps):
+        """
+        Finds frame closest to time t 
+        """
+        frameTimestampsRelative = self.frameTimestamps - t
+        closestFrameIndex = np.argmin(np.abs(frameTimestampsRelative))
+        self.closestFrameIndex = closestFrameIndex
+        return closestFrameIndex
+
+    def findResponseTrials(self, probe, lickTimestamps):
+        """
+        Define whether a trial is a response or non-response trial
+        """
+        lickRelative = (self.lickTimestamps - self.probe)
+        mask = np.logical_and(
+            lickRelative > 0,
+            lickRelative < 0.5
+        )
+        if any(mask):
+            trialResponse = True
+        else:
+            trialResponse = False
+        self.trialResponse = trialResponse
+        return trialResponse
+
+    def plotPeristimulusDilation(self, probeTimestamps, frameTimestamps, lickTimestamps):
+        """
+        Plot response (blue) and non-response (red) trials according to the amount of dilation or constriction in the 50 frames (1/3 of a second) before the probe
+        """
+        fig = figure()
+        for probe in self.probeTimestamps:
+            f1 = findClosestFrame(probe, self.frameTimestamps)
+            f5 = f1 - 50
+            pupilDiff = pupilRadius[f1] - pupilRadius[f5]
+            trialResponse = findResponseTrials(probe, self.lickTimestamps)
+            if trialResponse == True:
+                plt.plot(probe, pupilDiff, 'o', color = 'b')
+            else:
+                plt.plot(probe, pupilDiff, 'o', color = 'r')
+            plt.axhline(y = 0, color = 'k', linestyle = '-')
+
+        return fig
+
+    def plotPeristimulusPupilTrace(self, probeTimestamps, frameTimestamps, lickTimestamps):
+        """ 
+        Plot pupil trace for response (blue) and non-response (red) trials
+        """
+        fig = figure()
+        for probe in self.probeTimestamps:
+            f1 = findClosestFrame(probe, self.frameTimestamps)
+            f0 = f1 - 300
+            f2 = f1 + 300
+            wave = pupilRadius[f0:f2]
+            trialResponse = findResponseTrials(probe, self.lickTimestamps)
+            if trialResponse == True:
+                plt.plot(wave, color = 'b', alpha=0.1)
+            else:
+                plt.plot(wave, color = 'r', alpha=0.1)
+        return fig
