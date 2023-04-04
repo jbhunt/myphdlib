@@ -798,7 +798,7 @@ class GonogoSession(SessionBase):
         fig = plt.figure()
         ax = fig.add_subplot(111)
         for probe in probeTimestamps:
-            f1 = self.findClosestFrame(probe, frameTimestamps)
+            f1 = self.findClosestFrame(probe)
             f0 = f1 - 300
             f2 = f1 + 300
             wave = self.pupilRadius[f0:f2]
