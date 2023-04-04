@@ -812,9 +812,10 @@ class GonogoSession(SessionBase):
             else:
                 ax.plot(wave, color = 'r', alpha=0.1)
                 waveFalse.append(wave)
-
-        muTrue = waveTrue.mean(0)
-        muFalse = waveFalse.mean(0)
+        waveTrueArray = np.array(waveTrue)
+        waveFalseArray = np.array(waveFalse)
+        muTrue = waveTrueArray.mean(0)
+        muFalse = waveFalseArray.mean(0)
         ax.plot(muTrue, color = 'b', alpha=1)
         ax.plot(muFalse, color = 'r', alpha=1)
         return fig
