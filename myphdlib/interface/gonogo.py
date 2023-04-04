@@ -776,7 +776,7 @@ class GonogoSession(SessionBase):
         fig = plt.figure()
         ax = fig.add_subplot(111)
         for probe in probeTimestamps:
-            f1 = self.findClosestFrame(probe, frameTimestamps)
+            f1 = self.findClosestFrame(probe)
             f5 = f1 - 50
             pupilDiff = self.pupilRadius[f1] - self.pupilRadius[f5]
             trialResponse = self.findResponseTrials(probe, self.lickTimestamps)
