@@ -795,6 +795,8 @@ class GonogoSession(SessionBase):
         """
         probeTimestamps = self.loadProbeTimestamps()
         frameTimestamps = self.loadFrameTimestamps()
+        waveTrue = list()
+        waveFalse = list()
         fig = plt.figure()
         ax = fig.add_subplot(111)
         for probe in probeTimestamps:
@@ -805,8 +807,16 @@ class GonogoSession(SessionBase):
             trialResponse = self.findResponseTrials(probe, self.lickTimestamps)
             if trialResponse == True:
                 ax.plot(wave, color = 'b', alpha=0.1)
+                waveTrue.append(wave)
+
             else:
                 ax.plot(wave, color = 'r', alpha=0.1)
+                waveFalse.append(wave)
+
+        muTrue = waveTrue.mean(0)
+        muFalse = waveFalse.mean(0)
+        ax.plot(muTrue, color = 'b', alpha=1)
+        ax.plot(muFalse, color = 'r', alpha=1)
         return fig
 
     def plotPupilData(self):
