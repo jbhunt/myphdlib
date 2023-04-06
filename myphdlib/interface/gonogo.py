@@ -677,7 +677,7 @@ class GonogoSession(SessionBase):
         contrastValues = self.extractContrastValues()
         totalSaccades = self.extractSaccadeTimestamps()
         zipped3, perisaccadicProbeBool = self.createZippedList(totalSaccades)
-        zipped3 = zipped3[0:80]
+        zipped3 = zipped3[100:]
         zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicLists(perisaccadicProbeBool, contrastValues)
         dictionaryTrue = self.createPerisaccadicDictionary(listCT, listPT)
         dictionaryFalse = self.createExtrasaccadicDictionary(listCF, listPF)
