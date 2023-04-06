@@ -154,6 +154,7 @@ class GonogoSession(SessionBase):
         labjackData = loadLabjackData(labjackDirectory)
         timestamps = labjackData[:, 0]
         frameOnset, frameIndices = extractLabjackEvent(labjackData, 7, edge = 'both')
+        return frameOnset, frameIndices
         frameTimestamps = timestamps[frameIndices]
         self.write(frameTimestamps, 'frameTimestamps')
         return
@@ -676,6 +677,7 @@ class GonogoSession(SessionBase):
         contrastValues = self.extractContrastValues()
         totalSaccades = self.extractSaccadeTimestamps()
         zipped3, perisaccadicProbeBool = self.createZippedList(totalSaccades)
+        zipped3 = zipped3[0:120]
         zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicLists(perisaccadicProbeBool, contrastValues)
         dictionaryTrue = self.createPerisaccadicDictionary(listCT, listPT)
         dictionaryFalse = self.createExtrasaccadicDictionary(listCF, listPF)
