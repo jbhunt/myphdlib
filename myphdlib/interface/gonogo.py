@@ -154,7 +154,6 @@ class GonogoSession(SessionBase):
         labjackData = loadLabjackData(labjackDirectory)
         timestamps = labjackData[:, 0]
         frameOnset, frameIndices = extractLabjackEvent(labjackData, 7, edge = 'both')
-        return frameOnset, frameIndices
         frameTimestamps = timestamps[frameIndices]
         self.write(frameTimestamps, 'frameTimestamps')
         return
