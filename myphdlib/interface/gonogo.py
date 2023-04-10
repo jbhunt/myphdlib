@@ -690,6 +690,7 @@ class GonogoSession(SessionBase):
         lickTimestamps = self.extractLickTimestamps()
         contrastValues = self.extractContrastValues()
         totalSaccades = self.extractSaccadeTimestamps()
+        probeTimestampsCorrected = self.correctProbeTimestamps(lickTimestamps)
         zipped3, perisaccadicProbeBool = self.createZippedList(totalSaccades, probeTimestampsCorrected)
         zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicLists(perisaccadicProbeBool, contrastValues, probeTimestampsCorrected)
         dictionaryTrue = self.createPerisaccadicDictionary(listCT, listPT)
