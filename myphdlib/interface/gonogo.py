@@ -334,11 +334,44 @@ class GonogoSession(SessionBase):
         self.totalSaccades = totalSaccades
         return totalSaccades
 
-    def createZippedList(self, totalSaccades):
+    def correctProbeTimestamps(self, lickTimestamps):
+        """
+        Eliminate disengaged trials 
+        """
+        reactionTimes = list()
+        probeTimestamps = self.loadProbeTimestamps()
+        frameTimestamps = self.loadFrameTimestamps()
+        for probe in probeTimestamps:
+            reactionTimeList = (self.lickTimestamps - probe)
+            reactionList = list()
+            for reaction in reactionTimeList:
+                if reaction > 0:
+                    reactionList.append(reaction)
+                else:
+                    reactionList.append(15)
+            reactionTime = min(reactionList)
+            reactionTimes.append(reactionTime)
+        reactionTimes = np.array(reactionTimes)
+        probeTimestampsCorrected = list()
+        probeIndex = 7
+        for probe in probeTimestamps[7:]:
+            start = probeIndex - 7
+            stop = probeIndex + 7
+            sumReaction = sum(reactionTimes[start:stop])
+            lenReaction = len(reactionTimes[start:stop])
+            windowAvg = sumReaction/lenReaction
+            if windowAvg < 14:
+                probeTimestampsCorrected.append(probe)
+            probeIndex = probeIndex + 1
+        probeTimestampsCorrected = np.array(probeTimestampsCorrected)
+        self.probeTimestampsCorrected = probeTimestampsCorrected
+        return probeTimestampsCorrected
+
+    def createZippedList(self, totalSaccades, probeTimestampsCorrected):
         """
         Create a boolean variable to determine whether trial is perisaccadic and create zipped list of probetimestamps, contrast values, and boolean variable
         """
-        probeTimestamps = self.loadProbeTimestamps()
+        probeTimestamps = probeTimestampsCorrected
         perisaccadicProbeBool = list()
         for probe in probeTimestamps:
             saccadesRelative = (self.totalSaccades - probe)
