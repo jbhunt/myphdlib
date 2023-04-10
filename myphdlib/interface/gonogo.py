@@ -371,7 +371,7 @@ class GonogoSession(SessionBase):
         """
         Create a boolean variable to determine whether trial is perisaccadic and create zipped list of probetimestamps, contrast values, and boolean variable
         """
-        probeTimestamps = probeTimestampsCorrected
+        probeTimestamps = self.probeTimestampsCorrected
         perisaccadicProbeBool = list()
         for probe in probeTimestamps:
             saccadesRelative = (self.totalSaccades - probe)
@@ -393,11 +393,11 @@ class GonogoSession(SessionBase):
         self.perisaccadicProbeBool = perisaccadicProbeBool
         return zipped3, perisaccadicProbeBool
 
-    def createPeriAndExtraSaccadicLists(self, perisaccadicProbeBool, contrastValues):
+    def createPeriAndExtraSaccadicLists(self, perisaccadicProbeBool, contrastValues, probeTimestampsCorrected):
         """
         Based on boolean variable, separates probetimestamps and contrast values into zipped lists of perisaccadic and extrasaccadic trials
         """
-        probeTimestamps = self.loadProbeTimestamps()
+        probeTimestamps = self.probeTimestampsCorrected
         listPT = list()
         listCT = list()
         listPF = list()
@@ -690,8 +690,8 @@ class GonogoSession(SessionBase):
         lickTimestamps = self.extractLickTimestamps()
         contrastValues = self.extractContrastValues()
         totalSaccades = self.extractSaccadeTimestamps()
-        zipped3, perisaccadicProbeBool = self.createZippedList(totalSaccades)
-        zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicLists(perisaccadicProbeBool, contrastValues)
+        zipped3, perisaccadicProbeBool = self.createZippedList(totalSaccades, probeTimestampsCorrected)
+        zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicLists(perisaccadicProbeBool, contrastValues, probeTimestampsCorrected)
         dictionaryTrue = self.createPerisaccadicDictionary(listCT, listPT)
         dictionaryFalse = self.createExtrasaccadicDictionary(listCF, listPF)
         percentArrayExtrasaccadic, percentage1 = self.calculateExtrasaccadicResponsePercentages(dictionaryFalse, lickTimestamps)
