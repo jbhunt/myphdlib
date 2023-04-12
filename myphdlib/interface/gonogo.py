@@ -132,7 +132,7 @@ class GonogoSession(SessionBase):
         labjackDirectory = self.labjackFolder
         labjackData = loadLabjackData(labjackDirectory)
         timestamps = labjackData[:, 0]
-        probeOnset, probeIndices = extractLabjackEvent(labjackData, 6, edge = 'rising', pulseWidthRange = (20, 700))
+        probeOnset, probeIndices = extractLabjackEvent(labjackData, 6, edge = 'rising')
         probeTimestamps = timestamps[probeIndices]
         self.write(probeTimestamps, 'probeTimestamps')
         return
