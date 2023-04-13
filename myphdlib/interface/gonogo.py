@@ -367,7 +367,33 @@ class GonogoSession(SessionBase):
         self.probeTimestampsCorrected = probeTimestampsCorrected
         return probeTimestampsCorrected
 
-    def createZippedList(self, totalSaccades, probeTimestampsCorrected):
+    def createZippedList(self, totalSaccades):
+        """
+        Create a boolean variable to determine whether trial is perisaccadic and create zipped list of probetimestamps, contrast values, and boolean variable
+        """
+        probeTimestamps = self.loadProbeTimestamps
+        perisaccadicProbeBool = list()
+        for probe in probeTimestamps:
+            saccadesRelative = (self.totalSaccades - probe)
+            mask = np.logical_and(
+                saccadesRelative > -0.05,
+                saccadesRelative < 0.05
+            )
+            perisaccades = saccadesRelative[mask]
+            if any(perisaccades):
+                perisaccadicTrial = True
+            else:
+                perisaccadicTrial = False
+            perisaccadicProbeBool.append(perisaccadicTrial)
+    
+        perisaccadicProbeBool = np.array(perisaccadicProbeBool)
+
+        zipped3 = list(zip(probeTimestamps, self.contrastValues, perisaccadicProbeBool))
+        self.zipped3 = zipped3
+        self.perisaccadicProbeBool = perisaccadicProbeBool
+        return zipped3, perisaccadicProbeBool
+
+    def createZippedListCorrected(self, totalSaccades, probeTimestampsCorrected):
         """
         Create a boolean variable to determine whether trial is perisaccadic and create zipped list of probetimestamps, contrast values, and boolean variable
         """
@@ -393,7 +419,36 @@ class GonogoSession(SessionBase):
         self.perisaccadicProbeBool = perisaccadicProbeBool
         return zipped3, perisaccadicProbeBool
 
-    def createPeriAndExtraSaccadicLists(self, perisaccadicProbeBool, contrastValues, probeTimestampsCorrected):
+    def createPeriAndExtraSaccadicLists(self, perisaccadicProbeBool, contrastValues):
+        """
+        Based on boolean variable, separates probetimestamps and contrast values into zipped lists of perisaccadic and extrasaccadic trials
+        """
+        probeTimestamps = self.loadProbeTimestamps
+        listPT = list()
+        listCT = list()
+        listPF = list()
+        listCF = list()
+        probeBoolIndex = 0
+        for probeBool in self.perisaccadicProbeBool:
+            if probeBool == True:
+                listPT.append(probeTimestamps[probeBoolIndex])
+                listCT.append(contrastValues[probeBoolIndex])
+            else:
+                listPF.append(probeTimestamps[probeBoolIndex])
+                listCF.append(contrastValues[probeBoolIndex])
+            probeBoolIndex = probeBoolIndex + 1
+
+        zipTrue = zip(listCT, listPT)
+        zipFalse = zip(listCF, listPF)
+        self.listCT = listCT
+        self.listPT = listPT
+        self.listCF = listCF
+        self.listPF = listPF
+        self.zipTrue = zipTrue
+        self.zipFalse = zipFalse
+        return zipTrue, zipFalse, listCT, listPT, listCF, listPF
+
+    def createPeriAndExtraSaccadicListsCorrected(self, perisaccadicProbeBool, contrastValues, probeTimestampsCorrected):
         """
         Based on boolean variable, separates probetimestamps and contrast values into zipped lists of perisaccadic and extrasaccadic trials
         """
@@ -421,6 +476,7 @@ class GonogoSession(SessionBase):
         self.zipTrue = zipTrue
         self.zipFalse = zipFalse
         return zipTrue, zipFalse, listCT, listPT, listCF, listPF
+
 
     def createPerisaccadicDictionary(self, listCT, listPT):
         """
@@ -710,8 +766,24 @@ class GonogoSession(SessionBase):
         contrastValues = self.extractContrastValues()
         totalSaccades = self.extractSaccadeTimestamps()
         probeTimestampsCorrected = self.correctProbeTimestamps(lickTimestamps)
-        zipped3, perisaccadicProbeBool = self.createZippedList(totalSaccades, probeTimestampsCorrected)
-        zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicLists(perisaccadicProbeBool, contrastValues, probeTimestampsCorrected)
+        zipped3, perisaccadicProbeBool = self.createZippedList(totalSaccades)
+        zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicLists(perisaccadicProbeBool, contrastValues)
+        dictionaryTrue = self.createPerisaccadicDictionary(listCT, listPT)
+        dictionaryFalse = self.createExtrasaccadicDictionary(listCF, listPF)
+        countArrayExtrasaccadic, dictArrayExtrasaccadic = self.calculateExtrasaccadicResponseNumbers(dictionaryFalse, lickTimestamps)
+        countArrayPerisaccadic, dictArrayPerisaccadic = self.calculatePerisaccadicResponseNumbers(dictionaryTrue, lickTimestamps)
+        return countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic
+    
+    def processMultipleLickSessionsCorrected(self):
+        """
+        This takes unprocessed Labjack and DLC CSV data, analyzes it, and returns the number of response trials and total trials for a session for each contrast, so we can combine data across sessions
+        """
+        lickTimestamps = self.extractLickTimestamps()
+        contrastValues = self.extractContrastValues()
+        totalSaccades = self.extractSaccadeTimestamps()
+        probeTimestampsCorrected = self.correctProbeTimestamps(lickTimestamps)
+        zipped3, perisaccadicProbeBool = self.createZippedListCorrected(totalSaccades, probeTimestampsCorrected)
+        zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicListsCorrected(perisaccadicProbeBool, contrastValues, probeTimestampsCorrected)
         dictionaryTrue = self.createPerisaccadicDictionary(listCT, listPT)
         dictionaryFalse = self.createExtrasaccadicDictionary(listCF, listPF)
         countArrayExtrasaccadic, dictArrayExtrasaccadic = self.calculateExtrasaccadicResponseNumbers(dictionaryFalse, lickTimestamps)
@@ -740,6 +812,31 @@ class GonogoSession(SessionBase):
         totalPerisaccadic = np.array([0, 0, 0, 0])
         for session in sessions:
             countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic = session.processMultipleLickSessions()
+            responseExtrasaccadic = np.add(responseExtrasaccadic, countArrayExtrasaccadic)
+            totalExtrasaccadic = np.add(totalExtrasaccadic, dictArrayExtrasaccadic)
+            responsePerisaccadic = np.add(responsePerisaccadic, countArrayPerisaccadic)
+            totalPerisaccadic = np.add(totalPerisaccadic, dictArrayPerisaccadic)
+    
+        percentExtrasaccadic = np.divide(responseExtrasaccadic, totalExtrasaccadic)
+        percentPerisaccadic = np.divide(responsePerisaccadic, totalPerisaccadic)
+        fig, ax = plt.subplots()
+        plt.plot(['0%', '5%', '10%', '30%'], percentExtrasaccadic, color='r')
+        plt.plot(['0%', '5%', '10%', '30%'], percentPerisaccadic, color='b')
+        plt.ylim([0.0, 1.5])
+        ax.set_ylabel('Fraction of Response Trials')
+        ax.set_xlabel('Trials by Contrast Change')
+        return fig
+
+    def lickAnalysisCorrected(self, sessions):
+        """
+        This takes multiple sessions as input and creates a psychometric curve comparing extrasaccadic and perisaccadic responses - this is the big overarching function
+        """
+        responseExtrasaccadic = np.array([0, 0, 0, 0])
+        totalExtrasaccadic = np.array([0, 0, 0, 0])
+        responsePerisaccadic = np.array([0, 0, 0, 0])
+        totalPerisaccadic = np.array([0, 0, 0, 0])
+        for session in sessions:
+            countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic = session.processMultipleLickSessionsCorrected()
             responseExtrasaccadic = np.add(responseExtrasaccadic, countArrayExtrasaccadic)
             totalExtrasaccadic = np.add(totalExtrasaccadic, dictArrayExtrasaccadic)
             responsePerisaccadic = np.add(responsePerisaccadic, countArrayPerisaccadic)
