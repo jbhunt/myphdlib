@@ -371,7 +371,7 @@ class GonogoSession(SessionBase):
         """
         Create a boolean variable to determine whether trial is perisaccadic and create zipped list of probetimestamps, contrast values, and boolean variable
         """
-        probeTimestamps = self.loadProbeTimestamps
+        probeTimestamps = self.loadProbeTimestamps()
         perisaccadicProbeBool = list()
         for probe in probeTimestamps:
             saccadesRelative = (self.totalSaccades - probe)
@@ -423,7 +423,7 @@ class GonogoSession(SessionBase):
         """
         Based on boolean variable, separates probetimestamps and contrast values into zipped lists of perisaccadic and extrasaccadic trials
         """
-        probeTimestamps = self.loadProbeTimestamps
+        probeTimestamps = self.loadProbeTimestamps()
         listPT = list()
         listCT = list()
         listPF = list()
