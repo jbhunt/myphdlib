@@ -360,7 +360,7 @@ class GonogoSession(SessionBase):
             sumReaction = sum(reactionTimes[start:stop])
             lenReaction = len(reactionTimes[start:stop])
             windowAvg = sumReaction/lenReaction
-            if windowAvg < 14:
+            if windowAvg < 13:
                 probeTimestampsCorrected.append(probe)
             probeIndex = probeIndex + 1
         probeTimestampsCorrected = np.array(probeTimestampsCorrected)
