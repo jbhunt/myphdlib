@@ -8,6 +8,7 @@ from myphdlib.general.labjack import extractLabjackEvent
 from myphdlib.extensions.deeplabcut import loadBodypartData
 import scipy as sp
 from matplotlib import pylab as plt
+from scipy.signal import savgol_filter
 
 class GonogoSession(SessionBase):
     """
