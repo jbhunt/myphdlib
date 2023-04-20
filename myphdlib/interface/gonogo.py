@@ -334,7 +334,7 @@ class GonogoSession(SessionBase):
         self.totalSaccades = totalSaccades
         return totalSaccades
 
-    def correctProbeTimestamps(self, lickTimestamps):
+    def findFilteredIndices(self, lickTimestamps):
         """
         Eliminate disengaged trials 
         """
@@ -352,20 +352,27 @@ class GonogoSession(SessionBase):
             reactionTime = min(reactionList)
             reactionTimes.append(reactionTime)
         reactionTimes = np.array(reactionTimes)
-        probeTimestampsCorrected = list()
-        probeIndex = 7
-        for probe in probeTimestamps[7:]:
-            start = probeIndex - 7
-            stop = probeIndex + 7
-            sumReaction = sum(reactionTimes[start:stop])
-            lenReaction = len(reactionTimes[start:stop])
-            windowAvg = sumReaction/lenReaction
-            if windowAvg < 13:
-                probeTimestampsCorrected.append(probe)
-            probeIndex = probeIndex + 1
-        probeTimestampsCorrected = np.array(probeTimestampsCorrected)
+        smoothed = sp.signal.savgol_filter(reactionTimes, 15, 3)
+        zipFilter = zip(probeTimestamps, smoothed)
+        filterIndices = list()
+        for index, (timestamp, threshold) in enumerate(zipFilter):
+            if threshold < 13:
+                filterIndices.append(index)
+        filterIndices = np.array(filterIndices)
+        self.filterIndices = filterIndices
+        return filterIndices
+
+    def correctProbeTimestamps(self, filterIndices):
+        probeTimestamps = self.loadProbeTimestamps()
+        probeTimestampsCorrected = probeTimestamps[self.filterIndices]
         self.probeTimestampsCorrected = probeTimestampsCorrected
         return probeTimestampsCorrected
+
+    def correctContrastValues(self, filterIndices, contrastValues):
+        contrastValuesCorrected = self.contrastValues[self.filterIndices]
+        self.contrastValuesCorrected = contrastValuesCorrected
+        return contrastValuesCorrected
+
 
     def createZippedList(self, totalSaccades):
         """
@@ -393,7 +400,7 @@ class GonogoSession(SessionBase):
         self.perisaccadicProbeBool = perisaccadicProbeBool
         return zipped3, perisaccadicProbeBool
 
-    def createZippedListCorrected(self, totalSaccades, probeTimestampsCorrected):
+    def createZippedListCorrected(self, totalSaccades, probeTimestampsCorrected, contrastValuesCorrected):
         """
         Create a boolean variable to determine whether trial is perisaccadic and create zipped list of probetimestamps, contrast values, and boolean variable
         """
@@ -414,7 +421,7 @@ class GonogoSession(SessionBase):
     
         perisaccadicProbeBool = np.array(perisaccadicProbeBool)
 
-        zipped3 = list(zip(probeTimestamps, self.contrastValues, perisaccadicProbeBool))
+        zipped3 = list(zip(probeTimestamps, self.contrastValuesCorrected, perisaccadicProbeBool))
         self.zipped3 = zipped3
         self.perisaccadicProbeBool = perisaccadicProbeBool
         return zipped3, perisaccadicProbeBool
@@ -448,7 +455,7 @@ class GonogoSession(SessionBase):
         self.zipFalse = zipFalse
         return zipTrue, zipFalse, listCT, listPT, listCF, listPF
 
-    def createPeriAndExtraSaccadicListsCorrected(self, perisaccadicProbeBool, contrastValues, probeTimestampsCorrected):
+    def createPeriAndExtraSaccadicListsCorrected(self, perisaccadicProbeBool, contrastValuesCorrected, probeTimestampsCorrected):
         """
         Based on boolean variable, separates probetimestamps and contrast values into zipped lists of perisaccadic and extrasaccadic trials
         """
@@ -461,10 +468,10 @@ class GonogoSession(SessionBase):
         for probeBool in self.perisaccadicProbeBool:
             if probeBool == True:
                 listPT.append(probeTimestamps[probeBoolIndex])
-                listCT.append(contrastValues[probeBoolIndex])
+                listCT.append(contrastValuesCorrected[probeBoolIndex])
             else:
                 listPF.append(probeTimestamps[probeBoolIndex])
-                listCF.append(contrastValues[probeBoolIndex])
+                listCF.append(contrastValuesCorrected[probeBoolIndex])
             probeBoolIndex = probeBoolIndex + 1
 
         zipTrue = zip(listCT, listPT)
@@ -781,9 +788,11 @@ class GonogoSession(SessionBase):
         lickTimestamps = self.extractLickTimestamps()
         contrastValues = self.extractContrastValues()
         totalSaccades = self.extractSaccadeTimestamps()
-        probeTimestampsCorrected = self.correctProbeTimestamps(lickTimestamps)
-        zipped3, perisaccadicProbeBool = self.createZippedListCorrected(totalSaccades, probeTimestampsCorrected)
-        zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicListsCorrected(perisaccadicProbeBool, contrastValues, probeTimestampsCorrected)
+        filterIndices = findFilteredIndices(lickTimestamps)
+        probeTimestampsCorrected = self.correctProbeTimestamps(filterIndices)
+        contrastValuesCorrected = self.correctContrastValues(filterIndices, contrastValues)
+        zipped3, perisaccadicProbeBool = self.createZippedListCorrected(totalSaccades, probeTimestampsCorrected, contrastValuesCorrected)
+        zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicListsCorrected(perisaccadicProbeBool, contrastValuesCorrected, probeTimestampsCorrected)
         dictionaryTrue = self.createPerisaccadicDictionary(listCT, listPT)
         dictionaryFalse = self.createExtrasaccadicDictionary(listCF, listPF)
         countArrayExtrasaccadic, dictArrayExtrasaccadic = self.calculateExtrasaccadicResponseNumbers(dictionaryFalse, lickTimestamps)
