@@ -357,7 +357,7 @@ class GonogoSession(SessionBase):
         zipFilter = zip(probeTimestamps, smoothed)
         filterIndices = list()
         for index, (timestamp, threshold) in enumerate(zipFilter):
-            if threshold < 13:
+            if threshold < 10:
                 filterIndices.append(index)
         filterIndices = np.array(filterIndices)
         self.filterIndices = filterIndices
