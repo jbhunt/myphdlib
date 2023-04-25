@@ -1,7 +1,8 @@
 import os
 import re
 import yaml
-import win32api
+if os.name == 'nt':
+    import win32api
 import pathlib as pl
 from datetime import date
 from string import ascii_uppercase as letters
@@ -20,7 +21,7 @@ class SessionFactory(object):
         """
 
         self._findDataVolumes(tag)
-        self._loadExperimentData()
+        # self._loadExperimentData()
 
         return
     
@@ -47,7 +48,7 @@ class SessionFactory(object):
         elif os.name == 'posix':
             for user in pl.Path('/media/').iterdir():
                 for drive in user.iterdir():
-                    if bool(re.search(f'.*{tag}.*'), str(drive.name)):
+                    if bool(re.search(f'.*{tag}.*', str(drive.name))):
                         self.volumes.append(drive)
 
         #

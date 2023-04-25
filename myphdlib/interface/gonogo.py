@@ -129,7 +129,7 @@ class GonogoSession(SessionBase):
         probeTimestamps = timestamps[probeIndices]
         return probeTimestamps
 
-     def extractFrameTimestamps(self):
+    def extractFrameTimestamps(self):
         """
         Extract timestamps of frames from Labjack data and return frame timestamps
         """
@@ -142,15 +142,15 @@ class GonogoSession(SessionBase):
         """
         Extract timestamps of licks recorded by DLC and synchronized with Labjack data and return lick timestamps
         """
-         csv = session.tonguePose
-         spoutLikelihood = loadBodypartData(csv, bodypart='spout', feature='likelihood')
-         M = np.diff(spoutLikelihood, n=1)
-         M1 = M*-1
-         peaks, _ = sp.signal.find_peaks(M1, height=0.9, threshold=None, distance=None, prominence=None, width=None, wlen=None, rel_height=0.5, plateau_size=None)
-         frameIndex = np.arange(len(loadBodypartData(csv, bodypart='spout', feature='likelihood')))
-         peakFrames = frameIndex[peaks]
-         lickTimestamps = frameTimestamps[peakFrames]
-         return lickTimestamps
+        csv = session.tonguePose
+        spoutLikelihood = loadBodypartData(csv, bodypart='spout', feature='likelihood')
+        M = np.diff(spoutLikelihood, n=1)
+        M1 = M*-1
+        peaks, _ = sp.signal.find_peaks(M1, height=0.9, threshold=None, distance=None, prominence=None, width=None, wlen=None, rel_height=0.5, plateau_size=None)
+        frameIndex = np.arange(len(loadBodypartData(csv, bodypart='spout', feature='likelihood')))
+        peakFrames = frameIndex[peaks]
+        lickTimestamps = frameTimestamps[peakFrames]
+        return lickTimestamps
 
     def createLickRaster(self):
         """
@@ -275,12 +275,55 @@ class GonogoSession(SessionBase):
             ax.vlines(x, y0, y1, color='r')
         return fig
 
-    def createPsychometricContrastCurve(self):
+    def createPsychometricSaccadeCurve(self):
         """
         Calculate the number of response trials for each contrast and plot it as psychometric curve, return plot
         """
 
         count1 = 0
+        count6 = 0
+        count5 = 0
+        count4 = 0
+        tempcount = 0
+
+        for key in dictionary:
+            for probeTimestamp in dictionary[key]:
+                for lick in lickTimestamps:
+                    lickRelative = (lick - probeTimestamp)
+                    if lickRelative > 0 and lickRelative < responseTime:
+                        tempcount = (tempcount + 1)
+                        break
+        if key == ' contrast4':
+            count1 = tempcount
+            tempcount = 0
+        if key == ' contrast3':
+            count6 = tempcount
+            tempcount = 0
+        if key == ' contrast2':
+            count5 = tempcount
+            tempcount = 0
+        if key == ' contrast1':
+            count4 = tempcount
+            tempcount = 0       
+        
+        percentage1 = count1/len(dictionary[' contrast4'])
+        percentage6 = count6/len(dictionary[' contrast3'])
+        percentage5 = count5/len(dictionary[' contrast2'])
+        percentage4 = count4/len(dictionary[' contrast1'])
+        
+        normal1 = percentage1/percentage1
+        normal6 = percentage6/percentage1
+        normal5 = percentage5/percentage1
+        normal4 = percentage4/percentage1
+        
+        fig, ax = plt.subplots()
+        plt.plot(['0%', '5%', '10%', '30%'], [normal4, normal5, normal6, normal1])
+        plt.ylim([0.0, 1.5])
+        ax.set_ylabel('Fraction of Response Trials')
+        ax.set_xlabel('Trials by Contrast Change')
+        return fig
+
+    count1 = 0
         count6 = 0
         count5 = 0
         count4 = 0
