@@ -1,4 +1,4 @@
-def createProbeConfig(dst, reference='tip'):
+def createProbeConfigZigzag(dst, reference='tip'):
     """
     """
     if reference == 'external':
@@ -48,5 +48,55 @@ def createProbeConfig(dst, reference='tip'):
     with open(dst, 'w') as stream:
         stream.write(line)
         
+
+    return
+
+def createProbeConfigDense(dst, reference='tip'):
+    """
+    """
+
+    if reference == 'external':
+        referenceNumber = 0
+    elif reference == 'tip':
+        referenceNumber = 1
+    else:
+        referenceNumber = 0
+
+    bankNumber = 0
+    data = ['(0,384)']
+    for channelIndex in range(384):
+        entry = f'({channelIndex} {bankNumber} {referenceNumber} 500 250 1)'
+        data.append(entry)
+
+    #
+    data.append('\n')
+    line = ''.join(data)
+    with open(dst, 'w') as stream:
+        stream.write(line)
+
+    return
+
+def createProbeConfigLinear(dst, reference='tip'):
+    if reference == 'external':
+        referenceNumber = 0
+    elif reference == 'tip':
+        referenceNumber = 1
+    else:
+        referenceNumber = 0
+
+    bankNumber = 0
+    data = ['(0,384)']
+    for channelIndex in range(384):
+        channelNumber = channelIndex * 2
+        bankNumber = channelNumber // 384
+        channelNumber -= (bankNumber * 384)
+        entry = f'({channelNumber} {bankNumber} {referenceNumber} 500 250 1)'
+        data.append(entry)
+
+    #
+    data.append('\n')
+    line = ''.join(data)
+    with open(dst, 'w') as stream:
+        stream.write(line)
 
     return

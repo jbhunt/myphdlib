@@ -1271,7 +1271,7 @@ class SaccadeFrequencyAnalysis2():
                 ax.set_xticklabels(xlabels)
             
             #
-            ax.set_title(animal)
+            # ax.set_title(animal)
         
         #
         axs[-1].set_xlabel('Time (by treatment)')

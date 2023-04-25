@@ -14,7 +14,11 @@ from myphdlib.general.toolkit import smooth, resample, interpolate, detectThresh
 from myphdlib.general.session import saveSessionData
 from myphdlib.extensions.matplotlib import SaccadeLabelingGUI
 
-def extractEyePosition(session, likelihoodThreshold=0.99, pupilCenterName='pupilCenter'):
+def extractEyePosition(
+    session,
+    likelihoodThreshold=0.99,
+    pupilCenterName='pupilCenter',
+    ):
     """
     Extract the raw eye position data
     """
@@ -202,9 +206,9 @@ def reorientEyePosition(session, reflect='left'):
         signal2 = eyePositionDecomposed[:, columnIndex]
         signal2 = np.delete(signal2, indices)
         r2, p =  pearsonr(signal1, signal2)
-        if r2 > 0.1 and p < 0.05:
+        if r2 > 0.05 and p < 0.05:
             pass
-        elif r2 < -0.1 and p < 0.05:
+        elif r2 < -0.05 and p < 0.05:
             signal3 *= -1
         else:
             raise Exception('Could not determine correlation between raw and decomposed eye position')

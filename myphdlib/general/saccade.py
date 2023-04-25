@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 from sklearn.impute import KNNImputer, SimpleImputer
 from sklearn.decomposition import PCA, IncrementalPCA
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.model_selection import GridSearchCV
 from sklearn.neural_network import MLPClassifier
 from scipy.stats import pearsonr
 from scipy.signal import find_peaks as findPeaks
@@ -430,39 +432,115 @@ def labelPutativeSaccades(sessionObject, nSamplesPerEye=30):
 
     return
 
-def classifyPutativeSaccades(factoryObject, classifierClass=MLPClassifier, **classifierKwargs):
+def _trainSaccadeClassifier(
+    sessions,
+    classifier='net',
+    decompose=False,
+    features='position'
+    ):
     """
     """
-
-    classifierKwargsDefaults = {
-        'max_iter': 1000000
-    }
-    classifierKwargs.update(classifierKwargsDefaults)
-
-    # Collect the training dataset
-    X = list()
-    y = list()
-    for sessionObject in factoryObject:
-        saccadeWaveformsLabeled = sessionObject.load('saccadeWaveformsLabeled')
-        for eye in ('left', 'right'):
-            if saccadeWaveformsLabeled[eye]['X'] is None:
-                continue
-            samples = np.diff(saccadeWaveformsLabeled[eye]['X'], axis=1)
-            labels = saccadeWaveformsLabeled[eye]['y']
-            mask = np.invert(np.isnan(labels)).flatten()
-            for sample, label in zip(samples[mask, :], labels[mask, :]):
-                X.append(sample)
-                y.append(label)
-
-    X = np.array(X)
-    y = np.array(y).reshape(-1, 1)
-
-    # Init and fit the classifier
-    # TODO: grid search CV
-    clf = classifierClass(**classifierKwargs).fit(X, y.ravel())
 
     #
-    for session in factoryObject:
+    pca = PCA(n_components=2)
+    xTrain = list()
+    xTest = list()
+    y = list()
+
+    #
+    for session in sessions:
+
+        #
+        if 'saccadeDetectionResults' in session.keys:
+            saccadeDetectionResults = session.load('saccadeDetectionResults')
+            for eye in ('left', 'right'):
+                saccadeWaveformsUnlabeled = saccadeDetectionResults['waveforms'][eye]
+                for sample in saccadeWaveformsUnlabeled:
+                    if np.isnan(sample).any():
+                        continue
+                    if features == 'position':
+                        xTest.append(sample)
+                    elif features == 'velocity':
+                        xTest.append(np.diff(sample))
+        
+        #
+        if 'saccadeWaveformsLabeled' in session.keys:
+            saccadeLabelingResults = session.load('saccadeWaveformsLabeled')
+            for eye in ('left', 'right'):
+                saccadeWaveformsLabeled = saccadeLabelingResults[eye]
+                iterable = zip(
+                    saccadeWaveformsLabeled['X'],
+                    saccadeWaveformsLabeled['y']
+                )
+                for sample, label in iterable:
+                    if np.isnan(sample).any():
+                        continue
+                    if np.isnan(label.item()):
+                        continue
+                    if features == 'position':
+                        xTrain.append(sample)
+                    elif features == 'velocity':
+                        xTrain.append(np.diff(sample))
+                    y.append(label.item())
+
+    #
+    xTrain = np.array(xTrain)
+    xTest = np.array(xTest)
+    y = np.array(y)
+
+    # Decompose
+    if decompose:
+        pca.fit(np.vstack([xTrain, xTest]))
+        xTrainDecomposed = pca.transform(xTrain)
+        X = xTrainDecomposed
+    else:
+        X = xTrain
+
+    # Fit
+    if classifier == 'net':
+        grid = {
+            'hidden_layer_sizes': [
+                (10 , 10 , 10 ),
+                (100, 100, 100),
+                (200, 200, 200),
+                (300, 300, 300)
+            ],
+            'max_iter': [
+                1000000,
+            ]
+        }
+        net = MLPClassifier()
+        search = GridSearchCV(net, grid)
+        search.fit(X, y.ravel())
+        clf = search.best_estimator_
+    
+    #
+    elif classifier == 'lda':
+        lda = LinearDiscriminantAnalysis()
+        lda.fit(X, y.ravel())
+        clf = lda
+
+    return pca, clf
+
+def classifyPutativeSaccades(
+    sessions,
+    classifier='net',
+    features='velocity',
+    decompose=False,
+    ):
+    """
+    """
+
+    #
+    pca, clf = _trainSaccadeClassifier(
+        sessions,
+        classifier,
+        decompose,
+        features
+    )
+
+    #
+    for session in sessions:
 
         #
         if 'saccadeWaveformsClassified' in session.keys:
@@ -501,25 +579,48 @@ def classifyPutativeSaccades(factoryObject, classifierClass=MLPClassifier, **cla
             #
             if saccadeDetectionResults['waveforms'][eye] is None:
                 continue
-            samples = np.diff(saccadeDetectionResults['waveforms'][eye], axis=1)
-            labels = clf.predict(samples)
-            directions = list()
-            for label in labels.flatten():
-                if label == -1:
-                    directions.append('temporal')
-                elif label == 1:
-                    directions.append('nasal')
-                else:
-                    directions.append(None)
 
-            # Parse the putative saccades into classes
-            for sampleIndex, (sample, direction) in enumerate(zip(samples, directions)):
-                if direction is None:
+            #
+            waveforms = list()
+            samples = list()
+            indices = list()
+            for index, waveform in enumerate(saccadeDetectionResults['waveforms'][eye]):
+                if np.isnan(waveform).any():
                     continue
-                saccadeOnsetIndex = saccadeDetectionResults['indices'][eye][sampleIndex]
-                saccadeClassificationResults[eye][direction]['indices'].append(saccadeOnsetIndex)
-                saccadeWaveform = saccadeDetectionResults['waveforms'][eye][sampleIndex, :]
-                saccadeClassificationResults[eye][direction]['waveforms'].append(saccadeWaveform)
+                if features == 'position':
+                    samples.append(waveform)
+                elif features == 'velocity':
+                    samples.append(np.diff(waveform))
+                waveforms.append(waveform)
+                indices.append(saccadeDetectionResults['indices'][eye][index])
+            
+            #
+            if decompose:
+                samples = pca.transform(
+                    np.diff(np.array(samples), axis=1)
+                )
+            else:
+                samples = np.array(samples)
+
+            #
+            labels = clf.predict(samples)
+
+            #
+            iterable = zip(
+                waveforms,
+                samples,
+                labels,
+                indices
+            )
+            for waveform, sample, label, index in iterable:
+                if label == 0:
+                    continue
+                elif label == 1:
+                    direction = 'nasal'
+                elif label == -1:
+                    direction = 'temporal'
+                saccadeClassificationResults[eye][direction]['waveforms'].append(waveform)
+                saccadeClassificationResults[eye][direction]['indices'].append(index) 
     
         # Save the results
         for eye in ('left', 'right'):

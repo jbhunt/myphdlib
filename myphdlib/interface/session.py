@@ -83,8 +83,9 @@ class SessionBase(object):
         self._loadBasicMetadata()
 
         #
-        self._eye = eye
-        self._folders = None
+        self._eye       = eye
+        self._folders   = None
+        self._units     = None
 
         return
     
@@ -217,6 +218,12 @@ class SessionBase(object):
     
     @property
     def rightEyePose(self): return
+
+    @property
+    def leftCameraTimestamps(self): return
+
+    @property
+    def rightCameraTimestamps(self): return
 
     @property
     def outputFilePath(self):
@@ -360,4 +367,12 @@ class SessionBase(object):
             self._folders = SimpleNamespace(**folders_)
 
         return self._folders
+    
+    @property
+    def units(self):
+        """
+        Iterable object of single units
+        """
+
+        return
 
