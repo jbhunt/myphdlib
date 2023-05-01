@@ -215,6 +215,32 @@ class GonogoSession(SessionBase):
         fig.set_figwidth(6)
         return fig
 
+    def createSaccadeRaster(self, totalSaccades, lickTimestamps):
+        L = list()
+        for saccade in self.totalSaccades:
+            lickRelative = (self.lickTimestamps - saccade)
+            mask = np.logical_and(
+                lickRelative > -2,
+                lickRelative < 5,
+            )
+            lickRelativeFiltered = lickRelative[mask]
+            L.append(lickRelativeFiltered)
+        L1 = np.array(L)
+        fig, ax = plt.subplots()
+        font = {'size' : 15}
+        plt.rc('font', **font)
+        plt.gca().invert_yaxis()
+        for rowIndex, row in enumerate(L1):
+            x = row
+            y0 = rowIndex - 0.5
+            y1 = rowIndex + 0.5
+            ax.vlines(x, y0, y1, color='k')
+        ax.set_ylabel('Trial')
+        ax.set_xlabel('Time from probe (sec)')
+        fig.set_figheight(10)
+        fig.set_figwidth(6)
+        return fig
+
     def extractContrastValues(self):
         """
         Reads probe metadata file and zips array of contrast values with probe timestamps, returns zipped list of contrast values
