@@ -216,7 +216,7 @@ class GonogoSession(SessionBase):
         return fig
 
     def createSaccadeRaster(self, totalSaccades, lickTimestamps):
-        probeTimestamps = session.loadProbeTimestamps()
+        probeTimestamps = self.loadProbeTimestamps()
         L = list()
         L2 = list()
         for sac in totalSaccades:
