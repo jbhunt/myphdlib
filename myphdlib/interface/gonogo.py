@@ -216,16 +216,26 @@ class GonogoSession(SessionBase):
         return fig
 
     def createSaccadeRaster(self, totalSaccades, lickTimestamps):
+        probeTimestamps = session.loadProbeTimestamps()
         L = list()
-        for saccade in self.totalSaccades:
-            lickRelative = (self.lickTimestamps - saccade)
+        L2 = list()
+        for sac in totalSaccades:
+            lickRelative = (lickTimestamps - sac)
+            probeRelative = (probeTimestamps - sac)
             mask = np.logical_and(
                 lickRelative > -2,
                 lickRelative < 5,
             )
             lickRelativeFiltered = lickRelative[mask]
             L.append(lickRelativeFiltered)
+            mask = np.logical_and(
+                probeRelative > -2,
+                probeRelative < 5,
+            )
+            probeRelativeFiltered = probeRelative[mask]
+            L2.append(probeRelativeFiltered)
         L1 = np.array(L)
+        L3 = np.array(L2)
         fig, ax = plt.subplots()
         font = {'size' : 15}
         plt.rc('font', **font)
@@ -239,7 +249,17 @@ class GonogoSession(SessionBase):
         ax.set_xlabel('Time from probe (sec)')
         fig.set_figheight(10)
         fig.set_figwidth(6)
+        for rowIndex, row in enumerate(L3):
+            x = row
+            y0 = rowIndex - 0.5
+            y1 = rowIndex + 0.5
+            ax.vlines(x, y0, y1, color='r')
+        ax.set_ylabel('Trial')
+        ax.set_xlabel('Time from probe (sec)')
+        fig.set_figheight(10)
+        fig.set_figwidth(6)
         return fig
+    
 
     def extractContrastValues(self):
         """
@@ -383,7 +403,7 @@ class GonogoSession(SessionBase):
         zipFilter = zip(probeTimestamps, smoothed)
         filterIndices = list()
         for index, (timestamp, threshold) in enumerate(zipFilter):
-            if threshold < 15:
+            if threshold < 13:
                 filterIndices.append(index)
         filterIndices = np.array(filterIndices)
         self.filterIndices = filterIndices
