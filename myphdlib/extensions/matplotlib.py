@@ -46,9 +46,10 @@ def placeVerticalLines(data, yMarginFraction=0.1):
     """
     """
 
-    yRange = data.max() - data.min()
+    yMin, yMax = np.nanmin(data), np.nanmax(data)
+    yRange = yMax - yMin
     yMargin = yRange * yMarginFraction
-    yLimits = [data.min() - yMargin, data.max() + yMargin]
+    yLimits = [yMin - yMargin, yMax + yMargin]
     builder = VerticalLineBuilder(data, yLimits=yLimits)
     plt.show(block=True)
     xPositions = list()

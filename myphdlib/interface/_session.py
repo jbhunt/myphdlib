@@ -1,7 +1,14 @@
+import re
+import yaml
+import h5py
 import pickle
+import numpy as np
 import pathlib as pl
 from datetime import date
 from types import SimpleNamespace
+from scipy.interpolate import interp1d as interp
+from myphdlib.general.labjack import loadLabjackData
+from myphdlib.interface._ephys import Population
 
 def updateSessionMetadata(session, key, value, intitialize=True):
     """
@@ -83,9 +90,11 @@ class SessionBase(object):
         self._loadBasicMetadata()
 
         #
-        self._eye       = eye
-        self._folders   = None
-        self._units     = None
+        self._eye = eye
+        self._folders = None
+        self._units = None
+        self._labjackSamplingRate = None
+        self._population = None
 
         return
     
@@ -207,6 +216,112 @@ class SessionBase(object):
             
         return list(container.keys())
     
+    def load(self, path):
+        """
+        """
+
+        if self.hdf.exists() == False:
+            raise Exception(f'Output file does not exist')
+        
+        obj = None
+        with h5py.File(str(self.hdf), 'r') as file:
+            try:
+                obj = file[path]
+                if type(obj) == h5py.Dataset:
+                    return np.array(obj)
+                elif type(obj) == h5py.Group:
+                    return obj
+            except KeyError:
+                pass
+
+        return None
+    
+    def save(self, path, value, overwrite=True):
+        """
+        """
+
+        if self.hdf.exists() == False:
+            file = h5py.File(str(self.hdf), 'w')
+        else:
+            file = h5py.File(str(self.hdf), 'a')
+        
+        #
+        if path in file.keys():
+            if overwrite:
+                del file[path]
+            else:
+                raise Exception(f'{path} dataset already exists')
+        
+        #
+        dataset = file.create_dataset(path, value.shape, value.dtype, data=value)
+
+        #
+        file.close()        
+
+        return
+    
+    def remove(self, path):
+        """
+        Remove a group from the hdf file
+        """
+
+        if self.hdf.exists() == False:
+            raise Exception('Output file does not exists')
+        
+        with h5py.File(str(self.hdf), 'a') as file:
+            if path in file.keys():
+                del file[path]
+
+        return
+    
+    def save2(self, parent, stem, dataset=None, attribute=None, overwrite=True):
+        """
+        """
+
+        if self.hdf.exists() == False:
+            file = h5py.File(str(self.hdf), 'w')
+        else:
+            file = h5py.File(str(self.hdf), 'a')
+
+        #
+        if all([dataset is None, attribute is None]):
+            raise Exception('Data must be either a dataset or attribute not both')
+        
+        if parent.endswith('/'):
+            parent = path.rstrip('/')
+
+        #
+        if dataset is not None:
+            path = f'{parent}/{stem}'
+            if path in file.keys():
+                if overwrite:
+                    del file[path]
+                else:
+                    raise Exception(f'{path} dataset already exists')
+            ds = file.create_dataset(path, dataset.shape, dataset.dtype, data=dataset)
+
+        #
+        elif attribute is not None:
+            path = parent
+            ds = file[path]
+            if stem in ds.attrs.keys():
+                if overwrite:
+                    del ds.attrs[stem]
+                else:
+                    raise Exception(f'{stem} attribute already exists for the {path} dataset')
+            ds.attrs[stem] = attribute
+
+        file.close()
+
+        return
+    
+    @property
+    def hdf(self):
+        """
+        """
+
+        return self.home.joinpath('output.hdf')
+    
     @property
     def leftCameraMovie(self): return
     
@@ -293,6 +408,25 @@ class SessionBase(object):
         return
     
     @property
+    def eventSampleNumber(self):
+        return None
+    
+    @property
+    def referenceSampleNumber(self):
+        return
+    
+    @property
+    def labjackDataMatrix(self):
+        """
+        """
+
+        if 'labjackDataMatrix' in self.keys():
+            return self.read('labjackDataMatrix')
+        
+        else:
+            return loadLabjackData(self.folders.labjack)
+    
+    @property
     def saccadeWaveformsIpsi(self):
         """
         Get the ipsilateral saccade waveforms
@@ -364,15 +498,147 @@ class SessionBase(object):
                 if path.exists():
                     folders_['ephys'] = path
                     break
+            for folder in ('stimuli', 'stim'):
+                path = self.home.joinpath(folder)
+                if path.exists():
+                    folders_['stimuli'] = path
+                    break
             self._folders = SimpleNamespace(**folders_)
 
         return self._folders
     
     @property
-    def units(self):
+    def population(self):
         """
-        Iterable object of single units
         """
 
-        return
+        if self._population is None:
+            self._population = Population(self)
 
+        return self._population
+    
+    def computeTimestamps(self, eventIndices):
+        """
+        Convert labjack indices to timestamps in the ephys recording
+        """
+        
+        #
+        with h5py.File(self.hdf, 'r') as file:
+            keys = list(file.keys())
+        if 'tfp' not in keys:
+            raise Exception('Timestamping funciton has not been estimated')
+        
+        #
+        # params = self.read('timestampingFunctionParameters')
+        params = dict()
+        for key in ('m', 'xp', 'fp', 'b'):
+            value = self.load(f'tfp/{key}')
+            if value.size == 1:
+                value = value.item()
+            params[key] = value
+
+        f = interp(params['xp'], params['fp'], fill_value='extrapolate')
+
+        #
+        eventIndices = np.atleast_1d(eventIndices)
+        nSamples = len(eventIndices)
+        mask = np.invert(np.isnan(eventIndices)) 
+        output = np.full(nSamples, np.nan)
+
+        #
+        timestamps = np.around(
+            f(np.array(eventIndices)[mask]) * params['m'] + params['b'],
+            3
+        )
+        output[mask] = timestamps
+
+        return output
+    
+    @property
+    def inputFilePath(self):
+        """
+        """
+
+        return self.home.joinpath('input.txt')
+    
+    @property
+    def labjackSamplingRate(self):
+        """
+        """
+
+        files = [
+            file for file in pl.Path(self.folders.labjack).iterdir()
+                if file.suffix == '.dat'
+        ]
+        fileNumbers = [int(str(file).rstrip('.dat').split('_')[-1]) for file in files]
+        sortedIndex = np.argsort(fileNumbers)
+        dat = files[sortedIndex[0]]
+        with open(dat, 'rb') as stream:
+            lines = stream.readlines()
+            for lineIndex, lineData in enumerate(lines):
+                line = lineData.decode()
+                if bool(re.search('Time.*\r\n', line)):
+                    t1 = float(lines[lineIndex + 1].decode().split('\t')[0])
+                    t2 = float(lines[lineIndex + 2].decode().split('\t')[0])
+                    dt = t2 - t1
+                    fs = int(round(1 / dt, 0))
+                    break
+
+        return fs
+            
+    def hasGroup(self, path):
+        """
+        """
+
+        if self.hdf.exists() == False:
+            return False
+        
+
+        with h5py.File(self.hdf, 'r') as file:
+            try:
+                group = file[path]
+                return True
+            except KeyError:
+                return False
+
+    @property
+    def fps(self):
+        """
+        """
+
+        file = None
+        result = list(self.folders.videos.glob('*metadata.yaml'))
+        if len(result) == 1:
+            file = result.pop()
+        if file is None:
+            raise Exception()
+        
+        #
+        with open(file, 'r') as stream:
+            metadata = yaml.full_load(stream)
+        framerate = None
+        for key in metadata.keys():
+            if key.startswith('cam'):
+                if metadata[key]['ismaster'] == True:
+                    framerate = metadata[key]['framerate']
+                    break
+
+        return framerate
+    
+    @property
+    def isAutosorted(self):
+        """
+        """
+
+        filenames = (
+            'spike_times.npy',
+            'spike_clusters.npy'
+        )
+        results = list()
+        for filename in filenames:
+            if len(list(self.folders.ephys.rglob(f'*{filename}'))) == 1:
+                results.append(True)
+            else:
+                results.append(False)
+
+        return all(results)
