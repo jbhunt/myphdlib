@@ -9,6 +9,7 @@ from myphdlib.extensions.deeplabcut import loadBodypartData
 import scipy as sp
 from matplotlib import pylab as plt
 from scipy.signal import savgol_filter
+from myphdlib.general.labjack import filterPulsesFromPhotologicDevice
 
 class GonogoSession(SessionBase):
     """
@@ -133,7 +134,11 @@ class GonogoSession(SessionBase):
         labjackDirectory = self.labjackFolder
         labjackData = loadLabjackData(labjackDirectory)
         timestamps = labjackData[:, 0]
-        probeOnset, probeIndices = extractLabjackEvent(labjackData, 6, edge = 'rising')
+        # probeOnset, probeIndices = extractLabjackEvent(labjackData, 6, edge = 'rising')
+        filtered = filterPulsesFromPhotologicDevice(labjackData[:, 6],
+            minimumPulseWidthInSeconds=0.013
+        )
+        probeIndices = np.where(np.diff(filtered) > 0.5)[0]
         probeTimestamps = timestamps[probeIndices]
         self.write(probeTimestamps, 'probeTimestamps')
         return
