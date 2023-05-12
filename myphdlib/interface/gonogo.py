@@ -270,6 +270,7 @@ class GonogoSession(SessionBase):
         """
         Reads probe metadata file and zips array of contrast values with probe timestamps, returns zipped list of contrast values
         """
+        probeTimestamps = self.loadProbeTimestamps()
         metadata = self.probeMetadata
         fn = open(metadata, 'r'); # open the file
         allText = fn.readlines() # read the lines of text
@@ -277,10 +278,13 @@ class GonogoSession(SessionBase):
         contrastValues = []; # initialize
         indNum = 0; # initialize
         for lines in text: # loop through each line and extract the lick value
-            indStart = lines.find(', ');
-            indStop = lines.find(', ');
-            contrastValues.append(lines[(indStart + 1):(indStop + 6)])
+            #indStart = lines.find('0.');
+            indStop = lines.find('0,')
+            valueRead = lines[:indStop]
+            contrastValues.append(valueRead)
         contrastValues = np.array(contrastValues)
+        limit = len(probeTimestamps)
+        contrastValues = contrastValues[:limit]
         self.contrastValues = contrastValues
         return contrastValues
     
