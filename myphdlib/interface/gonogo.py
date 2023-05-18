@@ -136,7 +136,7 @@ class GonogoSession(SessionBase):
         timestamps = labjackData[:, 0]
         # probeOnset, probeIndices = extractLabjackEvent(labjackData, 6, edge = 'rising')
         filtered = filterPulsesFromPhotologicDevice(labjackData[:, 6],
-            minimumPulseWidthInSeconds=0.05
+            minimumPulseWidthInSeconds=0.005
         )
         probeIndices = np.where(np.diff(filtered) > 0.5)[0]
         probeTimestamps = timestamps[probeIndices]
