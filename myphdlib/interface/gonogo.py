@@ -388,6 +388,50 @@ class GonogoSession(SessionBase):
         self.array5 = array5
         return array1, array8, array6, array5
 
+    def createContrastRasterCorrected(self, lickTimestamps, dictionary, filteredProbes):
+        """
+        Create a raster sorted by contrast, returns arrays to plot
+        """
+        probeTimestamps = self.filteredProbes
+        list1 = list()
+        list8 = list()
+        list6 = list()
+        list5 = list()
+        listtemp = list()
+
+        for key in self.dictionary:
+            for probeTimestamp in self.dictionary[key]:
+                lickRelative = (self.lickTimestamps - probeTimestamp)
+                mask = np.logical_and(
+                    lickRelative > -2,
+                    lickRelative < 5,
+                )
+                lickRelativeFiltered = lickRelative[mask]
+    
+                listtemp.append(lickRelativeFiltered)
+
+            if key == '0.80':
+                list1 = listtemp
+                array1 = np.array(list1)
+                listtemp.clear()
+            if key == '0.60':
+                list8 = listtemp
+                array8 = np.array(list8)
+                listtemp.clear()
+            if key == '0.55':
+                list6 = listtemp
+                array6 = np.array(list6)
+                listtemp.clear()
+            if key == '0.50':
+                list5 = listtemp
+                array5 = np.array(list5)
+                listtemp.clear()
+        self.array1 = array1
+        self.array8 = array8
+        self.array6 = array6
+        self.array5 = array5
+        return array1, array8, array6, array5
+
     def plotContrastRaster(self, array1, array8, array6, array5):
         """
         Actually plots the contrast raster
