@@ -331,6 +331,19 @@ class GonogoSession(SessionBase):
         self.dictionary = dictionary
         return dictionary
 
+     def sortUniqueContrastsCorrected(self, filteredProbes, filteredContrast):
+        """
+        Sorts the array of contrast values into a dictionary with 4 keys representing the unique contrast values, returns the dictionary
+        """
+        probeTimestamps = self.filteredProbes
+        dictionary = dict() # Initialize an empty dictionary
+        uniqueContrastValues = np.unique(self.filteredContrast) # Find the unique constrast values
+        for uniqueContrastValue in uniqueContrastValues: # Iterterate through the unique contrast values
+            mask = self.filteredContrast == uniqueContrastValue # Create a mask for each unique contrast value
+            dictionary[uniqueContrastValue] = np.array(probeTimestamps)[mask]
+        self.dictionary = dictionary
+        return dictionary
+
     def createContrastRaster(self, lickTimestamps, dictionary):
         """
         Create a raster sorted by contrast, returns arrays to plot
