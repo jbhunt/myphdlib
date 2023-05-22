@@ -1123,3 +1123,17 @@ class GonogoSession(SessionBase):
         figDilation = self.plotPeristimulusDilation(lickTimestamps, pupilRadius)
         figTrace = self.plotPeristimulusPupilTrace(lickTimestamps, pupilRadius)
         return figDilation, figTrace
+
+    def plotFilteredLickRasters(self, x, y):
+        """
+        Allows you to enter index range for lick rasters
+        """
+        contrastValues = self.extractContrastValues()
+        lickTimestamps = self.extractLickTimestamps()
+        filteredProbes = self.correctProbeTimestamps2(self.x, self.y)
+        filteredContrast = self.correctContrastValues2(contrastValues, self.x, self.y)
+        fig1 = self.createLickRasterCorrected(lickTimestamps, filteredProbes)
+        dictionary = self.sortUniqueContrastsCorrected(filteredProbes, filteredContrast)
+        array1, array8, array6, array5 = self.createContrastRasterCorrected(lickTimestamps, dictionary, filteredProbes)
+        fig2 = self.plotContrastRaster(array1, array8, array6, array5)
+        return fig1, fig2
