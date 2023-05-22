@@ -430,7 +430,7 @@ class GonogoSession(SessionBase):
         self.filteredProbes = filteredProbes
         return filteredProbes
 
-    def correctContrastValues2(self, x, y):
+    def correctContrastValues2(self, contrastValues, x, y):
         filteredContrast = contrastValues[x:y]
         self.filteredContrast = filteredContrast
         return filteredContrast
