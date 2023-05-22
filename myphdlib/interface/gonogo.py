@@ -219,6 +219,36 @@ class GonogoSession(SessionBase):
         fig.set_figheight(10)
         fig.set_figwidth(6)
         return fig
+    
+    def createLickRasterCorrected(self, lickTimestamps, filteredProbes):
+        """
+        Find licks within a given range of each probe and plot in a raster, return plot
+        """
+        probeTimestamps = self.filteredProbes
+        L = list()
+        for probe in probeTimestamps:
+            lickRelative = (self.lickTimestamps - probe)
+            mask = np.logical_and(
+                lickRelative > -2,
+                lickRelative < 5,
+            )
+            lickRelativeFiltered = lickRelative[mask]
+            L.append(lickRelativeFiltered)
+        L1 = np.array(L)
+        fig, ax = plt.subplots()
+        font = {'size' : 15}
+        plt.rc('font', **font)
+        plt.gca().invert_yaxis()
+        for rowIndex, row in enumerate(L1):
+            x = row
+            y0 = rowIndex - 0.5
+            y1 = rowIndex + 0.5
+            ax.vlines(x, y0, y1, color='k')
+        ax.set_ylabel('Trial')
+        ax.set_xlabel('Time from probe (sec)')
+        fig.set_figheight(10)
+        fig.set_figwidth(6)
+        return fig
 
     def createSaccadeRaster(self, totalSaccades, lickTimestamps):
         probeTimestamps = self.loadProbeTimestamps()
