@@ -331,7 +331,7 @@ class GonogoSession(SessionBase):
         self.dictionary = dictionary
         return dictionary
 
-     def sortUniqueContrastsCorrected(self, filteredProbes, filteredContrast):
+    def sortUniqueContrastsCorrected(self, filteredProbes, filteredContrast):
         """
         Sorts the array of contrast values into a dictionary with 4 keys representing the unique contrast values, returns the dictionary
         """
