@@ -423,6 +423,17 @@ class GonogoSession(SessionBase):
         probeTimestampsCorrected = probeTimestamps[self.filterIndices]
         self.probeTimestampsCorrected = probeTimestampsCorrected
         return probeTimestampsCorrected
+    
+    def correctProbeTimestamps2(self, x, y):
+        probeTimestamps = self.loadProbeTimestamps()
+        filteredProbes = probeTimestamps[x:y]
+        self.filteredProbes = filteredProbes
+        return filteredProbes
+
+    def correctContrastValues2(self, x, y):
+        filteredContrast = contrastValues[x:y]
+        self.filteredContrast = filteredContrast
+        return filteredContrast
 
     def correctContrastValues(self, filterIndices, contrastValues):
         contrastValuesCorrected = self.contrastValues[self.filterIndices]
