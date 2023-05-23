@@ -1174,3 +1174,146 @@ class GonogoSession(SessionBase):
         array1, array8, array6, array5 = self.createContrastRasterCorrected(lickTimestamps, dictionary)
         fig2 = self.plotContrastRaster(array1, array8, array6, array5)
         return fig1, fig2
+
+    def computePeriExtraContrastRaster(self, totalSaccades, dictionary, lickTimestamps):
+        """
+        do computations to create lick raster in response to probe based on peri vs extra saccadic probes & separated out by contrast
+        """
+        probeTimestamps = self.loadProbeTimestamps()
+        list1 = list()
+        list8 = list()
+        list6 = list()
+        list5 = list()
+        list1P = list()
+        list8P = list()
+        list6P = list()
+        list5P = list()
+        listtempProbe = list()
+        listtempNoProbe = list()
+
+        for key in self.dictionary:
+            for probeTimestamp in self.dictionary[key]:
+                lickRelative = (self.lickTimestamps - probeTimestamp)
+                sacRelative = abs(self.totalSaccades - probeTimestamp)
+                mask = np.logical_and(
+                    lickRelative > -2,
+                    lickRelative < 5,
+                )
+                lickRelativeFiltered = lickRelative[mask]
+                if any(sacRelative < 0.05):
+                    listtempProbe.append(lickRelativeFiltered)
+                else:
+                    listtempNoProbe.append(lickRelativeFiltered)
+
+            if key == '0.80':
+                list1P = listtempProbe
+                array1P = np.array(list1P)
+                listtempProbe.clear()
+                list1 = listtempNoProbe
+                array1 = np.array(list1)
+                listtempNoProbe.clear()
+            if key == '0.60':
+                list8P = listtempProbe
+                array8P = np.array(list8P)
+                listtempProbe.clear()
+                list8 = listtempNoProbe
+                array8 = np.array(list8)
+                listtempNoProbe.clear()
+            if key == '0.55':
+                list6P = listtempProbe
+                array6P = np.array(list6P)
+                listtempProbe.clear()
+                list6 = listtempNoProbe
+                array6 = np.array(list6)
+                listtempNoProbe.clear()
+            if key == '0.50':
+                list5P = listtempProbe
+                array5P = np.array(list5P)
+                listtempProbe.clear()
+                list5 = listtempNoProbe
+                array5 = np.array(list5)
+                listtempNoProbe.clear()
+        self.array1P = array1P
+        self.array8P = array8P
+        self.array6P = array6P
+        self.array5P = array5P
+        self.array1 = array1
+        self.array8 = array8
+        self.array6 = array6
+        self.array5 = array5
+        return array1P, array8P, array6P, array5P, array1, array8, array6, array5
+
+    def plotPeriExtraContrastRaster(self, array1P, array8P, array6P, array5P, array1, array8, array6, array5):
+        """
+        plots lick raster that was previously computed
+        """
+        fig, ax = plt.subplots()
+        for rowIndex, row in enumerate(self.array1):
+            x = row
+            y0 = rowIndex - 0.5
+            y1 = rowIndex + 0.5
+            ax.vlines(x, y0, y1, color='k', alpha=0.5)
+        ax.vlines(x, y0, y1, color='k', alpha=0.5, label="Extrasaccadic 30%")
+        ax.set_ylabel('Trial')
+        ax.set_xlabel('Time (sec)')
+        fig.set_figheight(10)
+        fig.set_figwidth(6)
+        for rowIndex1, row1 in enumerate(self.array8):
+            x = row1
+            y0 = rowIndex + (rowIndex1 - 0.5)
+            y1 = rowIndex + (rowIndex1 + 0.5)
+            ax.vlines(x, y0, y1, color='c', alpha=0.5)
+        ax.vlines(x, y0, y1, color='c', alpha=0.5, label="Extrasaccadic 10%")
+        for rowIndex2, row2 in enumerate(self.array6):
+            x = row2
+            y0 = rowIndex + rowIndex1 + (rowIndex2 - 0.5)
+            y1 = rowIndex + rowIndex1 + (rowIndex2 + 0.5)
+            ax.vlines(x, y0, y1, color='g', alpha=0.5)
+        ax.vlines(x, y0, y1, color='g', alpha=0.5, label="Extrasaccadic 5%")
+        for rowIndex3, row3 in enumerate(self.array5):
+            x = row3
+            y0 = rowIndex + rowIndex1 + rowIndex2 + (rowIndex3 - 0.5)
+            y1 = rowIndex + rowIndex1 + rowIndex2 + (rowIndex3 + 0.5)
+            ax.vlines(x, y0, y1, color='m', alpha=0.5)
+        ax.vlines(x, y0, y1, color='m', alpha=0.5, label="Extrasaccadic 0%")
+        if len(array1P) == 0:
+            rowIndex4 = 0
+        else:
+            for rowIndex4, row4 in enumerate(self.array1P):
+                x = row4
+                y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + (rowIndex4 - 0.5)
+                y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + (rowIndex4 + 0.5)
+                ax.vlines(x, y0, y1, color='k')
+        ax.vlines(x, y0, y1, color='k', label="Perisaccadic 30%")
+        for rowIndex5, row5 in enumerate(self.array8P):
+            x = row5
+            y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + (rowIndex5 - 0.5)
+            y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + (rowIndex5 + 0.5)
+            ax.vlines(x, y0, y1, color='c')
+        ax.vlines(x, y0, y1, color='c', label="Perisaccadic 10%")
+        for rowIndex6, row6 in enumerate(self.array6P):
+            x = row6
+            y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + (rowIndex6 - 0.5)
+            y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + (rowIndex6 + 0.5)
+            ax.vlines(x, y0, y1, color='g')
+        ax.vlines(x, y0, y1, color='g', label="Perisaccadic 5%")
+        for rowIndex7, row7 in enumerate(self.array5P):
+            x = row7
+            y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + rowIndex6 + (rowIndex7 - 0.5)
+            y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + rowIndex6 + (rowIndex7 + 0.5)
+            ax.vlines(x, y0, y1, color='m')
+        ax.vlines(x, y0, y1, color='m', label="Perisaccadic 0%")
+        ax.legend(bbox_to_anchor=(1.75, 1.05))
+        return fig, ax
+ 
+    def saccadeContrastLickAnalysis(self):
+        """
+        function that compiles multiple functions to analyze lick data and produce lick raster in response to probes, separated by contrast and saccade state
+        """
+        contrastValues = self.extractContrastValues()
+        dictionary = self.sortUniqueContrasts(contrastValues)
+        lickTimestamps = self.extractLickTimestamps()
+        totalSaccades = self.extractSaccadeTimestamps()
+        array1P, array8P, array6P, array5P, array1, array8, array6, array5 = self.computePeriExtraContrastRaster(totalSaccades, dictionary, lickTimestamps)
+        fig, ax = self.plotPeriExtraContrastRaster(array1P, array8P, array6P, array5P, array1, array8, array6, array5)
+        return fig, ax
