@@ -164,6 +164,18 @@ class GonogoSession(SessionBase):
         self.write(frameTimestamps, 'frameTimestamps')
         return
 
+    def extractPuffTimestamps(self):
+        """
+        Extract timestamps of frames from Labjack data and return frame timestamps
+        """
+        labjackDirectory = self.labjackFolder
+        labjackData = loadLabjackData(labjackDirectory)
+        timestamps = labjackData[:, 0]
+        puffOnset, puffIndices = extractLabjackEvent(labjackData, 8, edge = 'rising')
+        puffTimestamps = timestamps[puffIndices]
+        self.write(puffTimestamps, 'puffTimestamps')
+        return
+
     def loadFrameTimestamps(self):
         """
         """
@@ -172,6 +184,16 @@ class GonogoSession(SessionBase):
             raise Exception('Frame timestamps not extracted')
         else:
             return self.read('frameTimestamps')
+    
+     def loadPuffTimestamps(self):
+        """
+        """
+
+        if 'puffTimestamps' not in self.keys():
+            raise Exception('Puff timestamps not extracted')
+        else:
+            return self.read('puffTimestamps')
+          
           
 
     def extractLickTimestamps(self):
