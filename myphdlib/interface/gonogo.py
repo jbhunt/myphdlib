@@ -1162,7 +1162,7 @@ class GonogoSession(SessionBase):
         figTrace = self.plotPeristimulusPupilTrace(lickTimestamps, pupilRadius)
         return figDilation, figTrace
 
-    def plotFilteredLickRasters(self, x, y):
+    def plotFilteredLickRasters(self):
         """
         Allows you to enter index range for lick rasters
         """
