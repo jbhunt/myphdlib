@@ -246,7 +246,7 @@ class GonogoSession(SessionBase):
         """
         Find licks within a given range of each probe and plot in a raster, return plot
         """
-        probeTimestamps = self.loadFilteredProbes
+        probeTimestamps = self.loadFilteredProbes()
         L = list()
         for probe in probeTimestamps:
             lickRelative = (self.lickTimestamps - probe)
@@ -357,8 +357,8 @@ class GonogoSession(SessionBase):
         """
         Sorts the array of contrast values into a dictionary with 4 keys representing the unique contrast values, returns the dictionary
         """
-        probeTimestamps = self.loadFilteredProbes
-        filteredContrast = self.loadFilteredContrast
+        probeTimestamps = self.loadFilteredProbes()
+        filteredContrast = self.loadFilteredContrast()
         dictionary = dict() # Initialize an empty dictionary
         uniqueContrastValues = np.unique(filteredContrast) # Find the unique constrast values
         for uniqueContrastValue in uniqueContrastValues: # Iterterate through the unique contrast values
@@ -415,9 +415,9 @@ class GonogoSession(SessionBase):
         """
         Create a raster sorted by contrast, returns arrays to plot
         """
-        probeTimestamps = self.loadFilteredProbes
+        probeTimestamps = self.loadFilteredProbes()
         list1 = list()
-        list8 = list()
+        list8 = list(), filteredProbes
         list6 = list()
         list5 = list()
         listtemp = list()
