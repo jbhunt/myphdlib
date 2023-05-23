@@ -417,7 +417,7 @@ class GonogoSession(SessionBase):
         """
         probeTimestamps = self.loadFilteredProbes()
         list1 = list()
-        list8 = list(), filteredProbes
+        list8 = list()
         list6 = list()
         list5 = list()
         listtemp = list()
