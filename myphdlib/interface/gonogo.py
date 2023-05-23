@@ -939,6 +939,7 @@ class GonogoSession(SessionBase):
         This takes unprocessed Labjack and DLC CSV data, analyzes it, and returns the number of response trials and total trials for a session for each contrast, so we can combine data across sessions
         """
         lickTimestamps = self.extractLickTimestamps()
+        contrastValues = self.extractContrastValues()
         filteredProbes = self.correctProbeTimestamps2(x, y)
         filteredContrast = self.correctContrastValues2(contrastValues, x, y)
         totalSaccades = self.extractSaccadeTimestamps()
