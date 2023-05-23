@@ -1166,12 +1166,11 @@ class GonogoSession(SessionBase):
         """
         Allows you to enter index range for lick rasters
         """
-        contrastValues = self.extractContrastValues()
+        filteredContrast = self.loadFilteredContrast()
         lickTimestamps = self.extractLickTimestamps()
-        filteredProbes = self.correctProbeTimestamps2(x, y)
-        filteredContrast = self.correctContrastValues2(contrastValues, x, y)
+        filteredProbes = self.loadFilteredTimestamps()
         fig1 = self.createLickRasterCorrected(lickTimestamps, filteredProbes)
-        dictionary = self.sortUniqueContrastsCorrected(filteredProbes, filteredContrast)
-        array1, array8, array6, array5 = self.createContrastRasterCorrected(lickTimestamps, dictionary, filteredProbes)
+        dictionary = self.sortUniqueContrastsCorrected()
+        array1, array8, array6, array5 = self.createContrastRasterCorrected(lickTimestamps, dictionary)
         fig2 = self.plotContrastRaster(array1, array8, array6, array5)
         return fig1, fig2
