@@ -1168,7 +1168,7 @@ class GonogoSession(SessionBase):
         """
         filteredContrast = self.loadFilteredContrast()
         lickTimestamps = self.extractLickTimestamps()
-        filteredProbes = self.loadFilteredTimestamps()
+        filteredProbes = self.loadFilteredProbes()
         fig1 = self.createLickRasterCorrected(lickTimestamps, filteredProbes)
         dictionary = self.sortUniqueContrastsCorrected()
         array1, array8, array6, array5 = self.createContrastRasterCorrected(lickTimestamps, dictionary)
