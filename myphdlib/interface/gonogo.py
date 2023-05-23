@@ -934,7 +934,7 @@ class GonogoSession(SessionBase):
         countArrayPerisaccadic, dictArrayPerisaccadic = self.calculatePerisaccadicResponseNumbers(dictionaryTrue, lickTimestamps)
         return countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic
     
-    def processMultipleLickSessionsCorrected(self):
+    def processMultipleLickSessionsCorrected(self, x, y):
         """
         This takes unprocessed Labjack and DLC CSV data, analyzes it, and returns the number of response trials and total trials for a session for each contrast, so we can combine data across sessions
         """
@@ -987,7 +987,7 @@ class GonogoSession(SessionBase):
         ax.set_xlabel('Trials by Contrast Change')
         return fig
 
-    def lickAnalysisCorrected(self, sessions):
+    def lickAnalysisCorrected(self, sessions, x, y):
         """
         This takes multiple sessions as input and creates a psychometric curve comparing extrasaccadic and perisaccadic responses - this is the big overarching function
         """
@@ -996,7 +996,7 @@ class GonogoSession(SessionBase):
         responsePerisaccadic = np.array([0, 0, 0, 0])
         totalPerisaccadic = np.array([0, 0, 0, 0])
         for session in sessions:
-            countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic = session.processMultipleLickSessionsCorrected()
+            countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic = session.processMultipleLickSessionsCorrected(x, y)
             responseExtrasaccadic = np.add(responseExtrasaccadic, countArrayExtrasaccadic)
             totalExtrasaccadic = np.add(totalExtrasaccadic, dictArrayExtrasaccadic)
             responsePerisaccadic = np.add(responsePerisaccadic, countArrayPerisaccadic)
