@@ -242,11 +242,11 @@ class GonogoSession(SessionBase):
         fig.set_figwidth(6)
         return fig
     
-    def createLickRasterCorrected(self, lickTimestamps, filteredProbes):
+    def createLickRasterCorrected(self, lickTimestamps):
         """
         Find licks within a given range of each probe and plot in a raster, return plot
         """
-        probeTimestamps = self.filteredProbes
+        probeTimestamps = self.loadFilteredProbes
         L = list()
         for probe in probeTimestamps:
             lickRelative = (self.lickTimestamps - probe)
@@ -353,15 +353,16 @@ class GonogoSession(SessionBase):
         self.dictionary = dictionary
         return dictionary
 
-    def sortUniqueContrastsCorrected(self, filteredProbes, filteredContrast):
+    def sortUniqueContrastsCorrected(self):
         """
         Sorts the array of contrast values into a dictionary with 4 keys representing the unique contrast values, returns the dictionary
         """
-        probeTimestamps = self.filteredProbes
+        probeTimestamps = self.loadFilteredProbes
+        filteredContrast = self.loadFilteredContrast
         dictionary = dict() # Initialize an empty dictionary
-        uniqueContrastValues = np.unique(self.filteredContrast) # Find the unique constrast values
+        uniqueContrastValues = np.unique(filteredContrast) # Find the unique constrast values
         for uniqueContrastValue in uniqueContrastValues: # Iterterate through the unique contrast values
-            mask = self.filteredContrast == uniqueContrastValue # Create a mask for each unique contrast value
+            mask = filteredContrast == uniqueContrastValue # Create a mask for each unique contrast value
             dictionary[uniqueContrastValue] = np.array(probeTimestamps)[mask]
         self.dictionary = dictionary
         return dictionary
@@ -410,11 +411,11 @@ class GonogoSession(SessionBase):
         self.array5 = array5
         return array1, array8, array6, array5
 
-    def createContrastRasterCorrected(self, lickTimestamps, dictionary, filteredProbes):
+    def createContrastRasterCorrected(self, lickTimestamps, dictionary):
         """
         Create a raster sorted by contrast, returns arrays to plot
         """
-        probeTimestamps = self.filteredProbes
+        probeTimestamps = self.loadFilteredProbes
         list1 = list()
         list8 = list()
         list6 = list()
@@ -590,11 +591,12 @@ class GonogoSession(SessionBase):
         self.perisaccadicProbeBool = perisaccadicProbeBool
         return zipped3, perisaccadicProbeBool
 
-    def createZippedListCorrected(self, totalSaccades, filteredProbes, filteredContrast):
+    def createZippedListCorrected(self, totalSaccades):
         """
         Create a boolean variable to determine whether trial is perisaccadic and create zipped list of probetimestamps, contrast values, and boolean variable
         """
-        probeTimestamps = self.filteredProbes
+        probeTimestamps = self.loadFilteredProbes
+        filteredContrast = self.loadFilteredContrast
         perisaccadicProbeBool = list()
         for probe in probeTimestamps:
             saccadesRelative = (self.totalSaccades - probe)
@@ -611,7 +613,7 @@ class GonogoSession(SessionBase):
     
         perisaccadicProbeBool = np.array(perisaccadicProbeBool)
 
-        zipped3 = list(zip(probeTimestamps, self.filteredContrast, perisaccadicProbeBool))
+        zipped3 = list(zip(probeTimestamps, filteredContrast, perisaccadicProbeBool))
         self.zipped3 = zipped3
         self.perisaccadicProbeBool = perisaccadicProbeBool
         return zipped3, perisaccadicProbeBool
@@ -645,11 +647,12 @@ class GonogoSession(SessionBase):
         self.zipFalse = zipFalse
         return zipTrue, zipFalse, listCT, listPT, listCF, listPF
 
-    def createPeriAndExtraSaccadicListsCorrected(self, perisaccadicProbeBool, filteredContrast, filteredProbes):
+    def createPeriAndExtraSaccadicListsCorrected(self, perisaccadicProbeBool):
         """
         Based on boolean variable, separates probetimestamps and contrast values into zipped lists of perisaccadic and extrasaccadic trials
         """
-        probeTimestamps = self.filteredProbes
+        probeTimestamps = self.loadFilteredProbes
+        filteredContrast = self.loadFilteredContrast
         listPT = list()
         listCT = list()
         listPF = list()
@@ -970,17 +973,17 @@ class GonogoSession(SessionBase):
         countArrayPerisaccadic, dictArrayPerisaccadic = self.calculatePerisaccadicResponseNumbers(dictionaryTrue, lickTimestamps)
         return countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic
     
-    def processMultipleLickSessionsCorrected(self, x, y):
+    def processMultipleLickSessionsCorrected(self):
         """
         This takes unprocessed Labjack and DLC CSV data, analyzes it, and returns the number of response trials and total trials for a session for each contrast, so we can combine data across sessions
         """
         lickTimestamps = self.extractLickTimestamps()
         contrastValues = self.extractContrastValues()
-        filteredProbes = self.correctProbeTimestamps2(x, y)
-        filteredContrast = self.correctContrastValues2(contrastValues, x, y)
+        filteredProbes = self.loadFilteredProbes()
+        filteredContrast = self.loadFilteredContrast()
         totalSaccades = self.extractSaccadeTimestamps()
-        zipped3, perisaccadicProbeBool = self.createZippedListCorrected(totalSaccades, filteredProbes, filteredContrast)
-        zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicListsCorrected(perisaccadicProbeBool, filteredContrast, filteredProbes)
+        zipped3, perisaccadicProbeBool = self.createZippedListCorrected(totalSaccades)
+        zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicListsCorrected(perisaccadicProbeBool)
         dictionaryTrue = self.createPerisaccadicDictionary(listCT, listPT)
         dictionaryFalse = self.createExtrasaccadicDictionary(listCF, listPF)
         countArrayExtrasaccadic, dictArrayExtrasaccadic = self.calculateExtrasaccadicResponseNumbers(dictionaryFalse, lickTimestamps)
@@ -1024,7 +1027,7 @@ class GonogoSession(SessionBase):
         ax.set_xlabel('Trials by Contrast Change')
         return fig
 
-    def lickAnalysisCorrected(self, sessions, x, y):
+    def lickAnalysisCorrected(self, sessions):
         """
         This takes multiple sessions as input and creates a psychometric curve comparing extrasaccadic and perisaccadic responses - this is the big overarching function
         """
@@ -1033,7 +1036,7 @@ class GonogoSession(SessionBase):
         responsePerisaccadic = np.array([0, 0, 0, 0])
         totalPerisaccadic = np.array([0, 0, 0, 0])
         for session in sessions:
-            countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic = session.processMultipleLickSessionsCorrected(x, y)
+            countArrayExtrasaccadic, dictArrayExtrasaccadic, countArrayPerisaccadic, dictArrayPerisaccadic = session.processMultipleLickSessionsCorrected()
             responseExtrasaccadic = np.add(responseExtrasaccadic, countArrayExtrasaccadic)
             totalExtrasaccadic = np.add(totalExtrasaccadic, dictArrayExtrasaccadic)
             responsePerisaccadic = np.add(responsePerisaccadic, countArrayPerisaccadic)
