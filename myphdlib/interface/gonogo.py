@@ -537,12 +537,26 @@ class GonogoSession(SessionBase):
         probeTimestamps = self.loadProbeTimestamps()
         filteredProbes = probeTimestamps[x:y]
         self.filteredProbes = filteredProbes
-        return filteredProbes
+        self.write(filteredProbes, 'filteredProbes')
+        return 
 
     def correctContrastValues2(self, contrastValues, x, y):
         filteredContrast = contrastValues[x:y]
         self.filteredContrast = filteredContrast
-        return filteredContrast
+        self.write(filteredContrast, 'filteredContrast')
+        return 
+
+    def loadFilteredProbes(self):
+        if 'filteredProbes' not in self.keys():
+            raise Exception('filtered probes not extracted')
+        else:
+            return self.read('filteredProbes')
+
+    def loadFilteredContrast(self):
+        if 'filteredContrast' not in self.keys():
+            raise Exception('filtered contrasts not extracted')
+        else:
+            return self.read('filteredContrast')
 
     def correctContrastValues(self, filterIndices, contrastValues):
         contrastValuesCorrected = self.contrastValues[self.filterIndices]
