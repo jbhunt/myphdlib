@@ -685,22 +685,22 @@ class GonogoSession(SessionBase):
                     if lickRelative > 0 and lickRelative < 0.5:
                         tempcount = (tempcount + 1)
                         break
-            if key == ' 0.80':
+            if key == '0.80':
                 count1 = tempcount
                 tempcount = 0
-                percentage1 = count1/len(self.dictionaryFalse[' 0.80'])
-            if key == ' 0.60':
+                percentage1 = count1/len(self.dictionaryFalse['0.80'])
+            if key == '0.60':
                 count6 = tempcount
                 tempcount = 0
-                percentage6 = count6/len(self.dictionaryFalse[' 0.60'])
-            if key == ' 0.55':
+                percentage6 = count6/len(self.dictionaryFalse['0.60'])
+            if key == '0.55':
                 count5 = tempcount
                 tempcount = 0
-                percentage5 = count5/len(self.dictionaryFalse[' 0.55'])
-            if key == ' 0.50':
+                percentage5 = count5/len(self.dictionaryFalse['0.55'])
+            if key == '0.50':
                 count4 = tempcount
                 tempcount = 0
-                percentage4 = count4/len(self.dictionaryFalse[' 0.50'])
+                percentage4 = count4/len(self.dictionaryFalse['0.50'])
         percentList = (percentage4, percentage5, percentage6, percentage1)
         percentExtrasaccadic = np.array(percentList)
         self.percentExtrasaccadic = percentExtrasaccadic
@@ -724,21 +724,21 @@ class GonogoSession(SessionBase):
                     if lickRelative > 0 and lickRelative < 0.5:
                         tempcount = (tempcount + 1)
                         break
-            if key == ' 0.80':
+            if key == '0.80':
                 count1 = tempcount
                 tempcount = 0
-            if key == ' 0.60':
+            if key == '0.60':
                 count6 = tempcount
                 tempcount = 0
-            if key == ' 0.55':
+            if key == '0.55':
                 count5 = tempcount
                 tempcount = 0
-            if key == ' 0.50':
+            if key == '0.50':
                 count4 = tempcount
                 tempcount = 0
         countList = (count4, count5, count6, count1)
         countArrayExtrasaccadic = np.array(countList)
-        dictLength = (len(self.dictionaryFalse[' 0.50']), len(self.dictionaryFalse[' 0.55']), len(self.dictionaryFalse[' 0.60']), len(self.dictionaryFalse[' 0.80']))
+        dictLength = (len(self.dictionaryFalse['0.50']), len(self.dictionaryFalse['0.55']), len(self.dictionaryFalse['0.60']), len(self.dictionaryFalse['0.80']))
         dictArrayExtrasaccadic = np.array(dictLength)
         self.countArrayExtrasaccadic = countArrayExtrasaccadic
         self.dictArrayExtrasaccadic = dictArrayExtrasaccadic
@@ -766,22 +766,22 @@ class GonogoSession(SessionBase):
                     if lickRelative > 0 and lickRelative < 0.5:
                         tempcountT = (tempcountT + 1)
                         break
-            if key == ' 0.80':
+            if key == '0.80':
                 count1T = tempcountT
                 tempcountT = 0
-                percentage1T = count1T/len(self.dictionaryTrue[' 0.80'])
-            if key == ' 0.60':
+                percentage1T = count1T/len(self.dictionaryTrue['0.80'])
+            if key == '0.60':
                 count6T = tempcountT
                 tempcountT = 0
-                percentage6T = count6T/len(self.dictionaryTrue[' 0.60'])
-            if key == ' 0.55':
+                percentage6T = count6T/len(self.dictionaryTrue['0.60'])
+            if key == '0.55':
                 count5T = tempcountT
                 tempcountT = 0
-                percentage5T = count5T/len(self.dictionaryTrue[' 0.55'])
-            if key == ' 0.50':
+                percentage5T = count5T/len(self.dictionaryTrue['0.55'])
+            if key == '0.50':
                 count4T = tempcountT
                 tempcountT = 0
-                percentage4T = count4T/len(self.dictionaryTrue[' 0.50'])
+                percentage4T = count4T/len(self.dictionaryTrue['0.50'])
 
         percentListT = (percentage4T, percentage5T, percentage6T, percentage1T)
         percentPerisaccadic = np.array(percentListT)
@@ -809,22 +809,22 @@ class GonogoSession(SessionBase):
                     if lickRelative > 0 and lickRelative < 0.5:
                         tempcountT = (tempcountT + 1)
                         break
-            if key == ' 0.80':
+            if key == '0.80':
                 count1T = tempcountT
                 tempcountT = 0
-                length1 = len(self.dictionaryTrue[' 0.80'])
-            if key == ' 0.60':
+                length1 = len(self.dictionaryTrue['0.80'])
+            if key == '0.60':
                 count6T = tempcountT
                 tempcountT = 0
-                length6 = len(self.dictionaryTrue[' 0.60'])
-            if key == ' 0.55':
+                length6 = len(self.dictionaryTrue['0.60'])
+            if key == '0.55':
                 count5T = tempcountT
                 tempcountT = 0
-                length5 = len(self.dictionaryTrue[' 0.55'])
-            if key == ' 0.50':
+                length5 = len(self.dictionaryTrue['0.55'])
+            if key == '0.50':
                 count4T = tempcountT
                 tempcountT = 0
-                length4 = len(self.dictionaryTrue[' 0.50'])
+                length4 = len(self.dictionaryTrue['0.50'])
 
         countListT = (count4T, count5T, count6T, count1T)
         countArrayPerisaccadic = np.array(countListT)
