@@ -185,7 +185,7 @@ class GonogoSession(SessionBase):
         else:
             return self.read('frameTimestamps')
     
-     def loadPuffTimestamps(self):
+    def loadPuffTimestamps(self):
         """
         """
 
