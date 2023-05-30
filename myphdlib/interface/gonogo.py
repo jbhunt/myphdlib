@@ -574,8 +574,8 @@ class GonogoSession(SessionBase):
         for probe in probeTimestamps:
             saccadesRelative = (self.totalSaccades - probe)
             mask = np.logical_and(
-                saccadesRelative > -0.05,
-                saccadesRelative < 0.05
+                saccadesRelative > -0.1,
+                saccadesRelative < 0.1
             )
             perisaccades = saccadesRelative[mask]
             if any(perisaccades):
@@ -1200,7 +1200,7 @@ class GonogoSession(SessionBase):
                     lickRelative < 5,
                 )
                 lickRelativeFiltered = lickRelative[mask]
-                if any(sacRelative < 0.05):
+                if any(sacRelative < 0.1):
                     listtempProbe.append(lickRelativeFiltered)
                 else:
                     listtempNoProbe.append(lickRelativeFiltered)
