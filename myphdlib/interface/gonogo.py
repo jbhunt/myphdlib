@@ -951,13 +951,13 @@ class GonogoSession(SessionBase):
         dictionaryTrue = self.createPerisaccadicDictionary(listCT, listPT)
         dictionaryFalse = self.createExtrasaccadicDictionary(listCF, listPF)
         percentArrayExtrasaccadic, percentage1 = self.calculateExtrasaccadicResponsePercentages(dictionaryFalse, lickTimestamps)
-        print(percentArrayExtrasaccadic)
-        print(percentage1)
         percentArrayPerisaccadic = self.calculatePerisaccadicResponsePercentages(dictionaryTrue, lickTimestamps)
-        print(percentArrayPerisaccadic)
         normalExtrasaccadic = self.calculateNormalizedResponseRateExtrasaccadic(percentArrayExtrasaccadic, percentage1)
         normalPerisaccadic = self.calculateNormalizedResponseRatePerisaccadic(percentArrayPerisaccadic, percentage1)
         fig = self.createPsychometricSaccadeCurve(normalExtrasaccadic, normalPerisaccadic)
+        print(percentArrayExtrasaccadic)
+        print(percentage1)
+        print(percentArrayPerisaccadic)
         return fig
 
     def processLickSessionCorrected(self):
