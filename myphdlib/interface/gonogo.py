@@ -957,6 +957,24 @@ class GonogoSession(SessionBase):
         fig = self.createPsychometricSaccadeCurve(normalExtrasaccadic, normalPerisaccadic)
         return fig
 
+    def processLickSessionCorrected(self):
+        """
+        This takes the unprocessed Labjack and DLC CSV data, analyzes it, and creates a psychometric curve for perisaccadic and extrasaccadic trials
+        """
+        lickTimestamps = self.extractLickTimestamps()
+        contrastValues = self.loadFilteredContrast()
+        totalSaccades = self.extractSaccadeTimestamps()
+        zipped3, perisaccadicProbeBool = self.createZippedListCorrected(totalSaccades)
+        zipTrue, zipFalse, listCT, listPT, listCF, listPF = self.createPeriAndExtraSaccadicListsCorrected(perisaccadicProbeBool, contrastValues)
+        dictionaryTrue = self.createPerisaccadicDictionary(listCT, listPT)
+        dictionaryFalse = self.createExtrasaccadicDictionary(listCF, listPF)
+        percentArrayExtrasaccadic, percentage1 = self.calculateExtrasaccadicResponsePercentages(dictionaryFalse, lickTimestamps)
+        percentArrayPerisaccadic = self.calculatePerisaccadicResponsePercentages(dictionaryTrue, lickTimestamps)
+        normalExtrasaccadic = self.calculateNormalizedResponseRateExtrasaccadic(percentArrayExtrasaccadic, percentage1)
+        normalPerisaccadic = self.calculateNormalizedResponseRatePerisaccadic(percentArrayPerisaccadic, percentage1)
+        fig = self.createPsychometricSaccadeCurve(normalExtrasaccadic, normalPerisaccadic)
+        return fig
+
     def processMultipleLickSessions(self):
         """
         This takes unprocessed Labjack and DLC CSV data, analyzes it, and returns the number of response trials and total trials for a session for each contrast, so we can combine data across sessions
