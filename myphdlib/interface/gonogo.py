@@ -890,13 +890,13 @@ class GonogoSession(SessionBase):
         self.normalPerisaccadic = normalPerisaccadic
         return normalPerisaccadic
     
-    def createPsychometricSaccadeCurve(self, percentExtrasaccadic, percentPerisaccadic):
+    def createPsychometricSaccadeCurve(self, normalExtrasaccadic, normalPerisaccadic):
         """
         Plot the normalized response rates for extrasaccadic (red) and perisaccadic (blue) trials
         """
         fig, ax = plt.subplots()
-        plt.plot(['0%', '5%', '10%', '30%'], self.percentExtrasaccadic, color='r')
-        plt.plot(['0%', '5%', '10%', '30%'], self.percentPerisaccadic, color='b')
+        plt.plot(['0%', '5%', '10%', '30%'], self.normalExtrasaccadic, color='r')
+        plt.plot(['0%', '5%', '10%', '30%'], self.normalPerisaccadic, color='b')
         plt.ylim([0.0, 1.5])
         ax.set_ylabel('Fraction of Response Trials')
         ax.set_xlabel('Trials by Contrast Change')
