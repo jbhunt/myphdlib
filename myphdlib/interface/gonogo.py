@@ -897,7 +897,7 @@ class GonogoSession(SessionBase):
         fig, ax = plt.subplots()
         plt.plot(['0%', '5%', '10%', '30%'], self.normalExtrasaccadic, color='r')
         plt.plot(['0%', '5%', '10%', '30%'], self.normalPerisaccadic, color='b')
-        plt.ylim([0.0, 1.5])
+        plt.ylim([0.0, 5])
         ax.set_ylabel('Fraction of Response Trials')
         ax.set_xlabel('Trials by Contrast Change')
         return fig
