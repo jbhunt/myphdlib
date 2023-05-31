@@ -1254,8 +1254,8 @@ class GonogoSession(SessionBase):
             x = row
             y0 = rowIndex - 0.5
             y1 = rowIndex + 0.5
-            ax.vlines(x, y0, y1, color='k', alpha=0.5)
-        ax.vlines(x, y0, y1, color='k', alpha=0.5, label="Extrasaccadic 30%")
+            ax.vlines(x, y0, y1, color='k', alpha=0.75)
+        ax.vlines(x, y0, y1, color='k', alpha=0.75, label="Extrasaccadic 30%")
         ax.set_ylabel('Trial')
         ax.set_xlabel('Time (sec)')
         fig.set_figheight(10)
@@ -1264,20 +1264,20 @@ class GonogoSession(SessionBase):
             x = row1
             y0 = rowIndex + (rowIndex1 - 0.5)
             y1 = rowIndex + (rowIndex1 + 0.5)
-            ax.vlines(x, y0, y1, color='c', alpha=0.5)
-        ax.vlines(x, y0, y1, color='c', alpha=0.5, label="Extrasaccadic 10%")
+            ax.vlines(x, y0, y1, color='c', alpha=0.75)
+        ax.vlines(x, y0, y1, color='c', alpha=0.75, label="Extrasaccadic 10%")
         for rowIndex2, row2 in enumerate(self.array6):
             x = row2
             y0 = rowIndex + rowIndex1 + (rowIndex2 - 0.5)
             y1 = rowIndex + rowIndex1 + (rowIndex2 + 0.5)
-            ax.vlines(x, y0, y1, color='g', alpha=0.5)
-        ax.vlines(x, y0, y1, color='g', alpha=0.5, label="Extrasaccadic 5%")
+            ax.vlines(x, y0, y1, color='g', alpha=0.75)
+        ax.vlines(x, y0, y1, color='g', alpha=0.75, label="Extrasaccadic 5%")
         for rowIndex3, row3 in enumerate(self.array5):
             x = row3
             y0 = rowIndex + rowIndex1 + rowIndex2 + (rowIndex3 - 0.5)
             y1 = rowIndex + rowIndex1 + rowIndex2 + (rowIndex3 + 0.5)
-            ax.vlines(x, y0, y1, color='m', alpha=0.5)
-        ax.vlines(x, y0, y1, color='m', alpha=0.5, label="Extrasaccadic 0%")
+            ax.vlines(x, y0, y1, color='m', alpha=0.75)
+        ax.vlines(x, y0, y1, color='m', alpha=0.75, label="Extrasaccadic 0%")
         if len(array1P) == 0:
             rowIndex4 = 0
         else:
