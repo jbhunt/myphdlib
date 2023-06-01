@@ -11,6 +11,7 @@ from matplotlib import pylab as plt
 from scipy.signal import savgol_filter
 from myphdlib.general.labjack import filterPulsesFromPhotologicDevice
 
+
 class GonogoSession(SessionBase):
     """
     """
