@@ -183,14 +183,14 @@ def extractBarcodeValues(signal, minimumBarcodeInterval=3, bitSize=0.03, labjack
     
     return np.array(values)
 
-def filterPulsesFromPhotologicDevice(signal, minimumPulseWidthInSeconds=0.015, samplingRate=1000):
+def filterPulsesFromPhotologicDevice(signal, minimumPulseWidthInSeconds=0.14, samplingRate=1000):
     """
     """
 
     threshold = round(minimumPulseWidthInSeconds * samplingRate, 2)
     mutated = np.copy(signal)
 
-    # Filter pulses
+    #
     while True:
 
         #
@@ -211,32 +211,10 @@ def filterPulsesFromPhotologicDevice(signal, minimumPulseWidthInSeconds=0.015, s
         #
         break
 
-    # Remove spikes
-    while True:
-
-        #
-        deltaState = np.diff(mutated)
-        edgeIndices = np.where(abs(deltaState) > 0.5)[0]
-        intervals = np.hstack([
-            edgeIndices[0: -1].reshape(-1, 1),
-            edgeIndices[1:   ].reshape(-1, 1)
-        ])
-
-        #
-        for firstEdgeIndex, secondEdgeIndex in intervals:
-            dt = secondEdgeIndex - firstEdgeIndex
-            if dt < threshold:
-                mutated[firstEdgeIndex + 1: secondEdgeIndex + 1] = 0
-                continue
-
-        #
-        break
-
     #
     deltaState = np.diff(mutated)
     edgeIndices = np.where(abs(deltaState) > 0.5)[0]
-
     if np.all(np.diff(edgeIndices) > threshold):
         return mutated
     else:
-        raise Exception('Pulse filtering failed')
+        raise Exception('ERROR: Pulse filtering failed')
