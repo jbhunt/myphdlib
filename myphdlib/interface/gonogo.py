@@ -1217,14 +1217,17 @@ class GonogoSession(SessionBase):
         for key in self.dictionary:
             for probeTimestamp in self.dictionary[key]:
                 lickRelative = (self.lickTimestamps - probeTimestamp)
-                sacRelative = abs(self.totalSaccades - probeTimestamp)
+                sacRelative = (self.totalSaccades - probeTimestamp)
                 mask = np.logical_and(
                     lickRelative > -2,
                     lickRelative < 5,
                 )
                 lickRelativeFiltered = lickRelative[mask]
-                if any(sacRelative < 0.05):
-                    listtempProbe.append(lickRelativeFiltered)
+                if any(sacRelative > -0.05):
+                    if any(sacRelative < 0.1):
+                        listtempProbe.append(lickRelativeFiltered)
+                    else:
+                        listtempNoProbe.append(lickRelativeFiltered)
                 else:
                     listtempNoProbe.append(lickRelativeFiltered)
 
