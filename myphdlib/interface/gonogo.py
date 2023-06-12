@@ -1306,10 +1306,10 @@ class GonogoSession(SessionBase):
             rowIndex4 = 0
         else:
             for rowIndex4, row4 in enumerate(self.array1P):
-                x = row4
-                y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + (rowIndex4 - 0.5)
-                y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + (rowIndex4 + 0.5)
-                ax.vlines(x, y0, y1, color='k')
+            x = row4
+            y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + (rowIndex4 - 0.5)
+            y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + (rowIndex4 + 0.5)
+            ax.vlines(x, y0, y1, color='k')
             ax.vlines(x, y0, y1, color='k', label="Perisaccadic 30%")
         for rowIndex5, row5 in enumerate(self.array8P):
             x = row5
