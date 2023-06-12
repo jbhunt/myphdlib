@@ -1279,7 +1279,7 @@ class GonogoSession(SessionBase):
             y0 = rowIndex - 0.5
             y1 = rowIndex + 0.5
             ax.vlines(x, y0, y1, color='k', alpha=0.75)
-        ax.vlines(x, y0, y1, color='k', alpha=0.75, label="Extrasaccadic 30%")
+            ax.vlines(x, y0, y1, color='k', alpha=0.75, label="Extrasaccadic 30%")
         ax.set_ylabel('Trial')
         ax.set_xlabel('Time (sec)')
         fig.set_figheight(10)
