@@ -1289,19 +1289,19 @@ class GonogoSession(SessionBase):
             y0 = rowIndex + (rowIndex1 - 0.5)
             y1 = rowIndex + (rowIndex1 + 0.5)
             ax.vlines(x, y0, y1, color='c', alpha=0.75)
-        ax.vlines(x, y0, y1, color='c', alpha=0.75, label="Extrasaccadic 10%")
+            ax.vlines(x, y0, y1, color='c', alpha=0.75, label="Extrasaccadic 10%")
         for rowIndex2, row2 in enumerate(self.array6):
             x = row2
             y0 = rowIndex + rowIndex1 + (rowIndex2 - 0.5)
             y1 = rowIndex + rowIndex1 + (rowIndex2 + 0.5)
             ax.vlines(x, y0, y1, color='g', alpha=0.75)
-        ax.vlines(x, y0, y1, color='g', alpha=0.75, label="Extrasaccadic 5%")
+            ax.vlines(x, y0, y1, color='g', alpha=0.75, label="Extrasaccadic 5%")
         for rowIndex3, row3 in enumerate(self.array5):
             x = row3
             y0 = rowIndex + rowIndex1 + rowIndex2 + (rowIndex3 - 0.5)
             y1 = rowIndex + rowIndex1 + rowIndex2 + (rowIndex3 + 0.5)
             ax.vlines(x, y0, y1, color='m', alpha=0.75)
-        ax.vlines(x, y0, y1, color='m', alpha=0.75, label="Extrasaccadic 0%")
+            ax.vlines(x, y0, y1, color='m', alpha=0.75, label="Extrasaccadic 0%")
         if len(array1P) == 0:
             rowIndex4 = 0
         else:
@@ -1310,25 +1310,25 @@ class GonogoSession(SessionBase):
                 y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + (rowIndex4 - 0.5)
                 y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + (rowIndex4 + 0.5)
                 ax.vlines(x, y0, y1, color='k')
-        ax.vlines(x, y0, y1, color='k', label="Perisaccadic 30%")
+            ax.vlines(x, y0, y1, color='k', label="Perisaccadic 30%")
         for rowIndex5, row5 in enumerate(self.array8P):
             x = row5
             y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + (rowIndex5 - 0.5)
             y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + (rowIndex5 + 0.5)
             ax.vlines(x, y0, y1, color='c')
-        ax.vlines(x, y0, y1, color='c', label="Perisaccadic 10%")
+            ax.vlines(x, y0, y1, color='c', label="Perisaccadic 10%")
         for rowIndex6, row6 in enumerate(self.array6P):
             x = row6
             y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + (rowIndex6 - 0.5)
             y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + (rowIndex6 + 0.5)
             ax.vlines(x, y0, y1, color='g')
-        ax.vlines(x, y0, y1, color='g', label="Perisaccadic 5%")
+            ax.vlines(x, y0, y1, color='g', label="Perisaccadic 5%")
         for rowIndex7, row7 in enumerate(self.array5P):
             x = row7
             y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + rowIndex6 + (rowIndex7 - 0.5)
             y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + rowIndex6 + (rowIndex7 + 0.5)
             ax.vlines(x, y0, y1, color='m')
-        ax.vlines(x, y0, y1, color='m', label="Perisaccadic 0%")
+            ax.vlines(x, y0, y1, color='m', label="Perisaccadic 0%")
         ax.legend(bbox_to_anchor=(1.75, 1.05))
         return fig, ax
  
