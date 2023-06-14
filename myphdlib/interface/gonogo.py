@@ -1223,14 +1223,15 @@ class GonogoSession(SessionBase):
                     lickRelative < 5,
                 )
                 lickRelativeFiltered = lickRelative[mask]
-                if any(sacRelative > -0.05):
-                    if any(sacRelative < 0.1):
-                        listtempProbe.append(lickRelativeFiltered)
-                    else:
-                        listtempNoProbe.append(lickRelativeFiltered)
+                mask2 = np.logical_and(
+                    sacRelative > -0.05,
+                    sacRelative < 0.1,
+                )
+                sacRelativeFiltered = sacRelative[mask2]
+                if any(sacRelativeFiltered):
+                    listtempProbe.append(lickRelativeFiltered)
                 else:
                     listtempNoProbe.append(lickRelativeFiltered)
-
             if key == '0.80':
                 list1P = listtempProbe
                 array1P = np.array(list1P)
