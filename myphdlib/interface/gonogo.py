@@ -1283,7 +1283,7 @@ class GonogoSession(SessionBase):
                 y0 = rowIndex - 0.5
                 y1 = rowIndex + 0.5
                 ax.vlines(x, y0, y1, color='k', alpha=0.75)
-                ax.vlines(x, y0, y1, color='k', alpha=0.75, label="Extrasaccadic 30%")
+            ax.vlines(x, y0, y1, color='k', alpha=0.75, label="Extrasaccadic 30%")
             ax.set_ylabel('Trial')
             ax.set_xlabel('Time (sec)')
             fig.set_figheight(10)
@@ -1296,7 +1296,7 @@ class GonogoSession(SessionBase):
                 y0 = rowIndex + (rowIndex1 - 0.5)
                 y1 = rowIndex + (rowIndex1 + 0.5)
                 ax.vlines(x, y0, y1, color='c', alpha=0.75)
-                ax.vlines(x, y0, y1, color='c', alpha=0.75, label="Extrasaccadic 10%")
+            ax.vlines(x, y0, y1, color='c', alpha=0.75, label="Extrasaccadic 10%")
         if len(array6) == 0:
             rowIndex2 = 0
         else:
@@ -1305,7 +1305,7 @@ class GonogoSession(SessionBase):
                 y0 = rowIndex + rowIndex1 + (rowIndex2 - 0.5)
                 y1 = rowIndex + rowIndex1 + (rowIndex2 + 0.5)
                 ax.vlines(x, y0, y1, color='g', alpha=0.75)
-                ax.vlines(x, y0, y1, color='g', alpha=0.75, label="Extrasaccadic 5%")
+            ax.vlines(x, y0, y1, color='g', alpha=0.75, label="Extrasaccadic 5%")
         if len(array5) == 0:
             rowIndex3 = 0
         else:
@@ -1314,7 +1314,7 @@ class GonogoSession(SessionBase):
                 y0 = rowIndex + rowIndex1 + rowIndex2 + (rowIndex3 - 0.5)
                 y1 = rowIndex + rowIndex1 + rowIndex2 + (rowIndex3 + 0.5)
                 ax.vlines(x, y0, y1, color='m', alpha=0.75)
-                ax.vlines(x, y0, y1, color='m', alpha=0.75, label="Extrasaccadic 0%")
+            ax.vlines(x, y0, y1, color='m', alpha=0.75, label="Extrasaccadic 0%")
         if len(array1P) == 0:
             rowIndex4 = 0
         else:
@@ -1323,7 +1323,7 @@ class GonogoSession(SessionBase):
                 y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + (rowIndex4 - 0.5)
                 y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + (rowIndex4 + 0.5)
                 ax.vlines(x, y0, y1, color='k')
-                ax.vlines(x, y0, y1, color='k', label="Perisaccadic 30%")
+            ax.vlines(x, y0, y1, color='k', label="Perisaccadic 30%")
         if len(array8P) == 0:
             rowIndex5 = 0
         else:
@@ -1332,7 +1332,7 @@ class GonogoSession(SessionBase):
                 y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + (rowIndex5 - 0.5)
                 y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + (rowIndex5 + 0.5)
                 ax.vlines(x, y0, y1, color='c')
-                ax.vlines(x, y0, y1, color='c', label="Perisaccadic 10%")
+            ax.vlines(x, y0, y1, color='c', label="Perisaccadic 10%")
         if len(array6P) == 0:
             rowIndex6 = 0
         else:
@@ -1341,7 +1341,7 @@ class GonogoSession(SessionBase):
                 y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + (rowIndex6 - 0.5)
                 y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + (rowIndex6 + 0.5)
                 ax.vlines(x, y0, y1, color='g')
-                ax.vlines(x, y0, y1, color='g', label="Perisaccadic 5%")
+            ax.vlines(x, y0, y1, color='g', label="Perisaccadic 5%")
         if len(array5P) == 0:
             rowIndex7 = 0
         else:
@@ -1350,7 +1350,7 @@ class GonogoSession(SessionBase):
                 y0 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + rowIndex6 + (rowIndex7 - 0.5)
                 y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + rowIndex6 + (rowIndex7 + 0.5)
                 ax.vlines(x, y0, y1, color='m')
-                ax.vlines(x, y0, y1, color='m', label="Perisaccadic 0%")
+            ax.vlines(x, y0, y1, color='m', label="Perisaccadic 0%")
         ax.legend(bbox_to_anchor=(1.75, 1.05))
         return fig, ax
  
