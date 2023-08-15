@@ -8,6 +8,7 @@ from datetime import date
 from string import ascii_uppercase as letters
 from myphdlib.interface.muscimol import MuscimolSession
 from myphdlib.interface.suppression import SuppressionSession
+from myphdlib.interface.mlati import MlatiSession
 
 class SessionFactory(object):
     """
@@ -21,7 +22,7 @@ class SessionFactory(object):
         """
 
         self._findDataVolumes(tag)
-        # self._loadExperimentData()
+        self._loadExperimentData()
 
         return
     
@@ -88,6 +89,12 @@ class SessionFactory(object):
         """
         """
 
+        #
+        if type(animals) == str:
+            animals = (animals,)
+        if type(dates) == str:
+            dates = (dates,)
+
         keys = list()
         for experiment_ in self.metadata.keys():
             if experiment is not None and experiment_ != experiment:
@@ -96,12 +103,27 @@ class SessionFactory(object):
                 if animals is not None and animal_ not in animals:
                     continue
                 for date_ in self.metadata[experiment_][animal_]:
-                    if dates[0] is not None:
-                        if date_ < date.fromisoformat(dates[0]):
-                            continue 
-                    if dates[1] is not None:
-                        if date_ > date.fromisoformat(dates[1]):
+
+                    # Single date
+                    if len(dates) == 1:
+                        if date_ != date.fromisoformat(dates[0]):
                             continue
+
+                    # Date range
+                    if len(dates) == 2:
+                        if dates[0] is not None:
+                            if date_ < date.fromisoformat(dates[0]):
+                                continue 
+                        if dates[1] is not None:
+                            if date_ > date.fromisoformat(dates[1]):
+                                continue
+
+                    # List of dates
+                    if len(dates) > 2:
+                        if str(date_) not in dates:
+                            continue
+
+                    #
                     for letter in letters:
                         entry = (
                             experiment_,
@@ -120,6 +142,8 @@ class SessionFactory(object):
                         session = MuscimolSession(folder)
                     elif experiment_ == 'Suppression':
                         session = SuppressionSession(folder)
+                    elif experiment_ == 'Mlati':
+                        session = MlatiSession(folder)
                     else:
                         continue
                     sessions.append(session)

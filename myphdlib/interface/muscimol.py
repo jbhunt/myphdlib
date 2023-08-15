@@ -2,7 +2,7 @@ import yaml
 import numpy as np
 import pandas as pd
 import pathlib as pl
-from myphdlib.interface._session import SessionBase
+from myphdlib.interface.session import SessionBase
 
 def readExperimentLog(log, animal, date, letter=None, key='treatment'):
     """

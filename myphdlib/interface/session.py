@@ -8,7 +8,7 @@ from datetime import date
 from types import SimpleNamespace
 from scipy.interpolate import interp1d as interp
 from myphdlib.general.labjack import loadLabjackData
-from myphdlib.interface._ephys import Population
+from myphdlib.interface.ephys import Population
 
 def updateSessionMetadata(session, key, value, intitialize=True):
     """
@@ -92,6 +92,7 @@ class SessionBase(object):
         #
         self._eye = eye
         self._folders = None
+        self._saccadeOnsetTimestamps = None
         self._units = None
         self._labjackSamplingRate = None
         self._population = None
@@ -199,22 +200,6 @@ class SessionBase(object):
             pickle.dump(container_, stream)
 
         return
-    
-    def keys(self):
-        """
-        Return a list of the keys in the output.pkl file
-        """
-
-        if self.outputFilePath.exists() == False:
-            raise Exception('Could not locate output file')
-
-        with open(self.outputFilePath, 'rb') as stream:
-            try:
-                container = pickle.load(stream)
-            except EOFError as error:
-                raise Exception(f'Ouptut file is corrupted') from None
-            
-        return list(container.keys())
     
     def load(self, path):
         """
@@ -642,3 +627,48 @@ class SessionBase(object):
                 results.append(False)
 
         return all(results)
+    
+    @property
+    def hasPoseEstimates(self):
+        """
+        """
+
+        if self.leftEyePose is not None or self.rightEyePose is not None:
+            return True
+        else:
+            return False
+        
+    def keys(self, path):
+        """
+        Check the available keys for a group specified by the path
+        """
+
+        if self.hdf.exists() == False:
+            raise Exception('No output file found')
+        
+
+        with h5py.File(self.hdf, 'r') as file:
+            try:
+                group = file[path]
+                return tuple(group.keys())
+            except KeyError:
+                raise Exception(f'{path} is not a valid group path') from None
+            
+    @property
+    def saccadeOnsetTimestamps(self):
+        """
+        """
+
+        if self._saccadeOnsetTimestamps is None:
+            self._saccadeOnsetTimestamps = dict()
+            for eye in ('left', 'right'):
+                self._saccadeOnsetTimestamps[eye] = dict()
+                for direction in ('nasal', 'temporal'):
+                    path = f'saccades/predicted/{eye}/{direction}/timestamps'
+                    if self.hasGroup(path):
+                        timestamps = self.load(path)
+                    else:
+                        timestamps = np.array([])
+                    self.saccadeOnsetTimestamps[eye][direction] = timestamps
+
+        return self._saccadeOnsetTimestamps

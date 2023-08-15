@@ -325,7 +325,7 @@ def estimateTimestampingFunction(
 
     return
 
-def findDroppedFrames(session, pad=50000):
+def findDroppedFrames(session, pad=1000000):
     """
     """
 
@@ -413,67 +413,4 @@ def timestampCameraTrigger(session, factor=1.3):
     session.save('labjack/cameras/missing', missing)
     session.save('labjack/cameras/timestamps', timestamps)
 
-    return
-
-def extractSingleUnitData(session):
-    """
-    """
-
-    spikeTimestamps = np.array([])
-    result = list(session.folders.ephys.rglob('*spike_times.npy'))
-    if len(result) != 1:
-        raise Exception('Could not locate the spike times data')
-    else:
-        spikeTimestamps = np.around(
-            np.load(str(result.pop())).flatten() / samplingRateNeuropixels,
-            3
-        )
-    
-    #
-    spikeClusters = np.array([])
-    result = list(session.folders.ephys.rglob('*spike_clusters.npy'))
-    if len(result) != 1:
-        raise Exception('Could not locate the cluster ID data')
-    else:
-        spikeClusters = np.around(
-            np.load(str(result.pop())).flatten(),
-            3
-        )
-
-    #
-    session.save('spikes/timestamps', spikeTimestamps)
-    session.save('spikes/clusters', spikeClusters)
-
-    return
-
-def processAllEvents(session):
-    """
-    """
-
-    #
-    # try:
-
-    #
-    createLabjackDataMatrix(session)
-    extractBarcodeSignals(session)
-    decodeBarcodeSignals(session)
-    estimateTimestampingFunction(session)
-
-    #
-    if session.isAutosorted:
-        extractSingleUnitData(session)
-
-    #
-    findDroppedFrames(session)
-    timestampCameraTrigger(session)
-
-    #
-    if session.hasGroup('epochs') == False:
-        session.identifyProtocolEpochs()
-    if hasattr(session, 'processVisualEvents'):
-        session.processVisualEvents()
-
-    # except:
-    #    print(f'ERROR: events pipeline broke for {session.animal} on {session.date}')
-    
     return

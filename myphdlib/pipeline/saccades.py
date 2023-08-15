@@ -123,6 +123,67 @@ def correctEyePosition(session, pad=1e6):
 
     return
 
+def interpolateEyePosition(
+    session,
+    maximumConsecutiveDroppedFrames=4
+    ):
+    """
+    """
+
+    eyePositionCorrected = session.load('pose/corrected')
+    eyePositionInterpolated = np.copy(eyePositionCorrected)
+    
+    #
+    for iColumn in range(eyePositionCorrected.shape[1]):
+
+        #
+        pose = eyePositionCorrected[:, iColumn]
+        dropped = np.isnan(pose)
+        windows = list()
+
+        #
+        iRow = 0
+        while True:
+            if iRow >= dropped.size:
+                break
+            flag = dropped[iRow]
+
+            # Figure out how many frames were dropped
+            if flag:
+                nDroppedFrames = 0
+                for flag_ in dropped[iRow:]:
+                    if flag_ == False:
+                        break
+                    nDroppedFrames += 1
+
+                #
+                if nDroppedFrames <= maximumConsecutiveDroppedFrames:
+                    if iRow + nDroppedFrames + 1 >= pose.size:
+                        iRow += nDroppedFrames
+                        continue
+                    windows.append([
+                        iRow - 1,
+                        iRow + nDroppedFrames + 1
+                    ])
+                iRow += nDroppedFrames
+
+            # Increment the counter
+            else:
+                iRow += 1
+
+        # Interpolate over the windows of dropped frames
+        for start, stop in windows:
+            x = np.arange(start + 1, stop - 1, 1)
+            xp = np.array([start, stop - 1])
+            fp = np.array([pose[start], pose[stop - 1]])
+            y = np.interp(x, xp, fp)
+            eyePositionInterpolated[start + 1: stop - 1, iColumn] = y
+
+    #
+    session.save('pose/interpolated', eyePositionInterpolated)
+
+    return
+
 # TODO: Remove the constant motion of the eye
 def stabilizeEyePosition(session):
     """
@@ -142,11 +203,11 @@ def decomposeEyePosition(session, nNeighbors=5, benchmark=False):
     """
 
     # eyePositionCorrected = session.eyePositionCorrected
-    eyePositionCorrected = session.load('pose/corrected')
-    eyePositionDecomposed = np.full_like(eyePositionCorrected, np.nan)
+    eyePositionInterpolated = session.load('pose/interpolated')
+    eyePositionDecomposed = np.full_like(eyePositionInterpolated, np.nan)
     missingDataMask = {
-        'left': np.full(eyePositionCorrected.shape[0], np.nan),
-        'right': np.full(eyePositionCorrected.shape[0], np.nan)
+        'left': np.full(eyePositionInterpolated.shape[0], np.nan),
+        'right': np.full(eyePositionInterpolated.shape[0], np.nan)
     }
 
     #
@@ -154,11 +215,11 @@ def decomposeEyePosition(session, nNeighbors=5, benchmark=False):
         t1 = time.time()
 
     #
-    for columnIndices, X1, side in zip([(0, 2), (2, 4)], np.split(eyePositionCorrected, 2, axis=1), ('left', 'right')):
+    for columnIndices, X1, side in zip([(0, 2), (2, 4)], np.split(eyePositionInterpolated, 2, axis=1), ('left', 'right')):
 
         # Check for missing eye position data
         if np.isnan(X1).all(0).all():
-            missingDataMask[side] = np.full(eyePositionCorrected.shape[0], True)
+            missingDataMask[side] = np.full(eyePositionInterpolated.shape[0], True)
             continue
 
         # Impute NaN values
@@ -446,11 +507,10 @@ def detectPutativeSaccades(
 # TODO: Exclude duplicate labeled saccades
 # TODO: Implement a method for NOT overwriting previously collected saccades waveforms
 
-def labelPutativeSaccades(session, nSamplesPerEye=30):
+def labelPutativeSaccades(session, nSamplesPerEye=5):
     """
     """
 
-    saccadeWaveformsPutative = session.read('saccadeDetectionResults')['waveforms']
     saccadeWaveformsLabeled = {
         'left': {
             'X': None,
@@ -519,7 +579,7 @@ def _trainSaccadeClassifier(
         saccadesExtracted = False
         for eye in ('left', 'right'):
             path = f'saccades/putative/{eye}/waveforms'
-            if path in session.keys():
+            if session.hasGroup(path):
                 saccadesExtracted = True
                 break
 
@@ -541,12 +601,12 @@ def _trainSaccadeClassifier(
         saccadesLabeled = False
         for eye in ('left', 'right'):
             path = f'saccades/training/{eye}/X'
-            if path in session.keys():
+            if session.hasGroup(path):
                 saccadesLabeled = True
                 break
 
         if saccadesLabeled:
-            saccadeLabelingResults = session.read('saccadeWaveformsLabeled')
+            # saccadeLabelingResults = session.read('saccadeWaveformsLabeled')
             for eye in ('left', 'right'):
                 # saccadeWaveformsLabeled = saccadeLabelingResults[eye]
                 X_ = session.load(f'saccades/training/{eye}/X')
@@ -601,7 +661,8 @@ def _trainSaccadeClassifier(
     return pca, clf
 
 def classifyPutativeSaccades(
-    sessions,
+    sessionsToLabel,
+    sessionsToTrainOn,
     classifier='net',
     decompose=False,
     features='position'
@@ -611,18 +672,14 @@ def classifyPutativeSaccades(
 
     #
     pca, clf = _trainSaccadeClassifier(
-        sessions,
+        sessionsToTrainOn,
         classifier,
         decompose,
         features
     )
 
     #
-    for session in sessions:
-
-        #
-        # if 'saccadeWaveformsClassified' in session.keys():
-        #     session.removeDataEntry('saccadeWaveformsClassified')
+    for session in sessionsToLabel:
         
         # Init the empty data container
         saccadeClassificationResults = {
@@ -648,17 +705,11 @@ def classifyPutativeSaccades(
             },
         }
 
-        # Load the saccade detection results
-        # saccadeDetectionResults = session.read('saccadeDetectionResults')
-
         # Classify saccades
         for eye in ('left', 'right'):
-            
-            #
-            # if saccadeDetectionResults['waveforms'][eye] is None:
-            #     continue
 
             #
+            samples = list()
             waveforms = list()
             indices = list()
             saccadeWaveformsUnlabeled = session.load(f'saccades/putative/{eye}/waveforms')
@@ -667,21 +718,24 @@ def classifyPutativeSaccades(
                 if np.isnan(waveform).any():
                     continue
                 if features == 'position':
-                    waveforms.append(waveform)
+                    samples.append(waveform)
                 elif features == 'velocity':
-                    waveforms.append(np.diff(waveform))
+                    samples.append(np.diff(waveform))
+                waveforms.append(waveform)
                 indices.append(saccadeIndicesUnlabeled[index])
             
             #
             if decompose:
                 samples = pca.transform(
-                    np.diff(np.array(waveforms), axis=1)
+                    np.array(samples)
                 )
             else:
-                samples = np.array(waveforms)
-
-            #
-            labels = clf.predict(samples)
+                samples = np.array(samples)
+            if samples.size == 0:
+                print(f'INFO[{session.animal}, {session.date}]: 0 {direction} saccades classified for the {eye} eye')
+                continue
+            else:
+                labels = clf.predict(samples)
 
             #
             iterable = zip(
@@ -705,14 +759,14 @@ def classifyPutativeSaccades(
                 if len(saccadeClassificationResults[eye][direction]['indices']) == 0:
                     saccadeClassificationResults[eye][direction]['indices'] = None
                     saccadeClassificationResults[eye][direction]['waveforms'] = None
+                    print(f'INFO[{session.animal}, {session.date}]: 0 {direction} saccades classified for the {eye} eye')
                 else:
                     saccadeClassificationResults[eye][direction]['indices'] = np.array(saccadeClassificationResults[eye][direction]['indices'])
                     saccadeClassificationResults[eye][direction]['waveforms'] = np.array(saccadeClassificationResults[eye][direction]['waveforms'])
                     nSaccades = saccadeClassificationResults[eye][direction]['indices'].size
-                    print(f'INFO[animal={session.animal}, date={session.date}]: {nSaccades} {direction} saccades classified for the {eye} eye')
+                    print(f'INFO[{session.animal}, {session.date}]: {nSaccades} {direction} saccades classified for the {eye} eye')
 
         #
-        # session.write(saccadeClassificationResults, 'saccadeClassificationResults')
         for eye in ('left', 'right'):
             for direction in ('nasal', 'temporal'):
                 for feature in ('waveforms', 'indices'):
@@ -721,94 +775,140 @@ def classifyPutativeSaccades(
                     else:
                         path = f'saccades/predicted/{eye}/{direction}/indices/uncorrected'
                     dataset = saccadeClassificationResults[eye][direction][feature]
+                    if dataset is None:
+                        continue
                     session.save(path, dataset)
+                    
 
     return
 
-def determineSaccadeOnset(session, deviations=1, tolerance=0.025, baseline=0.1):
+def determineSaccadeOnset(session, threshold=0.4, baseline=(0, 0.1), maximumCorrectionInFrames=10):
     """
     """
-
-    # saccadeClassificationResults = session.load('saccadeClassificationResults')
 
     for eye in ('left', 'right'):
         for direction in ('temporal', 'nasal'):
 
             #
             saccadeWaveforms = session.load(f'saccades/predicted/{eye}/{direction}/waveforms')
+            if saccadeWaveforms is None:
+                print(f'WARNING[{session.animal}, {session.date}]: No {direction} saccades detected in the {eye} eye')
+                continue
             saccadeIndicesUncorrected = session.load(f'saccades/predicted/{eye}/{direction}/indices/uncorrected')
             saccadeIndicesCorrected = np.full_like(saccadeIndicesUncorrected, 0)
 
             #
-            # saccadeIndices = saccadeClassificationResults[eye][direction]['indices']
-            # saccadeWaveforms = saccadeClassificationResults[eye][direction]['waveforms']
+            # mu = saccadeWaveforms[:, 0: int(np.ceil(baseline * session.fps))].flatten().mean()
+            # sigma = saccadeWaveforms[:, 0: int(np.ceil(baseline * session.fps))].flatten().std()
+            # threshold = mu + sigma * deviations
 
             #
-            mu = saccadeWaveforms[:, 0: int(np.ceil(baseline * session.fps))].flatten().mean()
-            sigma = saccadeWaveforms[:, 0: int(np.ceil(baseline * session.fps))].flatten().std()
-            threshold = mu + sigma * deviations
+            baselineWindowInFrames = (
+                int(round(session.fps * baseline[0])),
+                int(round(session.fps * baseline[1]))
+            )
+            baselineVelocitySample = np.abs(
+                np.diff(saccadeWaveforms[baselineWindowInFrames[0]: baselineWindowInFrames[1]], axis=1).flatten()
+            )
 
             #
             error = list()
 
             #
-            for sampleIndex, (saccadeIndex, saccadeWaveform) in enumerate(zip(saccadeIndicesUncorrected, saccadeWaveforms)):
-
-                # Get the frame index for the very first sample in the saccade waveform
-                if saccadeWaveform.size % 2 != 0:
-                    raise Exception('Saccade waveform must be an even number of samples')
-                nFeatures = int(saccadeWaveform.size / 2)
-                i0 = saccadeIndex - nFeatures
-
-                # Determine the index to start from moving backwards
-                velocity = np.diff(saccadeWaveform)
-                i1 = round(((velocity.size - 1) / 2) - (tolerance * session.fps))
-                i2 = round(((velocity.size - 1) / 2) + (tolerance * session.fps))
-                startIndex = np.argmax(velocity[i1: i2]) + i1
-
-                # Find the first threshold crossing
-                crossingIndex = saccadeIndex
-                for i in np.arange(0, startIndex)[::-1]:
-                    vi = velocity[i]
-                    if vi < threshold:
-                        crossingIndex = int(i - 1 + i0)
-                        dt = (crossingIndex - saccadeIndex) / session.fps
-                        error.append(dt)
-                        break
-
-                #
-                saccadeIndicesCorrected[sampleIndex] = crossingIndex
-                # saccadeClassificationResults[eye][direction]['indices2'][sampleIndex] = crossingIndex
+            pvalues = list()
+            nPoints = int(saccadeWaveforms.shape[1] / 2)
+            for saccadeWaveform in saccadeWaveforms[:, :nPoints]:
+                row = list()
+                for vi in np.diff(saccadeWaveform)[::-1]:
+                    p = np.sum(baselineVelocitySample > abs(vi)) / baselineVelocitySample.size
+                    row.append(p)
+                pvalues.append(row)
+            signal = np.mean(np.array(pvalues), axis=0)
+            
+            #
+            frameOffset = 0
+            for iFrame in range(signal.size):
+                frameOffset -= 1
+                if signal[iFrame] >= threshold:
+                    break
+            error.append(frameOffset / session.fps)
 
             #
-            session.write(f'saccades/predicted/{eye}/{direction}/indices/adjusted', saccadeIndicesCorrected)
+            saccadeIndicesCorrected = saccadeIndicesUncorrected + frameOffset
+            session.save(f'saccades/predicted/{eye}/{direction}/indices/adjusted', saccadeIndicesCorrected)
 
-    #
-    # session.write(saccadeClassificationResults, 'saccadeClassificationResults')
+            # Figure out the timestamp for the frame of the saccade onset
+            M = session.load('labjack/matrix')
+            signal = M[:, session.labjackChannelMapping['cameras']]
+            # frameTimestamps = session.computeTimestamps(np.where(np.abs(np.diff(signal)) > 0.5)[0])
+            frameTimestamps = session.load('labjack/cameras/timestamps')
+            saccadeOnsetTimestamps = frameTimestamps[saccadeIndicesCorrected]
+            session.save(f'saccades/predicted/{eye}/{direction}/timestamps', saccadeOnsetTimestamps)
+
 
     #
     error = np.array(error)
-    print(f'INFO[animal={session.animal}, date={session.date}]: Mean saccade onset correction = {error.mean():.3f} seconds')
+    print(f'INFO[{session.animal}, {session.date}]: Mean saccade onset correction = {error.mean():.3f} seconds')
 
     return
 
-def processVideoRecordings(session, pupilCenterName='pupilCenter'):
+def sortProbeStimuli(
+    session,
+    eye='right',
+    window=(-0.05, 0.1),
+    ):
     """
+    Identify trials in which the probe stimuli appeared around the time of a saccade and the
+    latency from the saccade to the probe
     """
 
-    modules_ = [
-        extractEyePosition,
-        correctEyePosition,
-        decomposeEyePosition,
-        reorientEyePosition,
-        filterEyePosition,
-        detectPutativeSaccades
-    ]
+    #
+    driftingGratingMotion = session.load('stimuli/dg/motion')
+    probeOnsetTimestamps = session.load('stimuli/dg/timestamps')
 
-    for module_ in modules_:
-        if module_.__name__ == 'extractEyePosition':
-            module_(session, pupilCenterName=pupilCenterName)
-        else:
-            module_(session)
+    #
+    nTrials = probeOnsetTimestamps.size
+    data = {
+        'perisaccadic': np.full(nTrials, False).astype(bool),
+        'latency': np.full(nTrials, np.nan).astype(float),
+        'direction': np.full(nTrials, 0).astype(int)
+    }
+
+    # Create an array of all saccade timestamps
+    saccadeOnsetTimestamps = list()
+    saccadeDirections = list()
+    for direction in ('nasal', 'temporal'):
+        for saccadeOnsetTimestamp in session.load(f'saccades/predicted/{eye}/{direction}/timestamps'):
+            saccadeOnsetTimestamps.append(saccadeOnsetTimestamp)
+            saccadeDirections.append(-1 if direction == 'nasal' else 1)
+    timeSortedIndices = np.argsort(saccadeOnsetTimestamps)
+    saccadeOnsetTimestamps = np.array(saccadeOnsetTimestamps)[timeSortedIndices]
+    saccadeDirections = np.array(saccadeDirections)[timeSortedIndices]
+
+    #
+    for trialIndex, (probeMotion, probeOnsetTimestamp) in enumerate(zip(driftingGratingMotion, probeOnsetTimestamps)):
+
+        # Compute the latency from the closest saccade to the target probe
+        saccadeOnsetTimestampsRelative = saccadeOnsetTimestamps - probeOnsetTimestamp
+        closestSaccadeIndex = np.argmin(np.abs(saccadeOnsetTimestampsRelative))
+        closestSaccadeLatency = saccadeOnsetTimestampsRelative[closestSaccadeIndex] - probeOnsetTimestamp
+        closestSaccadeDirection = saccadeDirections[closestSaccadeIndex]
+        probeLatency = probeOnsetTimestamp - saccadeOnsetTimestamps[closestSaccadeIndex]
+
+        #
+        data['direction'][trialIndex] = closestSaccadeDirection
+
+        # Classify the trial as perisaccadic or not
+        perisaccadic = False
+        if window[0] <= probeLatency <= window[1]:
+            perisaccadic = True
+
+        # Save the results
+        data['perisaccadic'][trialIndex] = perisaccadic
+        data['latency'][trialIndex] = probeLatency
+
+    #
+    for key, dtype in zip(data.keys(), [bool, float, int]):
+        session.save(f'stimuli/dg/{key}', data[key])
 
     return
