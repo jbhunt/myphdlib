@@ -155,6 +155,16 @@ def identifyUnitsWithEventRelatedActivity(
 
     return
 
+def _measureStabilityForMotorUnits(
+    session,
+    ):
+    """
+    """
+
+    timestamps = 
+
+    return
+
 def measureSpikeSortingQuality(
     session,
     presenceRatioThreshold=0.9,
@@ -192,10 +202,12 @@ def measureSpikeSortingQuality(
     isiViolationRates = np.array(list(metrics['isi_viol'].values())).astype(float)
 
     #
-    # uids = np.array(metrics.keys()).astype(int)
-    session.save('population/metrics/stability', presenceRatios)
-    session.save('population/metrics/contamination', isiViolationRates)
+    session.save('population/metrics/stability/ecephys', presenceRatios)
+    session.save('population/metrics/contamination/ecephys', isiViolationRates)
 
+    #
+    for unit in session.population:
+        pass
     #
     quality = np.logical_and(
         presenceRatios >= presenceRatioThreshold,
