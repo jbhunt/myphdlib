@@ -58,8 +58,7 @@ def process(
     # Extract and store single-unit data
     if session.isAutosorted:
         extractSingleUnitData(session)
-        identifyVisualUnits(session)
-        identifySaccadeRelatedUnits(session)
+        identifyUnitsWithEventRelatedActivity(session)
         measureSpikeSortingQuality(session)
 
     # Process eye position data and identify putative saccades

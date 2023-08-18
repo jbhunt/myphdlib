@@ -785,6 +785,7 @@ class StimulusProcessingMixin():
             'contrast': list(),
             'timestamps': list()
         }
+        trialParameterKeys = ('events', 'motion', 'contrast', 'phase', 'timestamps')
         for line in lines:
             if self.cohort in (1, 2, 3):
                 contrast, phase = 1.0, np.nan
@@ -792,7 +793,7 @@ class StimulusProcessingMixin():
             else:
                 event, motion, contrast, phase, timestamp = line.rstrip('\n').split(', ')
             params = (event, motion, contrast, phase, timestamp)
-            for key, value in zip(trialParameters.keys(), params):
+            for key, value in zip(trialParameterKeys, params):
                 trialParameters[key].append(value)
 
         # Load the labjack data
@@ -856,8 +857,8 @@ class StimulusProcessingMixin():
             float,
             float
         )
-        probeMask = np.array(trialParameters['events']).astype(int) == 1
-        for dtype, key in zip(dtypes, trialParameters.keys()):
+        probeMask = np.array(trialParameters['events']).astype(int) == 3
+        for dtype, key in zip(dtypes, trialParameterKeys):
             if key in ('events', 'timestamps'):
                 continue
             else:

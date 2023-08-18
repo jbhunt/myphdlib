@@ -68,11 +68,13 @@ pathsToKeep = {
     'stimuli/bn/lr/lf/missing',
     'stimuli/bn/lr/lf/timestamps',
     'stimuli/dg',
-    'stimuli/dg/direction',
-    'stimuli/dg/latency',
-    'stimuli/dg/motion',
-    'stimuli/dg/perisaccadic',
-    'stimuli/dg/timestamps',
+    'stimuli/dg/probe/motion',
+    'stimuli/dg/probe/phase',
+    'stimuli/dg/probe/timestamps',
+    'stimuli/dg/probe/contrast',
+    'stimuli/dg/grating/timestamps'
+    'stimuli/dg/motion/timestamps',
+    'stimuli/dg/isi/timestamps'
     'stimuli/fs',
     'stimuli/fs/coincident',
     'stimuli/fs/probes',
@@ -161,8 +163,17 @@ pathsToKeep = {
     'population/metrics/stability',
     'population/metrics/zeta',
     'population/metrics/zeta/visual',
-    'population/metrics/zeta/visual/latency',
+    'population/metrics/zeta/visual/latency/peak',
+    'population/metrics/zeta/visual/latency/onset'
     'population/metrics/zeta/visual/pvalues',
+    'population/metrics/zeta/motor/left/nasal/latency/peak',
+    'population/metrics/zeta/motor/left/nasal/latency/onset',
+    'population/metrics/zeta/motor/left/temporal/latency/peak',
+    'population/metrics/zeta/motor/left/temporal/latency/onset',
+    'population/metrics/zeta/motor/right/nasal/latency/peak',
+    'population/metrics/zeta/motor/right/nasal/latency/onset',
+    'population/metrics/zeta/motor/right/temporal/latency/peak',
+    'population/metrics/zeta/motor/right/temporal/latency/onset',
     'population/uids',
 }
 
@@ -186,3 +197,23 @@ def cleanupOutputFile(session):
         session.remove(path)
 
     return
+
+def checkForMissingGroups(
+    session,
+    returnMissingPaths=False
+    ):
+    """
+    """
+
+    pathsInFile = list()
+    with h5py.File(session.hdf, 'r') as file:
+        file.visit(lambda name: pathsInFile.append(name))
+
+    pathsNotFound = list()
+    for path in pathsToKeep:
+        if path not in pathsInFile:
+            print(f'INFO[{session.animal}, {session.date}]: "{path}" path missing from output file')
+            pathsNotFound.append(path)
+
+    if returnMissingPaths:
+        return pathsNotFound

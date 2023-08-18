@@ -863,15 +863,16 @@ def sortProbeStimuli(
     """
 
     #
-    driftingGratingMotion = session.load('stimuli/dg/motion')
-    probeOnsetTimestamps = session.load('stimuli/dg/timestamps')
+    if session.hasGroup('stimuli/dg/probe') == False:
+        raise Exception(f'No probe stimulus timestamps detected')
+    driftingGratingMotion = session.load('stimuli/dg/probe/motion')
+    probeOnsetTimestamps = session.load('stimuli/dg/probe/timestamps')
 
     #
     nTrials = probeOnsetTimestamps.size
     data = {
         'perisaccadic': np.full(nTrials, False).astype(bool),
         'latency': np.full(nTrials, np.nan).astype(float),
-        'direction': np.full(nTrials, 0).astype(int)
     }
 
     # Create an array of all saccade timestamps
@@ -891,7 +892,7 @@ def sortProbeStimuli(
         # Compute the latency from the closest saccade to the target probe
         saccadeOnsetTimestampsRelative = saccadeOnsetTimestamps - probeOnsetTimestamp
         closestSaccadeIndex = np.argmin(np.abs(saccadeOnsetTimestampsRelative))
-        closestSaccadeLatency = saccadeOnsetTimestampsRelative[closestSaccadeIndex] - probeOnsetTimestamp
+        # closestSaccadeLatency = saccadeOnsetTimestampsRelative[closestSaccadeIndex] - probeOnsetTimestamp
         closestSaccadeDirection = saccadeDirections[closestSaccadeIndex]
         probeLatency = probeOnsetTimestamp - saccadeOnsetTimestamps[closestSaccadeIndex]
 
@@ -909,6 +910,11 @@ def sortProbeStimuli(
 
     #
     for key, dtype in zip(data.keys(), [bool, float, int]):
-        session.save(f'stimuli/dg/{key}', data[key])
+        session.save(f'stimuli/dg/probe/{key}', data[key])
+
+    #
+    nPerisaccadicTrials = data['perisaccadic'].sum()
+    nTrialsTotal = data['perisaccadic'].size
+    print(f'INFO[{session.date}, {session.animal}]: {nPerisaccadicTrials} out of {nTrialsTotal} trials classified as peri-saccadic')
 
     return

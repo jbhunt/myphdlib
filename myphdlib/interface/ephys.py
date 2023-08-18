@@ -87,13 +87,22 @@ class SingleUnit():
         """
 
         if self._type is None:
-            if self._session.hasGroup('analysis/typing/visual') == False:
+            checks = np.array([
+                self._session.hasGroup('population/filters/visual'),
+                self._session.hasGroup('population/filters/motor')
+            ])
+            if checks.all() == False:
                 return None
-            mask = self._session.load('analysis/typing/visual')
-            if mask[self.index]:
+            isVisualUnit = self._session.load('population/filters/visual')[self.index]
+            isMotorUnit = self._session.load('population/filters/motor')[self.index]
+            if isVisualUnit == True and isMotorUnit == True:
+                self._type = 'visuomotor'
+            elif isVisualUnit == True and isMotorUnit == False:
                 self._type = 'visual'
+            elif isVisualUnit == False and isMotorUnit == True:
+                self._type = 'motor'
             else:
-                self._type = 'unclassified'
+                self._type = 'unresponsive'
 
         return self._type
     
@@ -128,7 +137,7 @@ class SingleUnit():
         """
 
         if self._stability is None:
-            sample = self._session.load('population/metrics/presence_ratio')
+            sample = self._session.load('population/metrics/stability')
             self._stability = sample[self.index]
 
         return self._stability
@@ -139,32 +148,10 @@ class SingleUnit():
         """
 
         if self._contamination is None:
-            sample = self._session.load('population/metrics/isi_violation_rate')
+            sample = self._session.load('population/metrics/contamination')
             self._contamination = sample[self.index]
     
         return self._contamination 
-    
-    @property
-    def isVisualUnit(self):
-        """
-        """
-
-        if self._isVisualUnit is None:
-            sample = self._session.load('population/filters/visual')
-            self._isVisualUnit = sample[self.index]
-        
-        return self._isVisualUnit
-    
-    @property
-    def isMotorUnit(self):
-        """
-        """
-
-        if self._isMotorUnit is None:
-            sample = self._session.load('population/filters/motor')
-            self._isMotorUnit = sample[self.index]
-        
-        return self._isMotorUnit
 
 class Population():
     """
@@ -182,7 +169,7 @@ class Population():
 
         return
     
-    def index(self, cluster):
+    def indexByCluster(self, cluster):
         """
         """
 
@@ -228,3 +215,8 @@ class Population():
             return self._units[index]
         elif type(index) in (list, np.ndarray):
             return np.array(self._units)[index].tolist()
+        elif type(index) == slice:
+            return self._units[index.start: index.stop: index.step]
+
+    def __len__(self):
+        return len(self._units)
