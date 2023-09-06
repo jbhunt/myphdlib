@@ -722,7 +722,7 @@ class GonogoSession(SessionBase):
             for probeTimestamp in self.dictionaryFalse[key]:
                 for lick in self.lickTimestamps:
                     lickRelative = (lick - probeTimestamp)
-                    if lickRelative > 0 and lickRelative < 0.4:
+                    if lickRelative > 0 and lickRelative < 0.8:
                         tempcount = (tempcount + 1)
                         break
             if key == '0.80':
@@ -761,7 +761,7 @@ class GonogoSession(SessionBase):
             for probeTimestamp in self.dictionaryFalse[key]:
                 for lick in self.lickTimestamps:
                     lickRelative = (lick - probeTimestamp)
-                    if lickRelative > 0 and lickRelative < 0.4:
+                    if lickRelative > 0 and lickRelative < 0.8:
                         tempcount = (tempcount + 1)
                         break
             if key == '0.80':
@@ -803,7 +803,7 @@ class GonogoSession(SessionBase):
             for probeTimestamp in self.dictionaryTrue[key]:
                 for lick in self.lickTimestamps:
                     lickRelative = (lick - probeTimestamp)
-                    if lickRelative > 0 and lickRelative < 0.4:
+                    if lickRelative > 0 and lickRelative < 0.8:
                         tempcountT = (tempcountT + 1)
                         break
             if key == '0.80':
@@ -846,7 +846,7 @@ class GonogoSession(SessionBase):
             for probeTimestamp in self.dictionaryTrue[key]:
                 for lick in self.lickTimestamps:
                     lickRelative = (lick - probeTimestamp)
-                    if lickRelative > 0 and lickRelative < 0.4:
+                    if lickRelative > 0 and lickRelative < 0.8:
                         tempcountT = (tempcountT + 1)
                         break
             if key == '0.80':
