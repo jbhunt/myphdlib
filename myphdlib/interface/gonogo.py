@@ -587,10 +587,8 @@ class GonogoSession(SessionBase):
     
         perisaccadicProbeBool = np.array(perisaccadicProbeBool)
 
-        zipped3 = list(zip(probeTimestamps, self.contrastValues, perisaccadicProbeBool))
-        self.zipped3 = zipped3
         self.perisaccadicProbeBool = perisaccadicProbeBool
-        return zipped3, perisaccadicProbeBool
+        return perisaccadicProbeBool
 
     def createZippedProbeList(self):
         """
@@ -614,10 +612,8 @@ class GonogoSession(SessionBase):
     
         puffProbeBool = np.array(puffProbeBool)
 
-        zipped4 = list(zip(probeTimestamps, self.contrastValues, puffProbeBool))
-        self.zipped4 = zipped4
         self.puffProbeBool = puffProbeBool
-        return zipped4, puffProbeBool
+        return puffProbeBool
 
     def createZippedPuffList(self):
         """
