@@ -633,7 +633,7 @@ class GonogoSession(SessionBase):
                 probeTrial = True
             else:
                 probeTrial = False
-            puffProbeBool2.append(puffTrial)
+            puffProbeBool2.append(probeTrial)
     
         puffProbeBool2 = np.array(puffProbeBool2)
 
