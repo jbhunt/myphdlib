@@ -600,7 +600,7 @@ class GonogoSession(SessionBase):
         puffTimestamps = self.loadPuffTimestamps()
         puffProbeBool = list()
         for probe in probeTimestamps:
-            puffRelative = (self.puffTimestamps - probe)
+            puffRelative = (puffTimestamps - probe)
             mask = np.logical_and(
                 puffRelative > -1,
                 puffRelative < 1
@@ -627,7 +627,7 @@ class GonogoSession(SessionBase):
         puffTimestamps = self.loadPuffTimestamps()
         puffProbeBool2 = list()
         for puff in puffTimestamps:
-            probeRelative = (self.probeTimestamps - puff)
+            probeRelative = (probeTimestamps - puff)
             mask = np.logical_and(
                 probeRelative > -1,
                 probeRelative < 1
