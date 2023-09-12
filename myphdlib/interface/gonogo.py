@@ -592,6 +592,34 @@ class GonogoSession(SessionBase):
         self.perisaccadicProbeBool = perisaccadicProbeBool
         return zipped3, perisaccadicProbeBool
 
+     def createZippedAirPuffList(self):
+        """
+        Create a boolean variable to determine whether trial is perisaccadic and create zipped list of probetimestamps, contrast values, and boolean variable
+        """
+        probeTimestamps = self.loadProbeTimestamps()
+        puffTimestamps = self.loadPuffTimestamps()
+        puffProbeBool = list()
+        for probe in probeTimestamps:
+            puffRelative = (self.puffTimestamps - probe)
+            mask = np.logical_and(
+                puffRelative > -1,
+                puffRelative < 1
+            )
+            peripuffsaccades = puffRelative[mask]
+            if any(peripuffsaccades):
+                puffTrial = True
+            else:
+                puffTrial = False
+            puffProbeBool.append(puffTrial)
+    
+        puffProbeBool = np.array(puffProbeBool)
+
+        zipped4 = list(zip(probeTimestamps, self.contrastValues, puffProbeBool))
+        self.zipped4 = zipped4
+        self.puffProbeBool = puffProbeBool
+        return zipped4, puffProbeBool
+
+
     def createZippedListCorrected(self, totalSaccades):
         """
         Create a boolean variable to determine whether trial is perisaccadic and create zipped list of probetimestamps, contrast values, and boolean variable
