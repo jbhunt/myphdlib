@@ -1401,7 +1401,7 @@ class GonogoSession(SessionBase):
                 y1 = 20 + rowIndex + rowIndex1 + rowIndex2 + rowIndex3 + rowIndex4 + rowIndex5 + rowIndex6 + (rowIndex7 + 0.5)
                 ax.vlines(x, y0, y1, color='m')
             ax.vlines(x, y0, y1, color='m', label="Perisaccadic 0%")
-        ax.legend(bbox_to_anchor=(1.75, 1.05))
+        ax.legend(bbox_to_anchor=(2.75, 1.05))
         return fig, ax
  
     def saccadeContrastLickAnalysis(self):
