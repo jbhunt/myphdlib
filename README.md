@@ -2,7 +2,7 @@
 
 This is a collection of scientific software and analysis documentation that was written during my graduate research.
 
-## H5 file datasets ##
+## Datasets ##
 The processed data for each session is stored in an H5 file named `output.hdf`. Within this file, there are datasets grouped by the associated data processing step.
 
 ### Population ###
