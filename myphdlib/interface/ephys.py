@@ -1,6 +1,9 @@
 import numpy as np
 from myphdlib.general.toolkit import psth2
 
+# TODO
+# [ ] Load all of the unit property values on instatiation
+
 class SingleUnit():
     """
     """
@@ -16,33 +19,58 @@ class SingleUnit():
         self._session = session
         self._cluster = cluster
         self._timestamps = None
+        self._pd = None
+        self._nd = None
         self._dsi = None
-        self._type = None
+        self._utype = None
         self._index = None
         self._stability = None
         self._contamination = None
-        self._isHighQuality = None
-        self._isVisualUnit = None
-        self._isMotorUnit = None
+        self._isQuality = None
+        self._isVisual = None
+        self._isMotor = None
+        self._quality = None
 
         return
     
     def describe(
         self,
-        event,
-        window=(-0.1, 0)
+        event=None,
+        window=(-1, 0),
+        binsize=1,
         ):
 
-        t, M = psth2(
-            event,
-            self.timestamps,
-            window=window,
-            binsize=None
-        )
-        dt = np.diff(window)
-        fr = M.flatten() / dt
-        mu = np.mean(fr)
-        sigma = np.std(fr)
+        #
+        if event is None:
+            t0 = 0
+            t1 = np.ceil(self.timestamps.max())
+            nBins = int((t1 - t0) // binsize) 
+            nSpikes, binEdges = np.histogram(
+                self.timestamps,
+                range=(t0, t1),
+                bins=nBins
+            )
+            dt = binEdges[1] - binEdges[0]
+            mu = round(np.mean(nSpikes) / dt, 2)
+            sigma = round(nSpikes.std() / dt, 2)
+    
+        #
+        else:
+            t, M = psth2(
+                event,
+                self.timestamps,
+                window=window,
+                binsize=binsize
+            )
+            if binsize is None:
+                dt = np.diff(window)
+                fr = M.flatten() / dt
+                mu = np.mean(fr)
+                sigma = np.std(fr)
+            else:
+                fr = M.flatten() / binsize
+                mu = fr.mean()
+                sigma = fr.std()
 
         return mu, sigma
     
@@ -60,51 +88,41 @@ class SingleUnit():
         """
 
         if self._timestamps is None:
-            if self._session.hasGroup('spikes') == False:
-                return None
-            spikes = self._session.load('spikes/timestamps')
-            clusters = self._session.load('spikes/clusters')
-            self._timestamps = spikes[np.where(clusters == self.cluster)[0]]
+            spikeIndices = np.where(self.session.population.allSpikeClusters == self.cluster)[0]
+            self._timestamps = self.session.population.allSpikeTimestamps[spikeIndices]
 
         return self._timestamps
     
     @property
-    def dsi(self):
+    def utype(self):
         """
         """
 
-        if self._dsi is None:
-            if self._session.hasGroup('analysis/population/dsi') == False:
-                return None
-            sample = self._session.load('analysis/population/dsi')
-            self._dsi = sample[self.index]
-
-        return self._dsi
-    
-    @property
-    def type(self):
-        """
-        """
-
-        if self._type is None:
-            checks = np.array([
-                self._session.hasGroup('population/filters/visual'),
-                self._session.hasGroup('population/filters/motor')
-            ])
-            if checks.all() == False:
-                return None
-            isVisualUnit = self._session.load('population/filters/visual')[self.index]
-            isMotorUnit = self._session.load('population/filters/motor')[self.index]
-            if isVisualUnit == True and isMotorUnit == True:
-                self._type = 'visuomotor'
-            elif isVisualUnit == True and isMotorUnit == False:
-                self._type = 'visual'
-            elif isVisualUnit == False and isMotorUnit == True:
-                self._type = 'motor'
+        if self._utype is None:
+            visuallyResponsive = self.session.population.filters['vr'][self.index]
+            if self.session.population.filters['sr'] is None:
+                saccadeRelated = False
             else:
-                self._type = 'unresponsive'
+                saccadeRelated = self.session.population.filters['sr'][self.index]
+            if visuallyResponsive == True and saccadeRelated == True:
+                self._utype = 'vm'
+            elif visuallyResponsive == True and saccadeRelated == False:
+                self._utype = 'vr'
+            elif visuallyResponsive == False and saccadeRelated == True:
+                self._utype = 'sr'
+            else:
+                self._utype = 'nr'
 
-        return self._type
+        return self._utype
+
+    @property
+    def quality(self):
+        if self._quality is None:
+            if self.session.population.filters['hq'][self.index]:
+                self._quality = 'h'
+            else:
+                self._quality = 'l'
+        return self._quality
     
     @property
     def index(self):
@@ -112,46 +130,16 @@ class SingleUnit():
         """
 
         if self._index is None:
-            uids = self._session.load('population/uids')
-            if self.cluster in uids:
-                self._index = np.where(uids == self.cluster)[0].item()
-            else:
-                return None
+            self._index = np.where(self.session.population.uniqueSpikeClusters == self.cluster)[0].item()
 
         return self._index
-    
+
     @property
-    def isHighQuality(self):
+    def session(self):
         """
         """
 
-        if self._isHighQuality is None:
-            sample = self._session.load('population/filters/quality')
-            self._isHighQuality = sample[self.index]
-
-        return self._isHighQuality
-    
-    @property
-    def stability(self):
-        """
-        """
-
-        if self._stability is None:
-            sample = self._session.load('population/metrics/stability')
-            self._stability = sample[self.index]
-
-        return self._stability
-    
-    @property
-    def contamination(self):
-        """
-        """
-
-        if self._contamination is None:
-            sample = self._session.load('population/metrics/contamination')
-            self._contamination = sample[self.index]
-    
-        return self._contamination 
+        return self._session
 
 class Population():
     """
@@ -163,9 +151,26 @@ class Population():
 
         self._session = session
         self._units = None
+        self._index = 0
+        self._filters = {
+            'vr': None,
+            'sr': None,
+            'hq': None
+        }
+        self._spikeSortingQualityMetrics = {
+            'presence': None,
+            'contamination': None,
+            'completeness': None,
+        }
+        self._zetaTestPs = None
+        self._visualResponseAmplitudes = None
+
         if autoload:
             self._loadSingleUnitData()
-        self._index = 0
+            self._loadPopulationFilters()
+            self._loadZetaTestPs()
+            self._loadSpikeSortinQualityMetrics()
+            self._loadResponseAmplitudes()
 
         return
     
@@ -189,16 +194,139 @@ class Population():
         self._units = list()
 
         #
-        clusters = self._session.load('spikes/clusters')
+        self._allSpikeClusters = self._session.load('spikes/clusters')
+        self._allSpikeTimestamps = self._session.load('spikes/timestamps')
+        self._uniqueSpikeClusters = np.unique(self.allSpikeClusters)
 
         #
-        for cluster in np.unique(clusters):
+        for cluster in np.unique(self._allSpikeClusters):
             unit = SingleUnit(self._session, cluster)
             self._units.append(unit)
 
         return
+
+    def _loadPopulationFilters(
+        self
+        ):
+        """
+        """
+
+        datasetNames = (
+            'visual',
+            'motor',
+            'quality'
+        )
+        for filterKey, datasetName in zip(self._filters.keys(), datasetNames):
+            if self._filters[filterKey] is None:
+                self._filters[filterKey] = self._session.load(f'population/filters/{datasetName}')
+
+        return
+
+    def _loadZetaTestPs(self):
+        """
+        """
+
+        datasetPaths = (
+            'population/metrics/zeta/visual/pvalues',
+            'population/metrics/zeta/motor/left/nasal/pvalues',
+            'population/metrics/zeta/motor/left/temporal/pvalues',
+        )
+        pvalues = list()
+        for datasetPath in datasetPaths:
+            pvalues.append(self._session.load(datasetPath))
+        self._zetaTestPs = np.array(pvalues).T
+
+        return
+
+    def _loadSpikeSortinQualityMetrics(self):
+        """
+        """
+
+        for metricKey in self._spikeSortingQualityMetrics.keys():
+            datasetPath = f'population/metrics/{metricKey}'
+            metricValues = self._session.load(datasetPath)
+            self._spikeSortingQualityMetrics[metricKey] = metricValues
+
+        return
+
+    def _loadResponseAmplitudes(self):
+        """
+        """
+
+        if self._visualResponseAmplitudes is None:
+            if self._session.hasDataset('population/metrics/visual_response_amplitude'):
+                self._visualResponseAmplitudes = self._session.load('population/metrics/visual_response_amplitude')
+            # else:
+            #     self._visualResponseAmplitudes = np.full(len(self, np.nan))
+
+        return
+
+    def filterUnits(
+        self,
+        pResponsiveThreshold=0.001,
+        presenceRatioThreshold=0.9,
+        isiViolationRateThreshold=0.5,
+        amplitudeCutoffThreshold=0.1,
+        responseAmplitudeThreshold=None,
+        targetUnitQuality='high',
+        ):
+        """
+
+        """
+
+        units = list()
+        for unit in self:
+
+            # Is the unit responsive?
+            if np.min(self._zetaTestPs[unit.index]) >= pResponsiveThreshold:
+                continue
+
+            # Does the unit pass quality metric thresholds?
+            if targetUnitQuality is not None:
+                qualityMetricFlags = np.array([
+                    self._spikeSortingQualityMetrics['presence'][unit.index] > presenceRatioThreshold,
+                    self._spikeSortingQualityMetrics['contamination'][unit.index] < isiViolationRateThreshold,
+                    self._spikeSortingQualityMetrics['completeness'][unit.index] < amplitudeCutoffThreshold
+                ])
+                passedQualityMetricsFilter = qualityMetricFlags.all()
+                if targetUnitQuality in ('l', 'low', 0) and passedQualityMetricsFilter:
+                    continue
+                if targetUnitQuality in ('h', 'high', 1) and passedQualityMetricsFilter == False:
+                    continue
+    
+            # Does the unit have a large enough response?
+            if responseAmplitudeThreshold is not None:
+                if self._visualResponseAmplitudes is None:
+                    raise Exception('Response amplitudes not available')
+                responseAmlitude = self._visualResponseAmplitudes[unit.index]
+                if np.isnan(responseAmlitude):
+                    continue
+                if responseAmlitude <= responseAmplitudeThreshold:
+                    continue
+
+            # All checks passed
+            units.append(unit)
+
+        return units
+
+    @property
+    def filters(self):
+        return self._filters
+
+    @property
+    def allSpikeClusters(self):
+        return self._allSpikeClusters
+    
+    @property
+    def allSpikeTimestamps(self):
+        return self._allSpikeTimestamps
+
+    @property
+    def uniqueSpikeClusters(self):
+        return self._uniqueSpikeClusters
     
     def __iter__(self):
+        self._index = 0
         return self
     
     def __next__(self):

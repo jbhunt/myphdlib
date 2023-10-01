@@ -17,61 +17,91 @@ from myphdlib.pipeline.saccades import (
     classifyPutativeSaccades,
     determineSaccadeOnset,
     sortProbeStimuli,
+    determineGratingMotionAssociatedWithEachSaccade
 )
 
 from myphdlib.pipeline.activity import (
     extractSingleUnitData,
     identifyUnitsWithEventRelatedActivity,
     measureSpikeSortingQuality,
+    estimateResponseLatency,
+    predictUnitClassification
 )
 
 from myphdlib.pipeline.cleanup import (
     cleanupOutputFile,
 )
 
-def process(
-        session,
-        redoManualInput=False
+from myphdlib.interface.factory import SessionFactory
+
+def processWholeDataset(
+    sessions,
+    experimentsForSaccadePrediction=('Mlati', 'Dreadds')
     ):
     """
     """
 
-    # Extract the labjack data and the timestamps for the barcodes
-    if session.hasGroup('labjack/matrix') == False:
-        createLabjackDataMatrix(session)
-    extractBarcodeSignals(session)
-    decodeBarcodeSignals(session)
-    estimateTimestampingFunction(session)
+    # Extract eye position and detect saccades
+    for session in sessions:
+        if session.hasDeeplabcutPoseEstimates:
+            extractEyePosition(session)
+            correctEyePosition(session)
+            interpolateEyePosition(session)
+            decomposeEyePosition(session)
+            reorientEyePosition(session)
+            filterEyePosition(session)
+            detectPutativeSaccades(session)
 
-    # Find the boundaries between stimulus protocols
-    if session.hasGroup('epochs') == False or redoManualInput:
-        session.identifyProtocolEpochs()
-    
-    # Execute the session-specific processing of visual events
-    if hasattr(session, 'processVisualEvents'):
-        session.processVisualEvents()
-
-    # Timestamp video acquisition
-    findDroppedFrames(session)
-    timestampCameraTrigger(session)
-
-    # Extract and store single-unit data
-    if session.isAutosorted:
-        extractSingleUnitData(session)
-        identifyUnitsWithEventRelatedActivity(session)
-        measureSpikeSortingQuality(session)
-
-    # Process eye position data and identify putative saccades
-    if session.hasPoseEstimates:
-        extractEyePosition(session)
-        correctEyePosition(session)
-        interpolateEyePosition(session)
-        decomposeEyePosition(session)
-        reorientEyePosition(session)
-        filterEyePosition(session)
-        detectPutativeSaccades(session)
+    # Classify putative saccades
+    factory = SessionFactory()
+    sessionsForSaccadePrediction = factory.produce(
+        experiment=experimentsForSaccadePrediction
+    )
+    classifyPutativeSaccades(
+        sessions,
+        sessionsForSaccadePrediction
+    )
 
     #
-    cleanupOutputFile(session)
+    for session in sessions:
+
+        # Extract the labjack data and the timestamps for the barcodes
+        if session.hasDataset('labjack/matrix') == False:
+            createLabjackDataMatrix(session)
+        extractBarcodeSignals(session)
+        decodeBarcodeSignals(session)
+        estimateTimestampingFunction(session)
+
+        # Continue processing saccades
+        if session.hasDeeplabcutPoseEstimates:
+            determineSaccadeOnset(session)
+            sortProbeStimuli(session)
+            determineGratingMotionAssociatedWithEachSaccade(
+                session
+            )
+
+        # Find the boundaries between stimulus protocols
+        if session.hasGroup('epochs') == False:
+            session.log('Protocol epochs need to be manually extracted', level='error')
+            continue
+        
+        # Execute the session-specific processing of visual events
+        if hasattr(session, 'processVisualEvents'):
+            session.processVisualEvents()
+
+        # Timestamp video acquisition
+        findDroppedFrames(session)
+        timestampCameraTrigger(session)
+
+        # Process single-unit data
+        if session.isAutosorted:
+            extractSingleUnitData(session)
+            measureSpikeSortingQuality(session)
+            identifyUnitsWithEventRelatedActivity(session)
+            estimateResponseLatency(session)
+            predictUnitClassification(session)
+
+        #
+        # cleanupOutputFile(session)
 
     return

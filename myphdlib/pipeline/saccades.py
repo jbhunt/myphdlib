@@ -345,7 +345,7 @@ def filterEyePosition(session, t=25):
 def detectPutativeSaccades(
     session,
     percentile=0.992,
-    minimumISI=0.1,
+    minimumISI=0.05,
     perisaccadicWindow=(-0.2, 0.2),
     alignment='before',
     enforceMinimumISI=True,
@@ -625,6 +625,8 @@ def _trainSaccadeClassifier(
     xTrain = np.array(xTrain)
     xTest = np.array(xTest)
     yTrain = np.array(yTrain)
+    nSamples = xTrain.shape[0]
+    print(f'INFO[X]: {nSamples} samples collected for model training')
 
     # Decompose
     if decompose:
@@ -655,23 +657,23 @@ def _trainSaccadeClassifier(
     #
     elif classifier == 'lda':
         lda = LinearDiscriminantAnalysis()
-        lda.fit(X, y.ravel())
+        lda.fit(X, yTrain.ravel())
         clf = lda
 
-    return pca, clf
+    return pca, clf, xTrain, yTrain
 
 def classifyPutativeSaccades(
     sessionsToLabel,
     sessionsToTrainOn,
     classifier='net',
     decompose=False,
-    features='position'
+    features='velocity'
     ):
     """
     """
 
     #
-    pca, clf = _trainSaccadeClassifier(
+    pca, clf, xTrain, yTrain = _trainSaccadeClassifier(
         sessionsToTrainOn,
         classifier,
         decompose,
@@ -863,9 +865,9 @@ def sortProbeStimuli(
     """
 
     #
-    if session.hasGroup('stimuli/dg/probe') == False:
+    if session.hasDataset('stimuli/dg/probe') == False:
         raise Exception(f'No probe stimulus timestamps detected')
-    driftingGratingMotion = session.load('stimuli/dg/probe/motion')
+    # driftingGratingMotion = session.load('stimuli/dg/probe/motion')
     probeOnsetTimestamps = session.load('stimuli/dg/probe/timestamps')
 
     #
@@ -873,6 +875,7 @@ def sortProbeStimuli(
     data = {
         'perisaccadic': np.full(nTrials, False).astype(bool),
         'latency': np.full(nTrials, np.nan).astype(float),
+        'direction': np.full(nTrials, 0).astype(int)
     }
 
     # Create an array of all saccade timestamps
@@ -887,12 +890,12 @@ def sortProbeStimuli(
     saccadeDirections = np.array(saccadeDirections)[timeSortedIndices]
 
     #
-    for trialIndex, (probeMotion, probeOnsetTimestamp) in enumerate(zip(driftingGratingMotion, probeOnsetTimestamps)):
+    for trialIndex, probeOnsetTimestamp in enumerate(probeOnsetTimestamps):
 
         # Compute the latency from the closest saccade to the target probe
         saccadeOnsetTimestampsRelative = saccadeOnsetTimestamps - probeOnsetTimestamp
         closestSaccadeIndex = np.argmin(np.abs(saccadeOnsetTimestampsRelative))
-        # closestSaccadeLatency = saccadeOnsetTimestampsRelative[closestSaccadeIndex] - probeOnsetTimestamp
+        closestSaccadeLatency = saccadeOnsetTimestampsRelative[closestSaccadeIndex] - probeOnsetTimestamp
         closestSaccadeDirection = saccadeDirections[closestSaccadeIndex]
         probeLatency = probeOnsetTimestamp - saccadeOnsetTimestamps[closestSaccadeIndex]
 
@@ -916,5 +919,95 @@ def sortProbeStimuli(
     nPerisaccadicTrials = data['perisaccadic'].sum()
     nTrialsTotal = data['perisaccadic'].size
     print(f'INFO[{session.date}, {session.animal}]: {nPerisaccadicTrials} out of {nTrialsTotal} trials classified as peri-saccadic')
+
+    return
+
+def determineGratingMotionAssociatedWithEachSaccade(
+    session,
+    interBlockIntervalRange=(1, 10),
+    interBlockIntervalStep=0.1
+    ):
+    """
+    """
+
+    #
+    gratingMotionByBlock = session.load('stimuli/dg/grating/motion')
+    if gratingMotionByBlock is None:
+        session.log(f'Session missing processed data for the drifting grating stimulus', level='warning')
+        return
+    nBlocks = gratingMotionByBlock.size
+
+    #
+    for eye in ('left', 'right'):
+        for saccadeDirection in ('nasal', 'temporal'):
+            saccadeOnsetTimestamps = session.load(f'saccades/predicted/{eye}/{saccadeDirection}/timestamps')
+            gratingMotionBySaccade = list()
+
+            if session.cohort in (1, 2, 3):
+
+                #
+                probeOnsetTimestamps = session.load('stimuli/dg/probe/timestamps')
+                gratingEpochs = list()
+                interProbeIntervals = np.diff(probeOnsetTimestamps)
+
+                #
+                thresholdDetermined = False
+                for interBlockIntervalThreshold in np.arange(interBlockIntervalRange[0], interBlockIntervalRange[1], interBlockIntervalStep):
+                    lastProbeIndices = np.concatenate([
+                        np.where(interProbeIntervals > interBlockIntervalThreshold)[0],
+                        np.array([probeOnsetTimestamps.size - 1])
+                    ])
+                    if lastProbeIndices.size == nBlocks:
+                        thresholdDetermined = True
+                        break
+
+                if thresholdDetermined == False:
+                    session.log(f'Failed to determine the inter-block interval threshold', level='warning')
+                    return
+
+                firstProbeIndices = np.concatenate([
+                    np.array([0]),
+                    lastProbeIndices[:-1] + 1
+                ])
+                gratingEpochs = np.hstack([
+                    probeOnsetTimestamps[firstProbeIndices].reshape(-1, 1),
+                    probeOnsetTimestamps[lastProbeIndices].reshape(-1, 1)
+                ])
+
+            #
+            elif session.cohort in (4,):
+
+                #
+                motionOnsetTimestamps = session.load('stimuli/dg/grating/timestamps')
+                motionOffsetTimestamps = session.load('stimuli/dg/iti/timestamps')
+                gratingEpochs = np.hstack([
+                    motionOnsetTimestamps.reshape(-1, 1),
+                    motionOffsetTimestamps.reshape(-1, 1)
+                ])
+
+            #
+            else:
+                session.log('Could not extract grating motion during {saccadeDirection} saccades in the {eye} for session in cohort {session.cohort}')
+                session.save(f'saccades/predicted/{eye}/{saccadeDirection}/motion', np.array([]).astype(int))
+                return
+
+            #
+            nBlocks = gratingEpochs.shape[0]
+            for saccadeOnsetTimestamp in saccadeOnsetTimestamps:
+                searchResult = False
+                for blockIndex in range(nBlocks):
+                    gratingOnsetTimestamp, gratingOffsetTimestamp = gratingEpochs[blockIndex]
+                    gratingMotion = gratingMotionByBlock[blockIndex]
+                    if gratingOnsetTimestamp <= saccadeOnsetTimestamp <= gratingOffsetTimestamp:
+                        searchResult = True
+                        break
+                if searchResult:
+                    gratingMotionBySaccade.append(gratingMotion)
+                else:
+                    gratingMotionBySaccade.append(0)
+
+            #
+            gratingMotionBySaccade = np.array(gratingMotionBySaccade)
+            session.save(f'saccades/predicted/{eye}/{saccadeDirection}/motion', gratingMotionBySaccade)
 
     return

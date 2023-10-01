@@ -299,3 +299,38 @@ class DotDict(dict):
         return DotDict(val) if type(val) is dict else val
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
+
+def computeAngleFromStandardPosition(point):
+    """
+    """
+
+    x, y = np.around(point, 2)
+
+    # Point and origin coincide
+    if x == 0 and y == 0:
+        theta = np.nan
+
+    # Point lies on quadrant boundaries
+    elif x == 0 or y == 0:
+        if x == 0 and y > 0:
+            theta = 90
+        if x == 0 and y < 0:
+            theta = 270
+        if y == 0 and x > 0:
+            theta = 0
+        if y == 0 and x < 0:
+            theta = 180
+    
+    # Point within a single quadrant
+    else:
+        theta = abs(np.rad2deg(np.arctan(y / x)))
+        if x > 0 and y > 0:
+            theta += 0
+        if x < 0 and y > 0:
+            theta += 90
+        if x < 0 and y < 0:
+            theta += 180
+        if x > 0 and y < 0:
+            theta += 270
+
+    return theta

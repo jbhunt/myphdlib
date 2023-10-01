@@ -6,73 +6,101 @@ import numpy as np
 import pathlib as pl
 from datetime import date
 from types import SimpleNamespace
+from scipy.stats import pearsonr
 from scipy.interpolate import interp1d as interp
-from myphdlib.general.labjack import loadLabjackData
+from myphdlib.general.labjack import loadLabjackData, filterPulsesFromPhotologicDevice
 from myphdlib.interface.ephys import Population
+from myphdlib.general.toolkit import psth2, smooth
 
-def updateSessionMetadata(session, key, value, intitialize=True):
+class StimulusProcessingMixinBase():
     """
-    Update the metadata dictionary at the head of the session folder
     """
 
-    #
-    filename = session.home.joinpath('metadata.txt')
-    if filename.exists() == False:
-        if intitialize:
-            with open(filename, 'w'):
-                pass
-        else:
-            raise Exception('Metadata file does not exist')
-        
-    #
-    with open(filename, 'r') as stream:
-        lines = stream.readlines()
-    metadata = dict()
-    for line in lines:
+    def _processMovingBarsProtocol(
+        self,
+        invertOrientations=True
+        ):
+        """
+        """
+
+        print(f'INFO[{self.animal}, {self.date}]: Processing the moving bars stimulus data')
 
         #
-        key_, value_ = line.rstrip('\n').split(': ')
-        if key_ == 'Cohort':
-            value_ = int(value_)
-        elif key_ == 'Date':
-            value_ = date.fromisoformat(value_)
-        elif key_ == 'Session' and value_ == 'None':
-            value_ = None
-        metadata[key_] = value_
+        M = self.load('labjack/matrix')
+        start, stop = self.load('epochs/mb')
+        signal = M[start: stop, self.labjackChannelMapping['stimulus']]
 
-    #
-    metadata[key] = value
+        # Check for data loss
+        if np.isnan(signal).sum() > 0:
+            print(f'WARNING[{self.animal}, {self.date}]: Data loss detected during the moving bars stimulus')
+            return
+        
+        #
+        filtered = filterPulsesFromPhotologicDevice(signal, minimumPulseWidthInSeconds=0.03)
 
-    #
-    filename.unlink()
-    with open(filename, 'w') as stream:
-        for key_, value_ in metadata.items():
-            line = f'{key_}: {value_}\n'
-            stream.write(line)
+        #
+        risingEdgeIndices = np.where(np.diff(filtered) > 0.5)[0]
+        barOnsetIndices = risingEdgeIndices[0::2]
+        barOffsetIndices = risingEdgeIndices[1::2]
+        barCenteredIndices = barOffsetIndices - barOnsetIndices
+        barOnsetTimestamps = self.computeTimestamps(
+            barOnsetIndices + start
+        )
+        barOffsetTimestamps = self.computeTimestamps(
+            barOffsetIndices + start
+        )
+        self.save('stimuli/mb/onset/timestamps', barOnsetTimestamps)
+        self.save('stimuli/mb/offset/timestamps', barOffsetTimestamps)
 
-    return
+        #
+        result = list(self.folders.stimuli.rglob('*movingBarsMetadata*'))
+        if len(result) != 1:
+            raise Exception('Could not locate moving bars stimulus metadata')
+        file = result.pop()
+        with open(file, 'r') as stream:
+            lines = stream.readlines()[5:]
+        orientation = list()
+        for line in lines:
+            event, orientation_, timestamp = line.rstrip('\n').split(', ')
+            if int(event) == 1:
+                if invertOrientations:
+                    orientation_ = round(np.mod(float(orientation_) + 180, 360), 2)
+                orientation.append(float(orientation_))
+        self.save('stimuli/mb/orientation', np.array(orientation))
 
-def mapSaccadeDirection(eye, hemisphere):
+        return
+
+    def _correctForCableDisconnectionDuringDriftingGrating(
+        self,
+        filtered,
+        maximumPulseWidthInSeconds=0.6,
+        ):
+        """
+        """
+
+        corrected = np.copy(filtered)
+        risingEdgeIndices = np.where(np.diff(filtered) > 0.5)[0]
+        fallingEdgeIndices = np.where(np.diff(filtered) * -1 > 0.5)[0] + 1
+        pulseEpochIndices = np.hstack([
+            risingEdgeIndices.reshape(-1, 1),
+            fallingEdgeIndices.reshape(-1, 1)
+        ])
+        pulseWidthsInSeconds = np.diff(pulseEpochIndices, axis=1) / self.labjackSamplingRate
+        for flag, epoch in zip(pulseWidthsInSeconds > maximumPulseWidthInSeconds, pulseEpochIndices):
+            if flag:
+                start, stop = epoch
+                corrected[start: stop] = 0
+
+        return corrected
+
+    def processVisualEvents(self):
+        return
+
+class SessionBase():
     """
-    Map eye movement direction to egocentric space (i.e., ipsi/contra)
     """
 
-    if eye == 'left' and hemisphere == 'left':
-        ipsi, contra = 'temporal', 'nasal'
-    elif eye == 'left' and hemisphere == 'right':
-        ipsi, contra = 'nasal', 'temporal'
-    elif eye == 'right' and hemisphere == 'left':
-        ipsi, contra = 'nasal', 'temporal'
-    elif eye == 'right' and hemisphere == 'right':
-        ipsi, contra = 'temporal', 'nasal'
-
-    return ipsi, contra
-
-class SessionBase(object):
-    """
-    """
-
-    def __init__(self, home, eye='left'):
+    def __init__(self, home, eye='left', loadEphysData=True, loadPropertyValues=False):
         """
         """
 
@@ -87,15 +115,31 @@ class SessionBase(object):
 
         #
         self._metadata = None
-        self._loadBasicMetadata()
-
-        #
         self._eye = eye
         self._folders = None
         self._saccadeOnsetTimestamps = None
-        self._units = None
         self._labjackSamplingRate = None
         self._population = None
+        self._probeTimestamps = None
+        self._probeLatencies = None
+        self._gratingMotionDuringProbes = None
+        self._saccadeIndicesChronological = None
+        self._saccadeTimestamps = None
+        self._saccadeDirections = None
+        self._saccadeWaveforms = None
+        self._gratingMotionDuringSaccades = None
+
+        #
+        self._loadBasicMetadata()
+        if loadPropertyValues:
+            self._loadPropertyValues()
+
+        #
+        if loadEphysData:
+            try:
+                assert self.population is not None
+            except AssertionError as error:
+                self.log(f'Failed to load ephys data', level='warning')
 
         return
     
@@ -123,83 +167,85 @@ class SessionBase(object):
             raise Exception('Could not locate metadata file')
         
         return
-    
-    def write(self, obj, key, initialize=True):
+
+    def _loadPropertyValues(self):
         """
         """
 
-        # TODO: Make this fail safe such that a R/W error doesn't corrupt the output files
+        labels = (
+            'probe timestamps',
+            'probe latencies',
+            'grating motion during probes',
+            'saccade indices',
+            'saccade timestamps',
+            'saccade directions',
+            'saccade waveforms',
+            'grating motion during saccades',
+        )
+
+        for i, p in enumerate((
+            self.probeTimestamps,
+            self.probeLatencies,
+            self.gratingMotionDuringProbes,
+            self.saccadeIndicesChronological,
+            self.saccadeTimestamps,
+            self.saccadeDirections,
+            self.saccadeWaveforms,
+            self.gratingMotionDuringSaccades,
+            )):
+            try:
+                assert p is not None
+            except AssertionError as error:
+                self.log(f'Could not load {labels[i]} data', level='warning')
+
+        return
+
+    def updateBasicMetadata(
+        self,
+        key,
+        value,
+        intitialize=False
+        ):
+        """
+        Update the metadata dictionary at the head of the session folder
+        """
 
         #
-        if self.outputFilePath.exists() == False:
-            if initialize:
-                with open(str(self.outputFilePath), 'wb') as stream:
+        filename = self.home.joinpath('metadata.txt')
+        if filename.exists() == False:
+            if intitialize:
+                with open(filename, 'w'):
                     pass
             else:
-                raise Exception('Could not locate output file')
-
-        #
-        with open(str(self.outputFilePath), 'rb') as stream:
-            try:
-                container = pickle.load(stream)
-            except EOFError:
-                container = dict()
-
-        # TODO: Wait to delete the output file until it passes a check
-        self.outputFilePath.unlink() 
-
-        #
-        container.update({key: obj})
-        with open(str(self.outputFilePath), 'wb') as stream:
-            pickle.dump(container, stream)
-
-        return
-    
-    def read(self, key):
-        """
-        """
-
-        if self.outputFilePath.exists() == False:
-            raise Exception('Could not locate output file')
-
-        with open(self.outputFilePath, 'rb') as stream:
-            try:
-                container = pickle.load(stream)
-            except EOFError as error:
-                raise Exception(f'Ouptut file is corrupted') from None
-
-        if key not in container.keys():
-            raise Exception(f'Invalid key: {key}')
-        else:
-            return container[key]
-    
-    def delete(self, key):
-        """
-        """
-
-        if key not in self.keys():
-            raise Exception(f'{key} is not a valid key')
-
-        if self.outputFilePath.exists() == False:
-            raise Exception('Could not locate output file')
-
-        with open(self.outputFilePath, 'rb') as stream:
-            try:
-                container = pickle.load(stream)
-            except EOFError as error:
-                raise Exception(f'Ouptut file is corrupted') from None
+                raise Exception('Metadata file does not exist')
             
         #
-        container_ = dict()
-        for key_, value_ in container.items():
-            if key_ == key:
-                continue
-            container_[key_] = value_
-        self.outputFilePath.unlink()
-        with open(str(self.outputFilePath), 'wb') as stream:
-            pickle.dump(container_, stream)
+        with open(filename, 'r') as stream:
+            lines = stream.readlines()
+        metadata = dict()
+        for line in lines:
 
-        return
+            #
+            key_, value_ = line.rstrip('\n').split(': ')
+            if key_ == 'Cohort':
+                value_ = int(value_)
+            elif key_ == 'Date':
+                value_ = date.fromisoformat(value_)
+            elif key_ == 'Session' and value_ == 'None':
+                value_ = None
+            else:
+                raise Exception(f'Undetermined data tyep for {key_} key')
+            metadata[key_] = value_
+
+        #
+        metadata[key] = value
+
+        #
+        filename.unlink()
+        with open(filename, 'w') as stream:
+            for key_, value_ in metadata.items():
+                line = f'{key_}: {value_}\n'
+                stream.write(line)
     
     def load(self, path):
         """
@@ -259,47 +305,28 @@ class SessionBase(object):
 
         return
     
-    def save2(self, parent, stem, dataset=None, attribute=None, overwrite=True):
+    def log(self, message, level='info'):
         """
         """
 
-        if self.hdf.exists() == False:
-            file = h5py.File(str(self.hdf), 'w')
-        else:
-            file = h5py.File(str(self.hdf), 'a')
-
-        #
-        if all([dataset is None, attribute is None]):
-            raise Exception('Data must be either a dataset or attribute not both')
-        
-        if parent.endswith('/'):
-            parent = path.rstrip('/')
-
-        #
-        if dataset is not None:
-            path = f'{parent}/{stem}'
-            if path in file.keys():
-                if overwrite:
-                    del file[path]
-                else:
-                    raise Exception(f'{path} dataset already exists')
-            ds = file.create_dataset(path, dataset.shape, dataset.dtype, data=dataset)
-
-        #
-        elif attribute is not None:
-            path = parent
-            ds = file[path]
-            if stem in ds.attrs.keys():
-                if overwrite:
-                    del ds.attrs[stem]
-                else:
-                    raise Exception(f'{stem} attribute already exists for the {path} dataset')
-            ds.attrs[stem] = attribute
-
-        file.close()
+        print(f'{level.upper()}[{self.date}, {self.animal}]: {message}')
 
         return
-    
+
+    def listAllPaths(self):
+        """
+        """
+
+        pathsInFile = list()
+        with h5py.File(self.hdf, 'r') as file:
+            file.visit(lambda name: pathsInFile.append(name))
+
+        for path in pathsInFile:
+            print(path)
+            
+
+        return pathsInFile
+
     @property
     def hdf(self):
         """
@@ -314,43 +341,52 @@ class SessionBase(object):
     def rightCameraMovie(self):  return
     
     @property
-    def leftEyePose(self): return
+    def leftEyePose(self):
+        """
+        """
+
+        file = None
+        result = list(self.folders.videos.glob('*leftCam*DLC*.csv'))
+        if len(result) == 1:
+            file = result.pop()
+
+        return file
     
     @property
-    def rightEyePose(self): return
+    def rightEyePose(self):
+        """
+        """
+
+        file = None
+        result = list(self.folders.videos.glob('*rightCam*DLC*.csv'))
+        if len(result) == 1:
+            file = result.pop()
+
+        return file
 
     @property
-    def leftCameraTimestamps(self): return
+    def leftCameraTimestamps(self):
+        """
+        """
 
-    @property
-    def rightCameraTimestamps(self): return
+        file = None
+        result = list(self.folders.videos.glob('*leftCam_timestamps.txt'))
+        if len(result) == 1:
+            file = result.pop()
 
-    @property
-    def outputFilePath(self):
-        return self.sessionFolderPath.joinpath('output.pkl')
+        return file
     
     @property
-    def videosFolderPath(self):
-        return self.sessionFolderPath.joinpath('videos')
-    
-    @property
-    def missingDataMask(self):
-        return self.read('missingDataMask')
-    
-    @property
-    def eyePositionUncorrected(self): return self.read('eyePositionUncorrected')
+    def rightCameraTimestamps(self):
+        """
+        """
 
-    @property
-    def eyePositionCorrected(self): return self.read('eyePositionCorrected')
+        file = None
+        result = list(self.folders.videos.glob('*rightCam_timestamps.txt'))
+        if len(result) == 1:
+            file = result.pop()
 
-    @property
-    def eyePositionDecomposed(self): return self.read('eyePositionDecomposed')
-
-    @property
-    def eyePositionReoriented(self): return self.read('eyePositionReoriented')
-
-    @property
-    def eyePositionFiltered(self): return self.read('eyePositionFiltered')
+        return file
 
     @property
     def animal(self):
@@ -393,69 +429,52 @@ class SessionBase(object):
         return
     
     @property
-    def eventSampleNumber(self):
-        return None
+    def eventSampleNumbers(self):
+        """
+        """
+
+        if self.experiment == 'Mlati':
+            file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.ProbeA-AP', 'TTL', 'sample_numbers.npy')
+        elif self.experiment == 'Dreadds':
+            file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.0', 'TTL_1', 'timestamps.npy')
+        if file.exists() == False: 
+            raise Exception('Could not locate ephys event timestamps file')
+        
+        #
+        eventSampleNumbers = np.load(file)
+
+        return eventSampleNumbers
     
     @property
     def referenceSampleNumber(self):
-        return
-    
-    @property
-    def labjackDataMatrix(self):
         """
         """
 
-        if 'labjackDataMatrix' in self.keys():
-            return self.read('labjackDataMatrix')
+        file = self.folders.ephys.joinpath('sync_messages.txt')
+        if file.exists() == False:
+            raise Exception('Could not locate the ephys sync messages file')
         
-        else:
-            return loadLabjackData(self.folders.labjack)
-    
-    @property
-    def saccadeWaveformsIpsi(self):
-        """
-        Get the ipsilateral saccade waveforms
-        """
+        #
+        with open(file, 'r') as stream:
+            referenceSampleNumber = None
+            for line in stream.readlines():
+                if self.experiment == 'Mlati':
+                    pattern = '@.*30000.*Hz:.*\d*'
+                elif self.experiment == 'Dreadds':
+                    pattern = 'start time:.*@'
+                result = re.findall(pattern, line)
+                if len(result) == 1:
+                    if self.experiment == 'Mlati':
+                        referenceSampleNumber = int(result.pop().rstrip('\n').split(': ')[-1])
+                    elif self.experiment == 'Dreadds':
+                        referenceSampleNumber = int(result.pop().rstrip('@').split('start time: ')[1])
+                    break
+        
+        #
+        if referenceSampleNumber is None:
+            raise Exception('Failed to parse sync messages file for first sample number')
 
-        ipsi, contra = mapSaccadeDirection(self.eye, self.hemisphere)
-        saccadeClassificationResults = self.read('saccadeClassificationResults')
-        waves = saccadeClassificationResults[self.eye][ipsi]['waveforms']
-
-        return waves
-    
-    @property
-    def saccadeWaveformsContra(self):
-        """
-        Get the ipsilateral saccade waveforms
-        """
-
-        ipsi, contra = mapSaccadeDirection(self.eye, self.hemisphere)
-        saccadeClassificationResults = self.read('saccadeClassificationResults')
-        waves = saccadeClassificationResults[self.eye][contra]['waveforms']
-
-        return waves
-    
-    @property
-    def saccadeIndicesIpsi(self):
-        """
-        """
-
-        ipsi, contra = mapSaccadeDirection(self.eye, self.hemisphere)
-        saccadeClassificationResults = self.read('saccadeClassificationResults')
-        indices = saccadeClassificationResults[self.eye][ipsi]['indices']
-
-        return indices
-    
-    @property
-    def saccadeIndicesContra(self):
-        """
-        """
-
-        ipsi, contra = mapSaccadeDirection(self.eye, self.hemisphere)
-        saccadeClassificationResults = self.read('saccadeClassificationResults')
-        indices = saccadeClassificationResults[self.eye][contra]['indices']
-
-        return indices
+        return referenceSampleNumber
     
     @property
     def folders(self):
@@ -540,13 +559,6 @@ class SessionBase(object):
         return output
     
     @property
-    def inputFilePath(self):
-        """
-        """
-
-        return self.home.joinpath('input.txt')
-    
-    @property
     def labjackSamplingRate(self):
         """
         """
@@ -570,9 +582,10 @@ class SessionBase(object):
                     break
 
         return fs
-            
-    def hasGroup(self, path):
+
+    def hasDataset(self, path):
         """
+        Looks for a group/dataset in the output file
         """
 
         if self.hdf.exists() == False:
@@ -581,10 +594,42 @@ class SessionBase(object):
 
         with h5py.File(self.hdf, 'r') as file:
             try:
-                group = file[path]
+                dataset = file[path]
                 return True
             except KeyError:
                 return False
+
+    def hasDeeplabcutPoseEstimates(self):
+        """
+        Looks for processed eye position data in the output file
+        """
+
+        if self.leftEyePose is not None or self.rightEyePose is not None:
+            return True
+        else:
+            return False
+
+    def hasTrainingDataForSaccadeClassification(
+        self,
+        dataForBothEyes=True
+        ):
+        """
+        Looks for saccade classification training data in the outptut file
+        """
+
+        flags = {
+            'left': False,
+            'right': False,
+        }
+        for eye in ('left', 'right'):
+            if self.hasGroup(f'saccades/training/{eye}/X'):
+                flags[eye] = True
+
+        #
+        if dataForBothEyes:
+            return all(list(flags.values()))
+        else:
+            return any(list(flags.values()))
 
     @property
     def fps(self):
@@ -627,48 +672,190 @@ class SessionBase(object):
                 results.append(False)
 
         return all(results)
-    
+
     @property
-    def hasPoseEstimates(self):
+    def probeTimestamps(self):
+        if self._probeTimestamps is None:
+            if self.hasDataset('stimuli/dg/probe/timestamps'):
+                self._probeTimestamps = self.load('stimuli/dg/probe/timestamps')
+        return self._probeTimestamps
+
+    @property
+    def probeLatencies(self):
+        if self._probeLatencies is None:
+            if self.hasDataset('stimuli/dg/probe/latency'):
+                self._probeLatencies = self.load('stimuli/dg/probe/latency')
+        return self._probeLatencies
+
+    @property
+    def gratingMotionDuringProbes(self):
+        if self._gratingMotionDuringProbes is None:
+            if self.hasDataset('stimuli/dg/probe/motion'):
+                self._gratingMotionDuringProbes = self.load('stimuli/dg/probe/motion')
+        return self._gratingMotionDuringProbes
+
+    @property
+    def saccadeIndicesChronological(self):
+        if self._saccadeIndicesChronological is None:
+            result = all([
+                self.hasDataset(f'saccades/predicted/{self.eye}/nasal/timestamps'),
+                self.hasDataset(f'saccades/predicted/{self.eye}/temporal/timestamps')
+            ])
+            if result:
+                nasalSaccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/nasal/timestamps')
+                temporalSaccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/temporal/timestamps')
+                allSaccadeTimestamps = np.concatenate([
+                    nasalSaccadeTimestamps,
+                    temporalSaccadeTimestamps
+                ])
+                self._saccadeIndicesChronological = np.argsort(allSaccadeTimestamps)
+
+        return self._saccadeIndicesChronological
+
+    @property
+    def saccadeTimestamps(self):
+        if self._saccadeTimestamps is None:
+            result = all([
+                self.hasDataset(f'saccades/predicted/{self.eye}/nasal/timestamps'),
+                self.hasDataset(f'saccades/predicted/{self.eye}/temporal/timestamps')
+            ])
+            if result:
+                nasalSaccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/nasal/timestamps')
+                temporalSaccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/temporal/timestamps')
+                allSaccadeTimestamps = np.concatenate([
+                    nasalSaccadeTimestamps,
+                    temporalSaccadeTimestamps
+                ])
+                self._saccadeIndicesChronological = np.argsort(allSaccadeTimestamps)
+                self._saccadeTimestamps = allSaccadeTimestamps[self.saccadeIndicesChronological]
+
+        return self._saccadeTimestamps
+
+    # TODO:
+    # [ ] Code this
+    @property
+    def saccadeLatencies(self):
+        return self._saccadeLatencies
+
+    @property
+    def saccadeDirections(self):
+        if self._saccadeDirections is None:
+            result = all([
+                self.hasDataset(f'saccades/predicted/{self.eye}/nasal/timestamps'),
+                self.hasDataset(f'saccades/predicted/{self.eye}/temporal/timestamps'),
+            ])
+            if result:
+                nasalSaccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/nasal/timestamps')
+                temporalSaccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/temporal/timestamps')
+                saccadeDirectionsUnordered = np.concatenate([
+                    np.full(nasalSaccadeTimestamps.size, 'n', dtype=str),
+                    np.full(temporalSaccadeTimestamps.size, 't', dtype=str)
+                ])
+                self._saccadeDirections = saccadeDirectionsUnordered[self.saccadeIndicesChronological]
+
+        return self._saccadeDirections
+
+    @property
+    def saccadeWaveforms(self):
+        if self._saccadeWaveforms is None:
+            result = all([
+                self.hasDataset(f'saccades/predicted/{self.eye}/nasal/waveforms'),
+                self.hasDataset(f'saccades/predicted/{self.eye}/temporal/waveforms'),
+            ])
+            if result:
+                nasalSaccadeWaveforms = self.load(f'saccades/predicted/{self.eye}/nasal/waveforms')
+                temporalSaccadeWaveforms = self.load(f'saccades/predicted/{self.eye}/temporal/waveforms')
+                saccadeWaveformsUnordered = np.concatenate([
+                    nasalSaccadeWaveforms,
+                    temporalSaccadeWaveforms,
+                ], axis=0)
+                self._saccadeWaveforms = saccadeWaveformsUnordered[self.saccadeIndicesChronological]
+
+        return self._saccadeWaveforms
+
+    @property
+    def gratingMotionDuringSaccades(self):
+        if self._gratingMotionDuringSaccades is None:
+            result = all([
+                self.hasDataset(f'saccades/predicted/{self.eye}/nasal/motion'),
+                self.hasDataset(f'saccades/predicted/{self.eye}/temporal/motion'),
+            ])
+            if result:
+                gratingMotionDuringNasalSaccades = self.load(f'saccades/predicted/{self.eye}/nasal/motion')
+                gratingMotionDuringTemporalSaccades = self.load(f'saccades/predicted/{self.eye}/temporal/motion')
+                gratingMotionDuringSaccadesUnordered = np.concatenate([
+                    gratingMotionDuringNasalSaccades,
+                    gratingMotionDuringTemporalSaccades,
+                ], axis=0)
+                self._gratingMotionDuringSaccades = gratingMotionDuringSaccadesUnordered[self.saccadeIndicesChronological]
+
+        return self._gratingMotionDuringSaccades
+
+    def filterProbes(
+        self,
+        trialType='ps',
+        perisaccadicWindow=(-0.05, 0.1),
+        probeDirections=(-1, 1),
+        windowBufferForExtrasaccadicTrials=0.5,
+        ):
         """
+        Filter visual probes based on latency to nearest saccade
         """
 
-        if self.leftEyePose is not None or self.rightEyePose is not None:
-            return True
+        #
+        if type(probeDirections) == int:
+            probeDirections = (probeDirections,)
+        probesByDirection = np.array([
+            True if motion in probeDirections else False
+                for motion in self.gratingMotionDuringProbes
+        ])
+
+        #
+        if trialType == 'ps':
+            trialMask = np.array([
+                self.probeLatencies <= perisaccadicWindow[1],
+                self.probeLatencies >= perisaccadicWindow[0],
+                probesByDirection  
+            ]).all(axis=0)
+
+        #
+        elif trialType == 'es':
+            trialMask = np.logical_and(
+                np.logical_or(
+                    self.probeLatencies < perisaccadicWindow[0] - windowBufferForExtrasaccadicTrials,
+                    self.probeLatencies > perisaccadicWindow[1] + windowBufferForExtrasaccadicTrials,
+                ),
+                probesByDirection
+            )
+
+        #
         else:
-            return False
-        
-    def keys(self, path):
-        """
-        Check the available keys for a group specified by the path
-        """
+            raise Exception(f'{trialType} is not a valid trial type')
 
-        if self.hdf.exists() == False:
-            raise Exception('No output file found')
-        
+        return trialMask
 
-        with h5py.File(self.hdf, 'r') as file:
-            try:
-                group = file[path]
-                return tuple(group.keys())
-            except KeyError:
-                raise Exception(f'{path} is not a valid group path') from None
-            
-    @property
-    def saccadeOnsetTimestamps(self):
+    def filterSaccades(
+        self,
+        ):
         """
         """
 
-        if self._saccadeOnsetTimestamps is None:
-            self._saccadeOnsetTimestamps = dict()
-            for eye in ('left', 'right'):
-                self._saccadeOnsetTimestamps[eye] = dict()
-                for direction in ('nasal', 'temporal'):
-                    path = f'saccades/predicted/{eye}/{direction}/timestamps'
-                    if self.hasGroup(path):
-                        timestamps = self.load(path)
-                    else:
-                        timestamps = np.array([])
-                    self.saccadeOnsetTimestamps[eye][direction] = timestamps
+        return
 
-        return self._saccadeOnsetTimestamps
+    def filterUnits(
+        self,
+        utypes=('vr', 'sr', 'nr'),
+        quality=('l', 'h'),
+        ):
+        """
+        Filter single units based on unit type and spike-sorting quality
+        """
+
+        unitFilter = list()
+        for unit in self.population:
+            if unit.utype in utypes and unit.quality in quality:
+                unitFilter.append(True)
+            else:
+                unitFilter.append(False)
+
+        return np.array(unitFilter)

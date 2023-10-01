@@ -7,7 +7,7 @@ import pathlib as pl
 from datetime import date
 from string import ascii_uppercase as letters
 from myphdlib.interface.muscimol import MuscimolSession
-from myphdlib.interface.suppression import SuppressionSession
+from myphdlib.interface.dreadds import DreaddsSession
 from myphdlib.interface.mlati import MlatiSession
 
 class SessionFactory(object):
@@ -94,10 +94,12 @@ class SessionFactory(object):
             animals = (animals,)
         if type(dates) == str:
             dates = (dates,)
+        if type(experiment) == str:
+            experiment = (experiment,)
 
         keys = list()
         for experiment_ in self.metadata.keys():
-            if experiment is not None and experiment_ != experiment:
+            if experiment is not None and experiment_ not in experiment:
                 continue
             for animal_ in self.metadata[experiment_].keys():
                 if animals is not None and animal_ not in animals:
@@ -132,7 +134,7 @@ class SessionFactory(object):
                         )
                         keys.append(entry)
 
-        #
+        # Create session objects
         sessions = list()
         for experiment_, animal_, date_ in keys:
             for volume in self.volumes:
@@ -140,8 +142,8 @@ class SessionFactory(object):
                 if folder.exists():
                     if experiment_ == 'Muscimol':
                         session = MuscimolSession(folder)
-                    elif experiment_ == 'Suppression':
-                        session = SuppressionSession(folder)
+                    elif experiment_ == 'Dreadds':
+                        session = DreaddsSession(folder)
                     elif experiment_ == 'Mlati':
                         session = MlatiSession(folder)
                     else:

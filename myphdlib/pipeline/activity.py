@@ -1,17 +1,19 @@
+import os
 import numpy as np
 from zetapy import getZeta
 from joblib import Parallel, delayed
-from myphdlib.general.toolkit import psth2, smooth
+from myphdlib.general.toolkit import psth2, smooth, computeAngleFromStandardPosition
 from simple_spykes.util.ecephys import run_quality_metrics
 from scipy.stats import ttest_rel, ttest_ind
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks as findPeaks
+
 samplingRateNeuropixels = 30000.0
 
-def extractSingleUnitData(session):
+def extractSpikeSortingData(session):
     """
     """
 
-    print(f'INFO[{session.animal}, {session.date}]: Extracting spike clusters and timestamps')
+    session.log(f'Extracting spike clusters and timestamps', level='info')
 
     spikeTimestamps = np.array([])
     result = list(session.folders.ephys.joinpath('sorting').glob('spike_times.npy'))
@@ -39,351 +41,294 @@ def extractSingleUnitData(session):
     session.save('spikes/clusters', spikeClusters)
 
     #
-    uids = np.unique(spikeClusters)
-    session.save('population/uids', uids)
-    nUnits = uids.size
-    print(f'INFO[{session.animal}, {session.date}]: {nUnits} single-units detected')
+    clusterNumbers = np.unique(spikeClusters)
+    session.save('population/clusters', clusterNumbers)
+    nUnits = clusterNumbers.size
+    session.log(f'{nUnits} units detected')
 
     return
 
-def _runZetaTest(
-    spikes,
-    event,
-    index,
-    offset,
-    window,
-    timing='peak'
+def _runZetaTestForBatch(
+    units,
+    eventTimestamps,
+    responseWindow,
+    latencyMetric='peak',
     ):
     """
-    Helper function that runs the ZETA test
-
-    keywords
-    --------
-    offset: float
-        This value is added to the spike timestamps to identify event related activity that
-        happens prior to the target event
-    timing: str
-        Latency definition. "onset" return the time from event to response onset. "peak" return
-        the time from the event to the response peak.
     """
 
-    try:
-        pvalue, (tZenith, tInverse, tPeak), dZeta = getZeta(
-            spikes + offset,
-            event,
+    #
+    tOffset = 0 - responseWindow[0]
+    responseWindowAdjusted = np.array(responseWindow) + tOffset
+
+    #
+    result = list()
+    for unit in units:
+        p, (tZenith, tInverse, tPeak), dZeta = getZeta(
+            unit.timestamps,
+            eventTimestamps - tOffset,
             intLatencyPeaks=3,
-            dblUseMaxDur=np.max(window),
-            tplRestrictRange=window,
+            dblUseMaxDur=np.max(responseWindowAdjusted),
+            tplRestrictRange=responseWindowAdjusted,
             boolReturnZETA=True
         )
-        if timing == 'zenith':
-            latency = tZenith
-        elif timing == 'peak':
-            latency = tPeak
-        elif timing == 'inverse':
-            latency = tInverse
+        if latencyMetric == 'zenith':
+            tLatency = tZenith - tOffset
+        elif latencyMetric == 'peak':
+            tLatency = tPeak - tOffset
         else:
-            latency = np.nan
-    except Exception as error:
-        pvalue, latency = np.nan, np.nan
+            tLatency = np.nan
+        result.append([unit.index, p, tLatency])
 
-    return pvalue, latency - offset, index
+    return np.array(result)
 
-def identifyUnitsWithEventRelatedActivity(
+def runZetaTests(
     session,
-    parallel=True,
-    overwrite=False,
-    offsetForMotorResponse=0.3,
-    windowForMotorResponse=(0, 0.6),
-    offsetForVisualResponse=0,
-    windowForVisualResponse=(0, 0.3),
-    stimulus='probe',
+    responseWindow=(-1, 1),
+    parallelize=True,
+    nRunsPerBatch=30,
+    latencyMetric='peak',
     ):
     """
     """
 
-    # Decide whether to run the ZETA test for visual responses
-    runZetaTest = not np.all([
-        session.hasGroup('population/metrics/zeta/visual/pvalues'),
-        session.hasGroup('population/metrics/zeta/visual/latency/peak'),
-    ]).item()
-    if overwrite:
-        runZetaTest = True
-
-    # Get the timestamps for the target stimulus
-    if stimulus == 'spots':
-        paths = (
-            'stimuli/sn/pre/timestamps',
-            'stimuli/sn/post/timestamps'
-        )
-        timestamps = list()
-        for path in paths:
-            if session.hasGroup(path):
-                for ts in session.load(path):
-                    timestamps.append(ts)
-        timestamps = np.array(timestamps)
-    elif stimulus == 'probe':
-        timestamps = session.load('stimuli/dg/timestamps')
-        if timestamps.size == 0:
-            print(f'WARNING[{session.date}, {session.animal}]:No timestamps found for the drifting grating stimulus')
-            runZetaTest = False
-    else:
-        raise Exception(f'{stimulus} is not a valid target stimulus')
-    
-    # Identify units with visual responses
-    if runZetaTest:
-
-        #
-        print(f'INFO[{session.animal}, {session.date}]: Running ZETA test for probe stimulus-related activity')
-
-        # Distributed/parallel computation
-        if parallel:
-            result = Parallel(n_jobs=-1)(delayed(_runZetaTest)(unit.timestamps, timestamps, unit.index, offsetForVisualResponse, windowForVisualResponse)
-                for unit in session.population
-            )
-            indices = np.array([el[2] for el in result])
-            order = np.argsort(indices)
-            pvalues = np.array([el[0] for el in result])[order]
-            latency = np.array([el[1] for el in result])[order]
-
-        #
-        session.save('population/metrics/zeta/visual/pvalues', pvalues)
-        session.save('population/metrics/zeta/visual/latency/peak', latency)
-
-    # Decide whether to run ZETA test for motor responses
-    runZetaTest = False
-    for eye in ('left', 'right'):
-        for direction in ('nasal', 'temporal'):
-            if session.hasGroup(f'population/metrics/zeta/motor/{eye}/{direction}/pvalues') == False:
-                runZetaTest = True
-    if overwrite:
-        runZetaTest = True
-
-    # Identify units with saccade-related activity
-    for eye in ('left', 'right'):
-        for direction in ('nasal', 'temporal'):
-
-            #
-            if runZetaTest:
-
-                # Load the saccade onset timestamps
-                timestamps = session.saccadeOnsetTimestamps[eye][direction]
-                if timestamps.size == 0:
-                    continue
-
-                #
-                print(f'INFO[{session.animal}, {session.date}]: Running ZETA test for saccade-related activity (eye={eye}, direction={direction})')
-
-                # Distributed/parallel computation
-                if parallel:
-                    result = Parallel(n_jobs=-1)(delayed(_runZetaTest)(unit.timestamps, timestamps, unit.index, offsetForMotorResponse, windowForMotorResponse)
-                        for unit in session.population
-                    )
-                    indices = np.array([el[2] for el in result])
-                    order = np.argsort(indices)
-                    pvalues = np.array([el[0] for el in result])[order]
-                    latency = np.array([el[1] for el in result])[order]
-
-                #
-                session.save(f'population/metrics/zeta/motor/{eye}/{direction}/pvalues', pvalues)
-                session.save(f'population/metrics/zeta/motor/{eye}/{direction}/latency/peak', latency)
-
-    return
-
-def estimateResponseLatency(
-    session,
-    baselineResponseWindow=(-0.4, -0.3),
-    targetResponseWindow=(-0.3, 0.3),
-    binsize=0.01,
-    logProbThresholdForPeakDetection=15,
-    logProbThresholdForOnsetDetection=5,
-    smoothingWindowSize=7,
-    ):
-    """
-    """
-
-    # Load the timestamps for the probe stimuli
-    probeOnsetTimestamps = session.load('stimuli/dg/timestamps')
-
-    #
-    P, L = list(), list()
-    for unit in session.population:
-        
-        # Compute baseline response
-        t, M = psth2(
-            probeOnsetTimestamps,
-            unit.timestamps,
-            window=baselineResponseWindow,
-            binsize=None
-        )
-        rBaseline = M.flatten() / np.diff(baselineResponseWindow).item()
-
-        # Compute T-statistic for each time bin
-        pVec = list()
-        binCenters, M = psth2(
-            probeOnsetTimestamps,
-            unit.timestamps,
-            window=targetResponseWindow,
-            binsize=binsize
-        )
-        for column in M.T:
-            rTarget = column / binsize
-            t, p = ttest_ind(rBaseline, rTarget)
-            pVec.append(p)
-        pVec = np.array(pVec)
-        P.append(pVec)
-
-        # Log the p-values
-        onsetLatency = np.nan
-        if smoothingWindowSize == 0 or smooth is None:
-            signal = -1 * np.log(pVec)
-        else:
-            signal = -1 * smooth(np.log(pVec), smoothingWindowSize)
-
-        # Find the peak of the p-values vector
-        peaks, props = find_peaks(
-            signal,
-            height=logProbThresholdForPeakDetection
-        )
-        if peaks.size == 0:
-            L.append(onsetLatency)
-            continue
-
-        # Look backwards for the first threshold crossing
-        binIndex = peaks[np.argmax(signal[peaks])]
-        while True:
-            p2 = signal[binIndex]
-            p1 = signal[binIndex - 1]
-            if p1 < logProbThresholdForOnsetDetection < p2:
-                onsetLatency = binCenters[binIndex]
-                break
-            binIndex -= 1
-            if binIndex < 0:
-                break
-        L.append(onsetLatency)
-
-    #
-    P = np.array(P)
-    L = np.array(L)
-    session.save(f'population/metrics/zeta/visual/latency/onset', L)
-    return P, L, binCenters
-
-def predictUnitClassification(
-    session,
-    threshold=0.001,
-    maximumPeakLatencyForMotorUnits=0.035,
-    ):
-    """
-    """
-
-    #
-    nTotalUnits = len(session.population)
-
-    # Visually responsive units
-    pvalues = session.load('population/metrics/zeta/visual/pvalues')
-    isVisualUnit = pvalues <= threshold
-    nVisualUnits = isVisualUnit.sum()
-    print(f'INFO[{session.animal}, {session.date}]: {nVisualUnits} out of {nTotalUnits} single-units classified as visual')
-    session.save('population/filters/visual', isVisualUnit)
-
-    # Unit with saccade-related activity
-    M, P, L = list(), list(), list()
-    for eye in ('left', 'right'):
-        for direction in ('nasal', 'temporal'):
-            pvalues = session.load(f'population/metrics/zeta/motor/{eye}/{direction}/pvalues')
-            latency = session.load(f'population/metrics/zeta/motor/{eye}/{direction}/latency/peak')
-            mask = pvalues <= threshold
-            M.append(mask)
-            P.append(pvalues)
-            L.append(latency)
-
-    # TODO: ignore saccade-related units if the response latency is too delayed (putatively visual units)
-    M, P, L = map(np.array, [M, P, L])
-    hasMotorResponse = M.any(axis=0)
-    maximumPeakLatency = np.max(L, axis=0)
-    isMotorUnit = np.logical(
-        hasMotorResponse,
-        maximumPeakLatency <= maximumPeakLatencyForMotorUnits,
+    eventTimestamps = (
+        session.probeTimestamps[session.filterProbes(trialType='es', probeDirections=(-1,))],
+        session.probeTimestamps[session.filterProbes(trialType='es', probeDirections=(+1,))],
+        session.saccadeTimestamps[session.saccadeDirections == 'n'],
+        session.saccadeTimestamps[session.saccadeDirections == 't']
     )
-    nMotorUnits = isMotorUnit.sum()
-    print(f'INFO[{session.animal}, {session.date}]: {nMotorUnits} out of {nTotalUnits} single-units classified as motor')
-    session.save('population/filters/motor', isMotorUnit)
+    eventNames = (
+        'probe',
+        'probe',
+        'saccade',
+        'saccade',
+    )
+    eventDirections = (
+        'left',
+        'right',
+        'nasal',
+        'temporal'
+    )
 
-    return
+    #
+    for ev, n, d in zip(eventTimestamps, eventNames, eventDirections):
 
-def _measureUnitStability(
-    session,
-    ):
-    """
-    """
+        #
+        session.log(f'Running ZETA test for activity related to {n}s, (direction={d}, window=[{responseWindow[0]}, {responseWindow[1]}] sec)', level='info')
 
-    stability = list()
-    for unit in session.population:
-        pass
+        # Create batches of units
+        batches = [
+            session.population[i:i + nRunsPerBatch]
+                for i in range(0, len(session.population), nRunsPerBatch)
+        ]
 
-    return
+        # Parallel processsing
+        if parallelize:
+            results = Parallel(n_jobs=-1)(delayed(_runZetaTestForBatch)(
+                batch,
+                ev,
+                responseWindow,
+                latencyMetric
+                )
+                    for batch in batches
+            )
 
-def _measureUnitContamination(
-    session,
-    ):
-    """
-    """
+        # Serial processing
+        else:
+            results = list()
+            for batch in batches:
+                result = _runZetaTestForBatch(
+                    batch,
+                    session.probeTimestamps[session.filterProbes(trialType='es', probeDirections=(-1, ))],
+                    responseWindow=responseWindow,
+                    latencyMetric=latencyMetric
+                )
+                results.append(result)
+
+        # Stack and sort the results
+        results = np.vstack([result for result in results])
+        unitIndices = results[:, 0]
+        results = results[np.argsort(unitIndices), :]
+
+        # Save p-values and latencies
+        session.save(f'population/zeta/{n}/{d}/p', results[:, 1])
+        session.save(f'population/zeta/{n}/{d}/latency', results[:, 2])
 
     return
 
 def measureSpikeSortingQuality(
     session,
-    presenceRatioThreshold=0.9,
-    isiViolationRateThreshold=1000,
-    backend='ecephys',
     **kwargs
     ):
     """
+    Notes
+    -----
+    Default threshold values are based on the quality metrics tutorial from the Allen Institute:
+    https://allensdk.readthedocs.io/en/latest/_static/examples/nb/ecephys_quality_metrics.html
     """
 
     print(f'INFO[{session.animal}, {session.date}]: Measuring spike-sorting quality')
 
     # ecephys spike sorting backend
-    if backend == 'ecephys':
-        params_ = {
-            "isi_threshold": 0.0015,
-            "min_isi": 0.000166,
-            "num_channels_to_compare": 7,
-            "max_spikes_for_unit": 500,
-            "max_spikes_for_nn": 10000,
-            "n_neighbors": 4,
-            'n_silhouette': 10000,
-            "drift_metrics_interval_s": 51,
-            "drift_metrics_min_spikes_per_interval": 10,
-            "include_pc_metrics": False
-        }
-        params_.update(kwargs)
-
-        #
-        sortingResultsFolder = session.folders.ephys.joinpath('sorting')
-        metrics = run_quality_metrics(
-            str(sortingResultsFolder),
-            30000.0,
-            params_,
-            save_to_file=str(sortingResultsFolder.joinpath('quality_metrics.json'))
-        )
-        presenceRatios = np.array(list(metrics['presence_ratio'].values())).astype(float)
-        isiViolationRates = np.array(list(metrics['isi_viol'].values())).astype(float)
-
-        #
-        session.save('population/metrics/stability', presenceRatios)
-        session.save('population/metrics/contamination', isiViolationRates)
-
-    # Custom implementation of quality metrics
-    elif backend == 'custom':
-        for unit in session.population:
-            pass
+    params_ = {
+        "isi_threshold": 0.0015,
+        "min_isi": 0.000166,
+        "num_channels_to_compare": 7,
+        "max_spikes_for_unit": 500,
+        "max_spikes_for_nn": 10000,
+        "n_neighbors": 4,
+        'n_silhouette': 10000,
+        "drift_metrics_interval_s": 51,
+        "drift_metrics_min_spikes_per_interval": 10,
+        "include_pc_metrics": False
+    }
+    params_.update(kwargs)
 
     #
-    quality = np.logical_and(
-        presenceRatios >= presenceRatioThreshold,
-        isiViolationRates >= isiViolationRateThreshold
+    sortingResultsFolder = session.folders.ephys.joinpath('sorting')
+    metrics = run_quality_metrics(
+        str(sortingResultsFolder),
+        30000.0,
+        params_,
+        save_to_file=str(sortingResultsFolder.joinpath('quality_metrics.json'))
     )
-    session.save('population/filters/quality', quality)
+    presenceRatios = np.array(list(metrics['presence_ratio'].values())).astype(float)
+    isiViolationRates = np.array(list(metrics['isi_viol'].values())).astype(float)
+    amplitudeCutoffs = np.array(list(metrics['amplitude_cutoff'].values())).astype(float)
+
+    #
+    session.save('population/metrics/pr', presenceRatios)
+    session.save('population/metrics/rpvr', isiViolationRates)
+    session.save('population/metrics/ac', amplitudeCutoffs)
+
+    return
+
+def measureVisualResponseAmplitude(
+    session,
+    visualResponseWindow=(-0.1, 0.3),
+    baselineResponseWindow=(-11, -10),
+    binsize=0.01
+    ):
+    """
+    """
+
+    nUnits = len(session.population)
+    responseAmplitudes = np.full([nUnits, 2], np.nan)
+    for probeDirection, columnIndex in zip(('left', 'right'), (0, 1)):
+
+        #
+        probeMotion = -1 if probeDirection == 'left' else +1
+
+        #
+        responseProbabilities = session.load(f'population/zeta/probe/{probeDirection}/p')
+        responseLatencies = session.load(f'population/zeta/probe/{probeDirection}/latency')
+
+        #
+        for unit in session.population:
+
+            #
+            p = responseProbabilities[unit.index]
+            l = responseLatencies[unit.index]
+
+            # Peak response is outside of the target response window
+            if l < visualResponseWindow[0] and l > visualResponseWindow[1]:
+                continue
+
+            #
+            t, M = psth2(
+                session.probeTimestamps[session.gratingMotionDuringProbes == probeMotion],
+                unit.timestamps,
+                window=visualResponseWindow,
+                binsize=binsize
+            )
+            fr = M.mean(0) / binsize
+            mu, sigma = unit.describe(
+                session.probeTimestamps[session.gratingMotionDuringProbes == probeMotion],
+                window=baselineResponseWindow,
+                binsize=binsize
+            )
+
+            # Standardization is undefined
+            if sigma == 0:
+                continue
+            else:
+                z = (fr - mu) / sigma
+
+            # Figure out which bin contains the peak response
+            binIndex = np.argmin(np.abs(t - l))
+            responseAmplitudes[unit.index, columnIndex] = z[binIndex]
+
+    # Select the largest amplitude response (across motion directions)
+    greatestVisualResponse = np.max(responseAmplitudes, axis=1)
+    session.save('population/metrics/gvr', greatestVisualResponse)
+
+    return
+
+def createPopulationMasks(
+    session,
+    minimumResponseProbability=0.05,
+    maximumResponseLatencyForSaccadeRelatedUnits=0.04,
+    minimumPresenceRatio=0.9,
+    maximumRefractoryPeriodViolationRate=0.5,
+    maximumAmplitudeCutoff=0.1,
+    ):
+    """
+    """
+
+    #
+    nUnits = len(session.population)
+    maskVisuallyResponsive = np.full(nUnits, False)
+    maskSaccadeRelated = np.full(nUnits, False)
+
+    for probeDirection in ('left', 'right'):
+        responseProbabilities = session.load(f'population/zeta/probe/{probeDirection}/p')
+        for unit in session.population:
+            p = responseProbabilities[unit.index]
+            if p < minimumResponseProbability:
+                maskVisuallyResponsive[unit.index] = True
+
+    for saccadeDirection in ('nasal', 'temporal'):
+        responseProbabilities = session.load(f'population/zeta/saccade/{saccadeDirection}/p')
+        responseLatencies = session.load(f'population/zeta/saccade/{saccadeDirection}/latency')
+        for unit in session.population:
+            p = responseProbabilities[unit.index]
+            l = responseLatencies[unit.index]
+            if p < minimumResponseProbability and l < maximumResponseLatencyForSaccadeRelatedUnits:
+                maskSaccadeRelated[unit.index] = True
+
+    #
+    session.save('population/masks/sr', maskSaccadeRelated)
+    session.save('population/masks/vr', maskVisuallyResponsive)
+
+    #
+    spikeSortingQualityFilters = np.vstack([
+        session.load('population/metrics/pr') >= minimumPresenceRatio,
+        session.load('population/metrics/rpvr') <= maximumRefractoryPeriodViolationRate,
+        session.load('population/metrics/ac') <= maximumAmplitudeCutoff
+    ])
+    maskHighQuality = spikeSortingQualityFilters.all(0)
+    session.save('population/masks/hq', maskHighQuality)
+
+    return
+
+def processEphysData(session):
+    """
+    """
+
+    modules = (
+        extractSpikeSortingData,
+        runZetaTests,
+        measureSpikeSortingQuality,
+        measureVisualResponseAmplitude,
+        createPopulationMasks,
+    )
+
+    for module in modules:
+        try:
+            module(session)
+        except Exception as error:
+            session.log(f'Data processing pipeline broke while processing ephys data', level='error')
+            break
 
     return

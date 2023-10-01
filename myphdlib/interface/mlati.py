@@ -2,11 +2,13 @@ import re
 import yaml
 import pickle
 import numpy as np
-from myphdlib.interface.session import SessionBase
+from decimal import Decimal
+from scipy.stats import pearsonr
+from myphdlib.interface.session import SessionBase, StimulusProcessingMixinBase
 from myphdlib.extensions.matplotlib import placeVerticalLines
 from myphdlib.general.labjack import loadLabjackData, filterPulsesFromPhotologicDevice
 
-class StimulusProcessingMixin():
+class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
     """
     """
 
@@ -83,7 +85,7 @@ class StimulusProcessingMixin():
         """
         """
 
-        if self.hasGroup('epochs') == False:
+        if self.hasDataset('epochs') == False:
             raise Exception('Protocol epochs have not been defined by the user')
 
         self._processSparseNoiseProtocol()
@@ -634,143 +636,148 @@ class StimulusProcessingMixin():
         self.save('stimuli/fs/coincident', coincident)
 
         return
-    
-    def _processMovingBarsProtocol(self, event='onset'):
-        """
-        """
 
-        print(f'INFO[{self.animal}, {self.date}]: Processing the moving bars stimulus data')
-
-        #
-        M = self.load('labjack/matrix')
-        start, stop = self.load('epochs/mb')
-        signal = M[start: stop, self.labjackChannelMapping['stimulus']]
-
-        # Check for data loss
-        if np.isnan(signal).sum() > 0:
-            print(f'WARNING[{self.animal}, {self.date}]: Data loss detected during the moving bars stimulus')
-            return
-        
-        #
-        filtered = filterPulsesFromPhotologicDevice(signal, minimumPulseWidthInSeconds=0.03)
-
-        #
-        risingEdgeIndices = np.where(np.diff(filtered) > 0.5)[0]
-        barOnsetIndices = risingEdgeIndices[0::2]
-        barOffsetIndices = risingEdgeIndices[1::2]
-        barCenteredIndices = barOffsetIndices - barOnsetIndices
-        if event == 'onset':
-            eventTimestamps = self.computeTimestamps(barOnsetIndices + start)
-        elif event == 'offset':
-            eventTimestamps = self.computeTimestamps(barOffsetIndices + start)
-        elif event == 'centered':
-            eventTimestamps = self.computeTimestamps(barCenteredIndices + start)
-        else:
-            raise Exception(f'{event} is not a valid event for the moving bar stimulus')
-        self.save('stimuli/mb/timestamps', eventTimestamps)
-
-        #
-        result = list(self.folders.stimuli.rglob('*movingBarsMetadata*'))
-        if len(result) != 1:
-            raise Exception('Could not locate moving bars stimulus metadata')
-        file = result.pop()
-        with open(file, 'r') as stream:
-            lines = stream.readlines()[5:]
-        orientation = list()
-        for line in lines:
-            event, orientation_, timestamp = line.rstrip('\n').split(', ')
-            if int(event) == 1:
-                orientation.append(int(orientation_))
-        self.save('stimuli/mb/orientation', np.array(orientation))
-
-        return
-    
-    def _correctForCableDisconnectionDuringDriftingGrating(
-        self,
-        filtered,
-        maximumPulseWidthInSeconds=0.6,
-        ):
-        """
-        """
-
-        corrected = np.copy(filtered)
-        risingEdgeIndices = np.where(np.diff(filtered) > 0.5)[0]
-        fallingEdgeIndices = np.where(np.diff(filtered) * -1 > 0.5)[0] + 1
-        pulseEpochIndices = np.hstack([
-            risingEdgeIndices.reshape(-1, 1),
-            fallingEdgeIndices.reshape(-1, 1)
-        ])
-        pulseWidthsInSeconds = np.diff(pulseEpochIndices, axis=1) / self.labjackSamplingRate
-        for flag, epoch in zip(pulseWidthsInSeconds > maximumPulseWidthInSeconds, pulseEpochIndices):
-            if flag:
-                start, stop = epoch
-                corrected[start: stop] = 0
-
-        return corrected
-    
-    def _interpolateMissingEventsFromDriftingGratingProtocol(
+    def _detectMissingEventsDuringDriftingGratingProtocol(
         self,
         trialParameters,
         risingEdgeIndices,
+        maximumLagInSeconds=0.1,
+        minimumCorrelation=0.95,
+        windowSizeInEvents=30,
         ):
         """
         """
 
-        #
-        eventTimestampsExpected = np.array(trialParameters['timestamps']).astype(float)
+        # Cohorts > 3 signaled other events
+        if self.cohort in (1, 2, 3):
+            eventMask = np.array([
+                True if int(ev) == 3 else False
+                    for ev in trialParameters['events']
+            ])
+        else:
+            eventMask = np.full(len(trialParameters['events']), True)
+
+        # Expected timestamps
+        eventTimestampsExpected = np.around(np.array(trialParameters['timestamps']).astype(float)[eventMask], 3)
         eventTimestampsExpected -= eventTimestampsExpected[0]
-        eventTimestampsObserved = risingEdgeIndices / self.labjackSamplingRate
-        eventTimestampsObserved -= eventTimestampsObserved[0]
         nEventsExpected = eventTimestampsExpected.size
-        eventTimestampsCorrected = np.full(nEventsExpected, np.nan)
-        eventTimestampsCorrected[:eventTimestampsObserved.size] = eventTimestampsObserved
-        risingEdgeIndicesCorrected = np.copy(risingEdgeIndices).astype(float)
+
+        # Observed timestamps
+        eventTimestampsObserved = np.around(risingEdgeIndices / self.labjackSamplingRate, 3)
+        eventTimestampsObserved -= eventTimestampsObserved[0]
+        nEventsObserved = eventTimestampsObserved.size
 
         #
+        mObs = (eventTimestampsObserved[-1] - eventTimestampsObserved[0]) / nEventsExpected
+        mExp = (eventTimestampsExpected[-1] - eventTimestampsExpected[0]) / nEventsExpected
+        eventTimestampsExpected += (np.arange(nEventsExpected) * (mObs - mExp))
+
+        # Split the events into subsets separated by trains of missing events
+        subsets = list()
+        tail = np.copy(eventTimestampsObserved)
+        eventIndex = 0
         while True:
 
             # Computed the inter-pulse intervals
-            notNanMask = np.invert(np.isnan(eventTimestampsCorrected))
-            dtObs = np.diff(eventTimestampsCorrected[notNanMask]) # Observed inter-pulse intervals
-            dtExp = np.diff(eventTimestampsExpected[notNanMask]) # Expected inter-pulse intervals
+            nEventsRemaining = tail.size
+            dtObs = np.diff(tail) # Observed inter-pulse intervals
+            dtExp = np.diff(
+                eventTimestampsExpected[eventIndex:eventIndex + nEventsRemaining]
+            ) # Expected inter-pulse intervals
+            if dtObs.size != dtExp.size:
+                import pdb; pdb.set_trace()
+            difference = np.abs(np.subtract(dtExp, dtObs))
 
-            # Look for interval mismatches
-            difference = dtObs - dtExp
-            indices = np.where(np.abs(difference) > 0.2)[0]
-            if indices.size == 0:
+            # Find the first threshold crossing
+            thresholdCrossingIndices = np.where(difference > maximumLagInSeconds)[0]
+            if thresholdCrossingIndices.size == 0:
+                subsets.append(tail)
                 break
+            
+            # Split the observed timestamps into 2 subsets
+            head, tail = np.split(tail, [thresholdCrossingIndices.min() + 1])
+            subsets.append(head)
 
-            #
-            index = indices.min() + 1
-            eventTimestampsCorrected = np.insert(eventTimestampsCorrected, index, np.nan)
-            eventTimestampsCorrected = eventTimestampsCorrected[:nEventsExpected]
-            risingEdgeIndicesCorrected = np.insert(risingEdgeIndicesCorrected, index, np.nan)
+            # Find the trial offset which minimizes the variance in the difference of differences
+            sigmas = list()
+            for offset in range(nEventsExpected - windowSizeInEvents):
+                a = np.diff(
+                    eventTimestampsExpected[offset: offset + windowSizeInEvents]
+                )
+                b = np.diff(
+                    tail[:windowSizeInEvents
+                ])
+                sigmas.append(np.std(a - b))
+            eventIndex = np.argmin(sigmas)
 
-        #
-        if risingEdgeIndicesCorrected.size == nEventsExpected:
-            result = True
-        else:
+        # Move around each subset to maximize correlation with the expected inter-event intervals
+        eventTimestampsCorrected = np.full(nEventsExpected, np.nan)
+        for subset in subsets:
+            nEventsInSubset = len(subset)
+            rvalues = list()
+            for eventIndex in range(nEventsExpected):
+                subsetMask = np.full(nEventsExpected, False)
+                subsetMask[eventIndex: eventIndex + nEventsInSubset] = True
+                if subsetMask.sum() != nEventsInSubset:
+                    break
+                r, p = pearsonr(
+                    np.diff(subset),
+                    np.diff(eventTimestampsExpected[subsetMask])
+                )
+                rvalues.append(r)
+            bestOffset = np.argmax(rvalues)
+            rMax = rvalues[bestOffset]
+            if rMax < minimumCorrelation:
+                raise Exception()
+            eventTimestampsCorrected[bestOffset: bestOffset + nEventsInSubset] = subset
+
+        # Correct the array of rising edge indices
+        risingEdgeIndicesCorrected = list()
+        eventIndex = 0
+        for flag in np.isnan(eventTimestampsCorrected):
+            if flag:
+                risingEdgeIndicesCorrected.append(np.nan)
+            else:
+                risingEdgeIndicesCorrected.append(risingEdgeIndices[eventIndex])
+                eventIndex += 1
+        risingEdgeIndicesCorrected = np.array(risingEdgeIndicesCorrected)
+
+        # Check the result of the algorithm
+        if risingEdgeIndicesCorrected.size != nEventsExpected:
             result = False
+        else:
+            result = True
+
+        # Print out the result
+        if result:
+            self.log('Missing event correction successful', level='info')
+            isNanMask = np.isnan(eventTimestampsCorrected)
+            anyEdgeIndices = np.where(np.diff(isNanMask) > 0.5)[0].reshape(-1, 2)
+            nMissingEventsInEachGap = np.diff(anyEdgeIndices, axis=1).flatten()
+            for iGap, nMissingEvents in enumerate(nMissingEventsInEachGap):
+                self.log(f'{nMissingEvents} missing events detected in gap {iGap + 1}', level='info')
+        else:
+            self.log('Missing event correction unsuccessful', level='error')
 
         return result, risingEdgeIndicesCorrected
     
     def _processDriftingGratingProtocol(
         self,
-        maximumPulseWidthForProbes=0.3,
         ):
         """
         """
 
-        print(f'INFO[{self.animal}, {self.date}]: Processing the drifting grating stimulus data')
+        self.log('Processing the drifting grating stimulus data', level='info')
 
         #
-        if self.hasGroup('stimuli/dg'):
+        if self.hasDataset('stimuli/dg'):
             self.remove('stimuli/dg')
 
         # Read the metadata file
         result = list(self.folders.stimuli.rglob('*driftingGratingMetadata*'))
         if len(result) != 1:
-            raise Exception('Could not locate drifting grating stimulus metadata')
+            self.log('Could not locate the drifting grating stimulus metadata', level='warning')
+            return
         file = result.pop()
         if self.cohort != 4:
             startLineIndex = 6
@@ -804,51 +811,115 @@ class StimulusProcessingMixin():
         # Check for data loss
         dataLossDetected = False
         if np.isnan(signal).sum() > 0:
-            print(f'WARNING[{self.animal}, {self.date}]: Data loss detected during the drifting grating stimulus')
+            self.log('Data loss detected during the drifting grating stimulus', level='warning')
             dataLossDetected = True
 
         # Parse protocol events
         filtered = filterPulsesFromPhotologicDevice(signal, minimumPulseWidthInSeconds=0.03)
         corrected = self._correctForCableDisconnectionDuringDriftingGrating(filtered)
         risingEdgeIndices = np.where(np.diff(corrected) > 0.5)[0]
-        # return filtered, corrected, risingEdgeIndices
 
         # Cohorts 1, 2, and 3 ...
         if self.cohort in (1, 2, 3):
+
+            #
             nEventsExpected = np.array([1 for ev in trialParameters['events']
                 if int(ev) == 3
             ]).sum()
             nEventsObserved = risingEdgeIndices.size
             if nEventsObserved != nEventsExpected: # TODO: Try to recover from missing events
-                result, risingEdgeIndices = self._interpolateMissingEventsFromDriftingGratingProtocol(
+                result, risingEdgeIndices = self._detectMissingEventsDuringDriftingGratingProtocol(
                     trialParameters,
                     risingEdgeIndices
                 )
                 if result == False:
-                    raise Exception()
+                    return
             probeOnsetTimestamps = self.computeTimestamps(risingEdgeIndices + start)
             self.save(f'stimuli/dg/probe/timestamps', probeOnsetTimestamps)
-            for eventName in ('grating', 'motion', 'iti'):
-                self.save(f'stimuli/dg/{eventName}/timestamps', np.array([]).astype(float))
+
+            #
+            # for eventName in ('grating', 'motion', 'iti'):
+            #     self.save(f'stimuli/dg/{eventName}/timestamps', np.array([]).astype(float))
+
+            # Estimate the timing of the other events based on the metadata file
+            eventCodes = np.array(trialParameters['events']).astype(int)
+            motionOnsetIndices = np.where(eventCodes == 2)[0]
+            firstProbeIndices = motionOnsetIndices + 1
+            motionOffsetIndices = np.where(eventCodes == 4)[0]
+            lastProbeIndices = motionOffsetIndices - 1
+            allProbeIndices = np.where(eventCodes == 3)[0]
+
+            #
+            motionOnsetTimestamps = list()
+            gratingOnsetTimestamps = list()
+            itiOnsetTimestamps = list()
+
+            #
+            for probeIndexApprox, probeIndexActual in zip(allProbeIndices, np.arange(allProbeIndices.size)):
+
+                # This is the actual timestamp for the probe
+                probeOnsetTimestamp = probeOnsetTimestamps[probeIndexActual]
+
+                #
+                if probeIndexApprox in firstProbeIndices:
+
+                    #
+                    t2 = trialParameters['timestamps'][probeIndexApprox]
+                    t1 = trialParameters['timestamps'][probeIndexApprox - 1] # Motion onset
+                    dt = round(float(Decimal(t2) - Decimal(t1)), 3)
+                    motionOnsetTimestamp = probeOnsetTimestamp - dt
+                    motionOnsetTimestamps.append(motionOnsetTimestamp)
+
+                    #
+                    t2 = trialParameters['timestamps'][probeIndexApprox]
+                    t1 = trialParameters['timestamps'][probeIndexApprox - 2] # Grating onset
+                    dt = round(float(Decimal(t2) - Decimal(t1)), 3)
+                    gratingOnsetTimestamp = probeOnsetTimestamp - dt
+                    gratingOnsetTimestamps.append(gratingOnsetTimestamp)
+
+                #
+                if probeIndexApprox in lastProbeIndices:
+                    t1 = trialParameters['timestamps'][probeIndexApprox]
+                    t2 = trialParameters['timestamps'][probeIndexApprox + 1]
+                    dt = round(float(Decimal(t2) - Decimal(t1)), 3)
+                    itiOnsetTimestamp = probeOnsetTimestamp + dt
+                    itiOnsetTimestamps.append(itiOnsetTimestamp)
+
+            #
+            self.save(f'stimuli/dg/grating/timestamps', np.array(gratingOnsetTimestamps))
+            self.save(f'stimuli/dg/motion/timestamps', np.array(motionOnsetTimestamps))
+            self.save(f'stimuli/dg/iti/timestamps', np.array(itiOnsetTimestamps))
 
         # Cohorts 4 and greater ...
         elif self.cohort == 4:
+
+            #
             nEventsObserved = risingEdgeIndices.size
             nEventsExpected = len(trialParameters['timestamps'])
             if nEventsObserved != nEventsExpected: # TODO: Try to recover from missing events
-                result, risingEdgeIndices = self._interpolateMissingEventsFromDriftingGratingProtocol(
+                result, risingEdgeIndices = self._detectMissingEventsDuringDriftingGratingProtocol(
                     trialParameters,
                     risingEdgeIndices
                 )
                 if result == False:
-                    return corrected
-                    raise Exception()
-            for eventCode, eventName in zip(trialParameters['events'], ['grating', 'motion', 'probe', 'iti']):
+                    return
+
+            #
+            for eventCode, eventName in zip(np.unique(trialParameters['events']), ['grating', 'motion', 'probe', 'iti']):
                 eventMask = np.array(trialParameters['events']).astype(int) == int(eventCode)
                 eventTimestamps = self.computeTimestamps(
                     np.array(risingEdgeIndices[eventMask]) + start
                 )
                 self.save(f'stimuli/dg/{eventName}/timestamps', eventTimestamps)
+            
+        # Determine the motion of the grating block-by-block
+        gratingMotionByBlock = list()
+        for eventIndex, eventCode in enumerate(trialParameters['events']):
+            if int(eventCode) == 1:
+                gratingMotion = int(trialParameters['motion'][eventIndex])
+                gratingMotionByBlock.append(gratingMotion)
+        gratingMotionByBlock = np.array(gratingMotionByBlock)
+        self.save(f'stimuli/dg/grating/motion', gratingMotionByBlock)
             
         # Save the trial parameters
         dtypes = (
@@ -867,7 +938,7 @@ class StimulusProcessingMixin():
 
         return
 
-class MlatiSession(SessionBase, StimulusProcessingMixin):
+class MlatiSession(SessionBase, StimulusProcessingMixinMlati):
     """
     """
 
@@ -884,44 +955,6 @@ class MlatiSession(SessionBase, StimulusProcessingMixin):
         super().__init__(sessionFolder)
 
         return
-    
-    @property
-    def referenceSampleNumber(self):
-        """
-        """
-
-        file = self.folders.ephys.joinpath('sync_messages.txt')
-        if file.exists() == False:
-            raise Exception('Could not locate the ephys sync messages file')
-        
-        #
-        with open(file, 'r') as stream:
-            ReferenceSampleNumber = None
-            for line in stream.readlines():
-                result = re.findall('@.*30000.*Hz:.*\d*', line)
-                if len(result) == 1:
-                    referenceSampleNumber = int(result.pop().rstrip('\n').split(': ')[-1])
-                    break
-        
-        #
-        if referenceSampleNumber is None:
-            raise Exception('Failed to parse sync messages file for first sample number')
-
-        return referenceSampleNumber
-    
-    @property
-    def eventSampleNumbers(self):
-        """
-        """
-
-        file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.ProbeA-AP', 'TTL', 'sample_numbers.npy')
-        if file.exists() == False: 
-            raise Exception('Could not locate ephys event timestamps file')
-        
-        #
-        eventSampleNumbers = np.load(file)
-
-        return eventSampleNumbers
     
     @property
     def leftCameraMovie(self):
@@ -946,52 +979,4 @@ class MlatiSession(SessionBase, StimulusProcessingMixin):
             movie = result.pop()
 
         return movie
-    
-    @property
-    def leftCameraTimestamps(self):
-        """
-        """
-
-        file = None
-        result = list(self.folders.videos.glob('*leftCam_timestamps.txt'))
-        if len(result) == 1:
-            file = result.pop()
-
-        return file
-    
-    @property
-    def rightCameraTimestamps(self):
-        """
-        """
-
-        file = None
-        result = list(self.folders.videos.glob('*rightCam_timestamps.txt'))
-        if len(result) == 1:
-            file = result.pop()
-
-        return file
-    
-    @property
-    def leftEyePose(self):
-        """
-        """
-
-        file = None
-        result = list(self.folders.videos.glob('*leftCam*DLC*.csv'))
-        if len(result) == 1:
-            file = result.pop()
-
-        return file
-    
-    @property
-    def rightEyePose(self):
-        """
-        """
-
-        file = None
-        result = list(self.folders.videos.glob('*rightCam*DLC*.csv'))
-        if len(result) == 1:
-            file = result.pop()
-
-        return file
     
