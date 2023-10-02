@@ -46,6 +46,26 @@ def extractSpikeSortingData(session):
     nUnits = clusterNumbers.size
     session.log(f'{nUnits} units detected')
 
+    # Extract the label assigned to each unit by Kilosort
+    clusterLabels = list()
+    clusterNumbers = list()
+    result = list(session.folders.ephys.joinpath('sorting').glob('cluster_KSLabel.tsv'))
+    if len(result) != 1:
+        session.log(f'Could not locate Kilosort labels', level='warning')
+        clusterLabels = np.full(nUnits, np.nan)
+    else:
+        tsv = result.pop()
+        with open(tsv, 'r') as stream:
+            lines = stream.readlines()[1:]
+        for line in lines:
+            cluster, label = line.rstrip('\n').split(',')
+            clusterNumbers.append(int(cluster))
+            clusterLabels.append(0 if label == 'mua' else 1)
+        clusterLabels = np.array(clusterLabels)[np.argsort(clusterNumbers)]
+    
+    #
+    session.save('population/metrics/ksl', clusterLabels)
+
     return
 
 def _runZetaTestForBatch(
@@ -86,7 +106,7 @@ def runZetaTests(
     session,
     responseWindow=(-1, 1),
     parallelize=True,
-    nRunsPerBatch=30,
+    nUnitsPerBatch=3,
     latencyMetric='peak',
     ):
     """
@@ -119,8 +139,8 @@ def runZetaTests(
 
         # Create batches of units
         batches = [
-            session.population[i:i + nRunsPerBatch]
-                for i in range(0, len(session.population), nRunsPerBatch)
+            session.population[i:i + nUnitsPerBatch]
+                for i in range(0, len(session.population), nUnitsPerBatch)
         ]
 
         # Parallel processsing
@@ -325,10 +345,6 @@ def processEphysData(session):
     )
 
     for module in modules:
-        try:
-            module(session)
-        except Exception as error:
-            session.log(f'Data processing pipeline broke while processing ephys data', level='error')
-            break
+        module(session)
 
     return

@@ -414,3 +414,50 @@ def timestampCameraTrigger(session, factor=1.3):
     session.save('labjack/cameras/timestamps', timestamps)
 
     return
+
+def computeRelativeEventTiming(
+    session,
+    ):
+    """
+    Compute the timing of probes relative to saccades and vice-versa
+    """
+
+    #
+    if session.hasDataset('stimuli/dg/probe') == False:
+        raise Exception(f'No probe stimulus timestamps detected')
+
+    #
+    nProbes = session.probeTimestamps.size
+    nSaccades = session.saccadeTimestamps.size
+    data = {
+        'tts': np.full(nProbes, np.nan).astype(np.float), # Time to saccade
+        'dos': np.full(nProbes, np.nan).astype(np.int), # Direction of saccade
+        'ttp': np.full(nSaccades, np.nan).astype(np.float), # Time to probe
+        'dop': np.full(nSaccades, np.nan).astype(np.int), # direction of probe
+    }
+
+    #
+    for trialIndex, probeTimestamp in enumerate(session.probeTimestamps):
+        saccadeTimestampsRelative = session.saccadeTimestamps - probeTimestamp
+        closestSaccadeIndex = np.argmin(np.abs(saccadeTimestampsRelative))
+        closestSaccadeDirection = session.saccadeDirections[closestSaccadeIndex]
+        probeLatency = probeTimestamp - session.saccadeTimestamps[closestSaccadeIndex]
+        data['dos'][trialIndex] = -1 if closestSaccadeDirection == 't' else +1
+        data['tts'][trialIndex] = probeLatency
+
+    #
+    for trialIndex, saccadeTimestamp in enumerate(session.saccadeTimestamps):
+        probeTimestampsRelative = session.probeTimestamps - saccadeTimestamp
+        closestProbeIndex = np.argmin(np.abs(probeTimestampsRelative))
+        closestProbeDirection = session.gratingMotionDuringProbes[closestProbeIndex]
+        saccadeLatency = saccadeTimestamp - session.probeTimestamps[closestProbeIndex]
+        data['ttp'][trialIndex] = saccadeLatency
+        data['dop'][trialIndex] = closestProbeDirection
+
+    #
+    for k in ('dos', 'tts'):
+        session.save(f'stimuli/dg/probe/{k}', data[k])
+    for k in ('dop', 'ttp'):
+        session.save(f'saccades/predicted/{session.eye}/unsigned/{k}', data[k])
+
+    return

@@ -1,6 +1,8 @@
 import h5py
 
 pathsToKeep = {
+
+    # Labjack barcode data
     "barcodes",
     "barcodes/labjack",
     "barcodes/labjack/indices",
@@ -10,6 +12,8 @@ pathsToKeep = {
     "barcodes/neuropixels/indices",
     "barcodes/neuropixels/trains",
     "barcodes/neuropixels/values",
+
+    # Manually collected stimulus epochs
     "epochs",
     "epochs/bn",
     "epochs/bn/hr",
@@ -24,26 +28,42 @@ pathsToKeep = {
     "epochs/sn",
     "epochs/sn/post",
     "epochs/sn/pre",
+
+    # Dropped frames mask
     "frames",
     "frames/left",
     "frames/left/dropped",
     "frames/right",
     "frames/right/dropped",
+
+    # Labjack data
     "labjack",
     "labjack/cameras",
     "labjack/cameras/missing",
     "labjack/cameras/timestamps",
     "labjack/matrix",
+
+    # Data that maps onto single-/multi-unit data
     "population",
+
+    #
+    "population/clusters",
+
+    # Masks
     "population/masks",
     "population/masks/hq",
     "population/masks/sr",
     "population/masks/vr",
+
+    # Metrics
     "population/metrics",
     "population/metrics/ac",
     "population/metrics/gvr",
     "population/metrics/pr",
     "population/metrics/rpvr",
+    "population/metrics/ksl"
+
+    # ZETA test data
     "population/zeta",
     "population/zeta/probe",
     "population/zeta/probe/left",
@@ -59,6 +79,8 @@ pathsToKeep = {
     "population/zeta/saccade/temporal",
     "population/zeta/saccade/temporal/latency",
     "population/zeta/saccade/temporal/p",
+
+    # Eye position data
     "pose",
     "pose/corrected",
     "pose/decomposed",
@@ -69,7 +91,11 @@ pathsToKeep = {
     "pose/missing/right",
     "pose/reoriented",
     "pose/uncorrected",
+
+    # Saccade data
     "saccades",
+
+    # Predicted saccade data
     "saccades/predicted",
     "saccades/predicted/left",
     "saccades/predicted/left/nasal",
@@ -101,6 +127,8 @@ pathsToKeep = {
     "saccades/predicted/right/temporal/motion",
     "saccades/predicted/right/temporal/timestamps",
     "saccades/predicted/right/temporal/waveforms",
+
+    # Putative saccade data
     "saccades/putative",
     "saccades/putative/left",
     "saccades/putative/left/amplitudes",
@@ -111,16 +139,24 @@ pathsToKeep = {
     "saccades/putative/right/indices",
     "saccades/putative/right/waveforms",
     "saccades/training",
+
+    # Saccade classification training data
     "saccades/training/left",
     "saccades/training/left/X",
     "saccades/training/left/y",
     "saccades/training/right",
     "saccades/training/right/X",
     "saccades/training/right/y",
+
+    # Extracellular spikes and clusters
     "spikes",
     "spikes/clusters",
     "spikes/timestamps",
+
+    # Stimulus data
     "stimuli",
+
+    # Binary noise stimuli
     "stimuli/bn",
     "stimuli/bn/hr",
     "stimuli/bn/hr/hf",
@@ -148,6 +184,8 @@ pathsToKeep = {
     "stimuli/bn/lr/lf/length",
     "stimuli/bn/lr/lf/missing",
     "stimuli/bn/lr/lf/timestamps",
+
+    # Drifting grating stimulus
     "stimuli/dg",
     "stimuli/dg/grating",
     "stimuli/dg/grating/motion",
@@ -164,35 +202,48 @@ pathsToKeep = {
     "stimuli/dg/probe/perisaccadic",
     "stimuli/dg/probe/phase",
     "stimuli/dg/probe/timestamps",
+
+    # Fictive saccades stimulus
     "stimuli/fs",
     "stimuli/fs/coincident",
     "stimuli/fs/probes",
     "stimuli/fs/probes/timestamps",
     "stimuli/fs/saccades",
     "stimuli/fs/saccades/timestamps",
+
+    # Moving bars stimulus
     "stimuli/mb",
     "stimuli/mb/offset",
     "stimuli/mb/offset/timestamps",
     "stimuli/mb/onset",
     "stimuli/mb/onset/timestamps",
     "stimuli/mb/orientation",
-    "stimuli/mb/timestamps",
+
+    # Sparse  noise stimulus
     "stimuli/sn",
+    "stimuli/sn/pre",
+    "stimuli/sn/pre/coords",
+    "stimuli/sn/pre/fields",
+    "stimuli/sn/pre/missing",
+    "stimuli/sn/pre/signs",
+    "stimuli/sn/pre/timestamps",
     "stimuli/sn/post",
     "stimuli/sn/post/coords",
     "stimuli/sn/post/fields",
     "stimuli/sn/post/missing",
     "stimuli/sn/post/signs",
     "stimuli/sn/post/timestamps",
+
+    # Timestamping function parameters
     "tfp",
     "tfp/b",
     "tfp/fp",
     "tfp/m",
     "tfp/xp",
 }
-def cleanupOutputFile(session):
+def removeObsoleteDatasets(session):
     """
-    Remove old datasets/groups
+    Remove old and unused datasets/groups
     """
 
     pathsToRemove = list()

@@ -784,6 +784,7 @@ def classifyPutativeSaccades(
 
     return
 
+# TODO: Make this better; need a way of determining onset on a trial by trial basis
 def determineSaccadeOnset(session, threshold=0.4, baseline=(0, 0.1), maximumCorrectionInFrames=10):
     """
     """
@@ -851,74 +852,6 @@ def determineSaccadeOnset(session, threshold=0.4, baseline=(0, 0.1), maximumCorr
     #
     error = np.array(error)
     print(f'INFO[{session.animal}, {session.date}]: Mean saccade onset correction = {error.mean():.3f} seconds')
-
-    return
-
-def sortProbeStimuli(
-    session,
-    eye='right',
-    window=(-0.05, 0.1),
-    ):
-    """
-    Identify trials in which the probe stimuli appeared around the time of a saccade and the
-    latency from the saccade to the probe
-    """
-
-    #
-    if session.hasDataset('stimuli/dg/probe') == False:
-        raise Exception(f'No probe stimulus timestamps detected')
-    # driftingGratingMotion = session.load('stimuli/dg/probe/motion')
-    probeOnsetTimestamps = session.load('stimuli/dg/probe/timestamps')
-
-    #
-    nTrials = probeOnsetTimestamps.size
-    data = {
-        'perisaccadic': np.full(nTrials, False).astype(bool),
-        'latency': np.full(nTrials, np.nan).astype(float),
-        'direction': np.full(nTrials, 0).astype(int)
-    }
-
-    # Create an array of all saccade timestamps
-    saccadeOnsetTimestamps = list()
-    saccadeDirections = list()
-    for direction in ('nasal', 'temporal'):
-        for saccadeOnsetTimestamp in session.load(f'saccades/predicted/{eye}/{direction}/timestamps'):
-            saccadeOnsetTimestamps.append(saccadeOnsetTimestamp)
-            saccadeDirections.append(-1 if direction == 'nasal' else 1)
-    timeSortedIndices = np.argsort(saccadeOnsetTimestamps)
-    saccadeOnsetTimestamps = np.array(saccadeOnsetTimestamps)[timeSortedIndices]
-    saccadeDirections = np.array(saccadeDirections)[timeSortedIndices]
-
-    #
-    for trialIndex, probeOnsetTimestamp in enumerate(probeOnsetTimestamps):
-
-        # Compute the latency from the closest saccade to the target probe
-        saccadeOnsetTimestampsRelative = saccadeOnsetTimestamps - probeOnsetTimestamp
-        closestSaccadeIndex = np.argmin(np.abs(saccadeOnsetTimestampsRelative))
-        closestSaccadeLatency = saccadeOnsetTimestampsRelative[closestSaccadeIndex] - probeOnsetTimestamp
-        closestSaccadeDirection = saccadeDirections[closestSaccadeIndex]
-        probeLatency = probeOnsetTimestamp - saccadeOnsetTimestamps[closestSaccadeIndex]
-
-        #
-        data['direction'][trialIndex] = closestSaccadeDirection
-
-        # Classify the trial as perisaccadic or not
-        perisaccadic = False
-        if window[0] <= probeLatency <= window[1]:
-            perisaccadic = True
-
-        # Save the results
-        data['perisaccadic'][trialIndex] = perisaccadic
-        data['latency'][trialIndex] = probeLatency
-
-    #
-    for key, dtype in zip(data.keys(), [bool, float, int]):
-        session.save(f'stimuli/dg/probe/{key}', data[key])
-
-    #
-    nPerisaccadicTrials = data['perisaccadic'].sum()
-    nTrialsTotal = data['perisaccadic'].size
-    print(f'INFO[{session.date}, {session.animal}]: {nPerisaccadicTrials} out of {nTrialsTotal} trials classified as peri-saccadic')
 
     return
 

@@ -12,6 +12,9 @@ from myphdlib.general.labjack import loadLabjackData, filterPulsesFromPhotologic
 from myphdlib.interface.ephys import Population
 from myphdlib.general.toolkit import psth2, smooth
 
+# TODO:
+# [ ]: Create properties for population mapped data
+
 class StimulusProcessingMixinBase():
     """
     """
@@ -533,7 +536,6 @@ class SessionBase():
             raise Exception('Timestamping funciton has not been estimated')
         
         #
-        # params = self.read('timestampingFunctionParameters')
         params = dict()
         for key in ('m', 'xp', 'fp', 'b'):
             value = self.load(f'tfp/{key}')
@@ -683,8 +685,8 @@ class SessionBase():
     @property
     def probeLatencies(self):
         if self._probeLatencies is None:
-            if self.hasDataset('stimuli/dg/probe/latency'):
-                self._probeLatencies = self.load('stimuli/dg/probe/latency')
+            if self.hasDataset('stimuli/dg/probe/tts'):
+                self._probeLatencies = self.load('stimuli/dg/probe/tts')
         return self._probeLatencies
 
     @property
@@ -731,10 +733,11 @@ class SessionBase():
 
         return self._saccadeTimestamps
 
-    # TODO:
-    # [ ] Code this
     @property
     def saccadeLatencies(self):
+        if self._saccadeLatencies is None:
+            if self.hasDataset(f'saccades/predicted/{self.eye}/unsigned/ttp'):
+                self._saccadeLatencies = self.load(f'saccades/predicted/{self.eye}/unsigned/ttp')
         return self._saccadeLatencies
 
     @property
@@ -836,26 +839,54 @@ class SessionBase():
 
     def filterSaccades(
         self,
+        saccadeDirections=('n', 't'),
+        peristimulusWindow=(-0.1, 0.05),
+        peristimulusWindowBuffer=0,
         ):
         """
+        Exlude saccades coincident with a probe as defined by the peristimulus window
         """
 
-        return
+        if type(saccadeDirections) == int:
+            saccadeDirections = (saccadeDirections,)
+        saccadesByDirection = np.array([
+            True if direction in saccadeDirections else False
+                for direction in self.saccadeDirections
+        ])
+
+        #
+        if peristimulusWindow is None:
+            trialMask = saccadesByDirection
+        else:
+            trialMask = np.array([
+                self.saccadeLatencies < peristimulusWindow[0] - peristimulusWindowBuffer[0],
+                self.saccadeLatencies > peristimulusWindow[1] + peristimulusWindowBuffer[1],
+                saccadesByDirection
+            ]).all(axis=0)
+
+        return trialMask
 
     def filterUnits(
         self,
-        utypes=('vr', 'sr', 'nr'),
-        quality=('l', 'h'),
+        utypes=('vr', 'sr', 'nr', 'ud'),
+        quality=('lq', 'hq'),
         ):
         """
         Filter single units based on unit type and spike-sorting quality
         """
 
-        unitFilter = list()
+        # Cast values to tuple if needed
+        if type(utypes) == str:
+            utypes = (utypes,)
+        if type(quality) == str:
+            quality = (quality,)
+
+        # Filter
+        populationMask = list()
         for unit in self.population:
             if unit.utype in utypes and unit.quality in quality:
-                unitFilter.append(True)
+                populationMask.append(True)
             else:
-                unitFilter.append(False)
+                populationMask.append(False)
 
-        return np.array(unitFilter)
+        return np.array(populationMask)
