@@ -70,7 +70,7 @@ These datasets map directly on to each unit in the extracellular recording.
 #### Metrics ####
 For spike-sorting quality metrics, the following thresholds were used to delimit low- and high-quality units: Presence ration > 0.9, Refractory period violation rate < 0.5, and Amplitude cutoff < 0.1.
 - `population/metrics/ac` - (1 x N units, float) Amplitude cutoff
-- `population/metrics/gvr` - (1 x N units, float) Greatest (peak) visual response (z-scored)
+- `population/metrics/gvr` - (1 x N units, float) Greatest (peak) visual response (in standard deviations)
 - `population/metrics/pr` - (1 x N units, float) Presence ratio
 - `population/metrics/rpvr` - (1 x N units, float) Refractory period violation rate
 
