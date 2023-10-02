@@ -7,6 +7,8 @@ The processed data for each session is stored in an H5 file named `output.hdf`. 
 
 ### Stimulus ###
 These datasets contain data associated with the visual stimuli presented during the recordings.
+
+#### Binary noise ####
 - `stimuli/bn/hr/hf/fields`
 - `stimuli/bn/hr/hf/grids`
 - `stimuli/bn/hr/hf/length`
@@ -27,36 +29,43 @@ These datasets contain data associated with the visual stimuli presented during 
 - `stimuli/bn/lr/lf/length`
 - `stimuli/bn/lr/lf/missing`
 - `stimuli/bn/lr/lf/timestamps`
-- `stimuli/dg/grating/motion`
-- `stimuli/dg/grating/timestamps`
-- `stimuli/dg/iti/timestamps`
-- `stimuli/dg/motion/timestamps`
-- `stimuli/dg/probe/contrast`
-- `stimuli/dg/probe/direction`
-- `stimuli/dg/probe/latency`
-- `stimuli/dg/probe/motion`
-- `stimuli/dg/probe/phase`
-- `stimuli/dg/probe/timestamps`
+
+#### Drifting grating ####
+- `stimuli/dg/grating/motion` - (1 x N blocks, int) Direction of grating motion for each block (-1 = CCW, +1 = CW)
+- `stimuli/dg/grating/timestamps` - (1 x N blocks, float) Timestamp for the beginning of each block
+- `stimuli/dg/iti/timestamps` - (1 x N blocks, float) Timestamp for the end of each block
+- `stimuli/dg/motion/timestamps` - (1 x N blocks, float) Timestamp for the onset of grating motion for each block
+- `stimuli/dg/probe/contrast` - (1 x N trials, float) Probe contrast
+- `stimuli/dg/probe/direction` - (1 x N trials, int) Direction of the closest saccade for each probe stimulus
+- `stimuli/dg/probe/tts` - (1 x N trials, float) Latency from closest saccade to each probe (Time to saccade)
+- `stimuli/dg/probe/motion` - (1 x N trials, int) Direction of grating motion during each probe stimulus
+- `stimuli/dg/probe/phase` - (1 x N trials, float) Phase of the grating on the first frame of the probe stimulus
+- `stimuli/dg/probe/timestamps` - (1 x N trials, float) Timestamp for each probe stimulus
+
+#### Fictive saccades ####
 - `stimuli/fs/coincident`
 - `stimuli/fs/probes`
 - `stimuli/fs/probes/timestamps`
 - `stimuli/fs/saccades`
 - `stimuli/fs/saccades/timestamps`
-- `stimuli/mb/offset/timestamps`
-- `stimuli/mb/onset/timestamps`
-- `stimuli/mb/orientation`
-- `stimuli/mb/timestamps`
-- `stimuli/sn/post/coords`
-- `stimuli/sn/post/fields`
-- `stimuli/sn/post/missing`
-- `stimuli/sn/post/signs`
-- `stimuli/sn/post/timestamps`
+
+#### Moving bars ####
+- `stimuli/mb/offset/timestamps` - (1 x N trials, float) - Timestamp for the offset of the moving bars
+- `stimuli/mb/onset/timestamps` - (1 x N trials, float) - Timestamp for the onset of the moving bars
+- `stimuli/mb/orientation` - (1 x N trials, float) - Orientation of the moving bars
+
+#### Sparse noise ####
+- `stimuli/sn/post/coords` - (N subregions x 2, float) - Coordinates for each subregion of the field (in degrees of visual angle)
+- `stimuli/sn/post/fields` - (N trials x H x W, int) - Stimulus presented for each trial
+- `stimuli/sn/post/missing` - (N trials x 1, bool) - Boolean mask which identifies misssing trials
+- `stimuli/sn/post/signs` - (N trials, 1, int) - Sign of the stimulus (ON or OFF) for each trial
+- `stimuli/sn/post/timestamps` - (Ntrials, 1) - Timestamp for each trials
 
 ### Population ###
 These datasets map directly on to each unit in the extracellular recording.
-- `population/masks/hq` - (1 x N units, Boolean) Units that meet or exceed spike sorting quality metric thresholds
-- `population/masks/sr` - (1 x N units, Boolean) Units classified as saccade-related
-- `population/masks/vr` - (1 x N units, Boolean) Units classified as visually responsive
+- `population/masks/hq` - (1 x N units, bool) Units that meet or exceed spike sorting quality metric thresholds
+- `population/masks/sr` - (1 x N units, bool) Units classified as saccade-related
+- `population/masks/vr` - (1 x N units, bool) Units classified as visually responsive
 - `population/metrics/ac` - (1 x N units, float) Amplitude cutoff
 - `population/metrics/gvr` - (1 x N units, float) Greatest visual response (z-scored)
 - `population/metrics/pr` - (1 x N units, float) Presence ratio
