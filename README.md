@@ -57,9 +57,9 @@ These datasets contain data associated with the visual stimuli presented during 
 #### Sparse noise ####
 - `stimuli/sn/post/coords` - (N subregions x 2, float) - Coordinates for each subregion of the field (in degrees of visual angle)
 - `stimuli/sn/post/fields` - (N trials x H x W, int) - Stimulus presented for each trial
-- `stimuli/sn/post/missing` - (N trials x 1, bool) - Boolean mask which identifies misssing trials
-- `stimuli/sn/post/signs` - (N trials, 1, int) - Sign of the stimulus (ON or OFF) for each trial
-- `stimuli/sn/post/timestamps` - (Ntrials, 1) - Timestamp for each trials
+- `stimuli/sn/post/missing` - (1 x N trials, bool) - Boolean mask which identifies misssing trials
+- `stimuli/sn/post/signs` - (1 x N trials, int) - Sign of the stimulus (ON or OFF) for each trial
+- `stimuli/sn/post/timestamps` - (1 x N trials) - Timestamp for each trials
 
 ### Population ###
 These datasets map directly on to each unit in the extracellular recording.
