@@ -44,9 +44,7 @@ These datasets contain data associated with the visual stimuli presented during 
 
 #### Fictive saccades ####
 - `stimuli/fs/coincident`
-- `stimuli/fs/probes`
 - `stimuli/fs/probes/timestamps`
-- `stimuli/fs/saccades`
 - `stimuli/fs/saccades/timestamps`
 
 #### Moving bars ####
