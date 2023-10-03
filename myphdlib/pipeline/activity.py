@@ -58,7 +58,7 @@ def extractSpikeSortingData(session):
         with open(tsv, 'r') as stream:
             lines = stream.readlines()[1:]
         for line in lines:
-            cluster, label = line.rstrip('\n').split(',')
+            cluster, label = line.rstrip('\n').split('\t')
             clusterNumbers.append(int(cluster))
             clusterLabels.append(0 if label == 'mua' else 1)
         clusterLabels = np.array(clusterLabels)[np.argsort(clusterNumbers)]

@@ -423,8 +423,13 @@ def computeRelativeEventTiming(
     """
 
     #
-    if session.hasDataset('stimuli/dg/probe') == False:
-        raise Exception(f'No probe stimulus timestamps detected')
+    if session.probeTimestamps is None:
+        for k in ('dos', 'tts'):
+            session.save(f'stimuli/dg/probe/{k}', np.array([]))
+        for k in ('dop', 'ttp'):
+            session.save(f'saccades/predicted/{session.eye}/unsigned/{k}', np.array([]))
+        session.log(f'No probe stimulus timestamps detected', level='warning')
+        return
 
     #
     nProbes = session.probeTimestamps.size

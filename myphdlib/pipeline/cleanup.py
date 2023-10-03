@@ -57,11 +57,16 @@ pathsToKeep = {
 
     # Metrics
     "population/metrics",
-    "population/metrics/ac",
-    "population/metrics/gvr",
-    "population/metrics/pr",
-    "population/metrics/rpvr",
-    "population/metrics/ksl"
+    "population/metrics/ac", # Amplitude cutoff
+    "population/metrics/gvr", # Greatest visual response
+    "population/metrics/pr", # Presence ratio
+    "population/metrics/rpvr", # Refractory period violation rate
+    "population/metrics/ksl", # Kilosort label
+    "population/metrics/pd", # Preferred direction
+    "population/metrics/nd", # Null direction
+    "population/metrics/dsi", # Direction-selectivity index
+    "population/metrics/mi", # Saccadic modulatio index
+
 
     # ZETA test data
     "population/zeta",
@@ -97,7 +102,11 @@ pathsToKeep = {
 
     # Predicted saccade data
     "saccades/predicted",
+
+    # Left eye
     "saccades/predicted/left",
+
+    # Nasal saccades
     "saccades/predicted/left/nasal",
     "saccades/predicted/left/nasal/indices",
     "saccades/predicted/left/nasal/indices/adjusted",
@@ -105,6 +114,8 @@ pathsToKeep = {
     "saccades/predicted/left/nasal/motion",
     "saccades/predicted/left/nasal/timestamps",
     "saccades/predicted/left/nasal/waveforms",
+
+    # Temporal saccades
     "saccades/predicted/left/temporal",
     "saccades/predicted/left/temporal/indices",
     "saccades/predicted/left/temporal/indices/adjusted",
@@ -112,7 +123,11 @@ pathsToKeep = {
     "saccades/predicted/left/temporal/motion",
     "saccades/predicted/left/temporal/timestamps",
     "saccades/predicted/left/temporal/waveforms",
+
+    # Right eye
     "saccades/predicted/right",
+
+    # Nasal saccades
     "saccades/predicted/right/nasal",
     "saccades/predicted/right/nasal/indices",
     "saccades/predicted/right/nasal/indices/adjusted",
@@ -120,6 +135,8 @@ pathsToKeep = {
     "saccades/predicted/right/nasal/motion",
     "saccades/predicted/right/nasal/timestamps",
     "saccades/predicted/right/nasal/waveforms",
+
+    # Temporal saccades
     "saccades/predicted/right/temporal",
     "saccades/predicted/right/temporal/indices",
     "saccades/predicted/right/temporal/indices/adjusted",
@@ -127,6 +144,14 @@ pathsToKeep = {
     "saccades/predicted/right/temporal/motion",
     "saccades/predicted/right/temporal/timestamps",
     "saccades/predicted/right/temporal/waveforms",
+
+    # Unsigned saccade datasets (left eye)
+    "saccades/predicted/left/unsigned/dop",
+    "saccades/predicted/left/unsigned/ttp",
+
+    # Unsigned saccade datasets (right eye)
+    "saccades/predicted/right/unsigned/dop",
+    "saccades/predicted/right/unsigned/ttp",
 
     # Putative saccade data
     "saccades/putative",
@@ -187,21 +212,28 @@ pathsToKeep = {
 
     # Drifting grating stimulus
     "stimuli/dg",
+
+    # Grating onset
     "stimuli/dg/grating",
     "stimuli/dg/grating/motion",
     "stimuli/dg/grating/timestamps",
+
+    # Grating offset
     "stimuli/dg/iti",
     "stimuli/dg/iti/timestamps",
+
+    # Grating motion
     "stimuli/dg/motion",
     "stimuli/dg/motion/timestamps",
+
+    # Probe stimulus
     "stimuli/dg/probe",
     "stimuli/dg/probe/contrast",
-    "stimuli/dg/probe/direction",
-    "stimuli/dg/probe/latency",
     "stimuli/dg/probe/motion",
-    "stimuli/dg/probe/perisaccadic",
     "stimuli/dg/probe/phase",
     "stimuli/dg/probe/timestamps",
+    "stimuli/dg/probe/dos",
+    "stimuli/dg/probe/tts",
 
     # Fictive saccades stimulus
     "stimuli/fs",
@@ -241,9 +273,12 @@ pathsToKeep = {
     "tfp/m",
     "tfp/xp",
 }
-def removeObsoleteDatasets(session):
+
+def removeObsoleteDatasets(
+    session,
+    dryrun=True,
+    ):
     """
-    Remove old and unused datasets/groups
     """
 
     pathsToRemove = list()
@@ -258,9 +293,12 @@ def removeObsoleteDatasets(session):
     #
     for path in pathsToRemove:
         print(f'INFO[{session.animal}, {session.date}]: Removing "{path}" from output file')
+        if dryrun:
+            continue
         session.remove(path)
 
-    return
+    if dryrun:
+        return pathsToRemove
 
 def checkForMissingDatasets(
     session,

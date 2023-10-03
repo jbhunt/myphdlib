@@ -53,6 +53,11 @@ These datasets contain data associated with the visual stimuli presented during 
 - `stimuli/mb/orientation` - (1 x N trials, float) - Orientation of the moving bars
 
 #### Sparse noise ####
+- `stimuli/sn/pre/coords` - (N trials x 2, float) - Coordinates for the active subregion on each trial (in degrees of visual angle)
+- `stimuli/sn/pre/fields` - (N trials x H x W, int) - Stimulus presented for each trial
+- `stimuli/sn/pre/missing` - (1 x N trials, bool) - Boolean mask which identifies misssing trials
+- `stimuli/sn/pre/signs` - (1 x N trials, bool) - Sign of the stimulus (ON or OFF) for each trial
+- `stimuli/sn/pre/timestamps` - (1 x N trials) - Timestamp for each trials
 - `stimuli/sn/post/coords` - (N trials x 2, float) - Coordinates for the active subregion on each trial (in degrees of visual angle)
 - `stimuli/sn/post/fields` - (N trials x H x W, int) - Stimulus presented for each trial
 - `stimuli/sn/post/missing` - (1 x N trials, bool) - Boolean mask which identifies misssing trials

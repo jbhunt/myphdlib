@@ -1,19 +1,21 @@
+import csv
 import numpy as np
 
 def createManualSpikeSortingLog(
     sessions,
-    csv,
+    filename,
     minimumPresenceRatio=0.9,
     maximumRefractoryPeriodViolationRate=0.5,
     maximumAmplitudeCutoff=0.1,
     maximumProbabilityValue=0.05,
-    returnEntries=False
+    returnEntries=False,
+    targetUnitQuality='high',
     ):
     """
     """
 
-    lines = list()
     allEntries = list()
+    sessionNumber = 1
 
     for session in sessions:
         
@@ -21,63 +23,83 @@ def createManualSpikeSortingLog(
         sessionEntries = list()
         
         # Load the lowest response probability
-        responseProbabilities = np.vstack([
+        responseProbabilities = np.around(np.vstack([
             session.load('population/zeta/probe/left/p'),
             session.load('population/zeta/probe/right/p'),
             session.load('population/zeta/saccade/nasal/p'),
             session.load('population/zeta/saccade/temporal/p')
-        ]).min(axis=0)
-
-        # Filter out units with high spike-sorting quality
-        spikeSortingMetricsFilter = np.vstack([
-            session.load('population/metrics/pr') >= minimumPresenceRatio,
-            session.load('population/metrics/rpvr') <= maximumRefractoryPeriodViolationRate,
-            session.load('population/metrics/ac') <= maximumAmplitudeCutoff
-        ]).all(axis=0)
+        ]).min(axis=0), 3)
 
         #
         kilosortLabels = session.load('population/metrics/ksl')
+        presenceRatio = np.around(session.load('population/metrics/pr'), 2)
+        refractoryPeriodViolationRate = np.around(session.load('population/metrics/rpvr'), 2)
+        amplitudeCutoff = np.around(session.load('population/metrics/ac'), 2)
+
+        # Filter out units with high spike-sorting quality
+        spikeSortingMetricsFilter = np.vstack([
+            presenceRatio >= minimumPresenceRatio,
+            refractoryPeriodViolationRate <= maximumRefractoryPeriodViolationRate,
+            amplitudeCutoff <= maximumAmplitudeCutoff
+        ]).all(axis=0)
+        if targetUnitQuality == 'high':
+            pass
+        elif targetUnitQuality == 'low':
+            spikeSortingMetricsFilter = np.invert(spikeSortingMetricsFilter)
+        else:
+            raise Exception(f'{targetUnitQuality} is not a valid spike sorting quality label')
 
         # Collect entries
-        for unit in session.population[np.invert(spikeSortingMetricsFilter)]:
+        for unit in session.population[spikeSortingMetricsFilter]:
             p = responseProbabilities[unit.index]
             if p > maximumProbabilityValue:
                 continue
             if kilosortLabels is not None:
-                ksl = 'mua' if kilosortLabels[session.index] == 0 else 'good'
+                ksl = 'm' if kilosortLabels[unit.index] == 0 else 'g'
             else:
                 ksl = ''
+            pr = presenceRatio[unit.index]
+            rpvr = refractoryPeriodViolationRate[unit.index]
+            ac = amplitudeCutoff[unit.index]
             entry = [
+                sessionNumber,
                 str(session.date),
                 session.animal,
                 unit.cluster,
-                p,
                 ksl,
-                ''
+                '',
+                p,
+                pr,
+                rpvr,
+                ac,
             ]
             sessionEntries.append(entry)
 
         # Sort entries by the p-values
-        probabilitySortedIndices = np.argsort([entry[3] for entry in sessionEntries])
-        for entryIndex in probabilitySortedIndices:
-            date, animal, cluster, p, ksl, blank = sessionEntries[entryIndex]
-            line = f'{date},{animal},{cluster},{p:.3f},{ksl},{blank}\n'
-            lines.append(line)
+        probabilityValues = np.array([entry[6] for entry in sessionEntries])
+        for entryIndex in np.argsort(probabilityValues):
             allEntries.append(sessionEntries[entryIndex])
 
+        # Increment the session counter
+        sessionNumber += 1
+
     #
-    with open(csv, 'w') as stream:
+    with open(filename, 'w') as stream:
         columns = (
-            'Date',
-            'Animal',
-            'Cluster',
+            'sid',
+            'date',
+            'animal',
+            'cluster',
+            'ksl',
+            'ul',
             'p',
-            'Label (pre)',
-            'Label (post)'
+            'pr',
+            'rpvr',
+            'ac',
         )
-        stream.write(','.join(columns) + '\n')
-        for line in lines:
-            stream.write(line)
+        writer = csv.writer(stream)
+        writer.writerow(columns)
+        writer.writerows(allEntries)
 
     #
     if returnEntries:

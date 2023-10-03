@@ -243,11 +243,13 @@ class Population():
         """
         """
 
-        for parts in self._datasets.keys():
-            if self._datasets[parts] is None:
+        for k in self._datasets.keys():
+            if self._datasets[k] is None:
+                parts = list(k)
+                parts.insert(0, 'population')
                 datasetPath = '/'.join(parts)
                 if self._session.hasDataset(datasetPath):
-                    self._datasets[parts] = self._session.load(datasetPath)
+                    self._datasets[k] = self._session.load(datasetPath)
 
         return
 
