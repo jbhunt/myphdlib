@@ -23,6 +23,9 @@ class SingleUnit():
         self._quality = None
         self._index = None
         self._ksl = None
+        self._lvrl = None
+        self._lvrr = None
+        self._gvr = None
 
         return
     
@@ -178,6 +181,27 @@ class SingleUnit():
     @property
     def psrt(self):
         return
+
+    @property
+    def lvrl(self):
+        if self._lvrl is None:
+            if self.session.population.datasets[('zeta', 'probe', 'left', 'latency')] is not None:
+                self._lvrl = round(self.session.population.datasets[('zeta', 'probe', 'left', 'latency')][self.index], 2)
+        return self._lvrl
+
+    @property
+    def lvrr(self):
+        if self._lvrr is None:
+            if self.session.population.datasets[('zeta', 'probe', 'right', 'latency')] is not None:
+                self._lvrr = round(self.session.population.datasets[('zeta', 'probe', 'right', 'latency')][self.index], 2)
+        return self._lvrr
+
+    @property
+    def gvr(self):
+        if self._gvr is None:
+            if self.session.population.datasets[('metrics', 'gvr')] is not None:
+                self._gvr = round(self.session.population.datasets[('metrics', 'gvr')][self.index], 3)
+        return self._gvr
 
 class Population():
     """

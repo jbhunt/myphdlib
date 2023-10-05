@@ -870,6 +870,7 @@ class SessionBase():
         self,
         utypes=('vr', 'sr', 'nr', 'ud'),
         quality=('lq', 'hq'),
+        minimumResponseAmplitude=0.3,
         ):
         """
         Filter single units based on unit type and spike-sorting quality
@@ -884,7 +885,7 @@ class SessionBase():
         # Filter
         populationMask = list()
         for unit in self.population:
-            if unit.utype in utypes and unit.quality in quality:
+            if unit.utype in utypes and unit.quality in quality and unit.gvr >= minimumResponseAmplitude:
                 populationMask.append(True)
             else:
                 populationMask.append(False)

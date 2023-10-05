@@ -579,7 +579,7 @@ def _trainSaccadeClassifier(
         saccadesExtracted = False
         for eye in ('left', 'right'):
             path = f'saccades/putative/{eye}/waveforms'
-            if session.hasGroup(path):
+            if session.hasDataset(path):
                 saccadesExtracted = True
                 break
 
@@ -601,7 +601,7 @@ def _trainSaccadeClassifier(
         saccadesLabeled = False
         for eye in ('left', 'right'):
             path = f'saccades/training/{eye}/X'
-            if session.hasGroup(path):
+            if session.hasDataset(path):
                 saccadesLabeled = True
                 break
 
@@ -626,7 +626,6 @@ def _trainSaccadeClassifier(
     xTest = np.array(xTest)
     yTrain = np.array(yTrain)
     nSamples = xTrain.shape[0]
-    print(f'INFO[X]: {nSamples} samples collected for model training')
 
     # Decompose
     if decompose:

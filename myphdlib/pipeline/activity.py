@@ -1,18 +1,46 @@
 import os
+import mat73
 import numpy as np
 from zetapy import getZeta
 from joblib import Parallel, delayed
 from myphdlib.general.toolkit import psth2, smooth, computeAngleFromStandardPosition
+from myphdlib.extensions.matlab import runMatlabScript
 from simple_spykes.util.ecephys import run_quality_metrics
 from scipy.stats import ttest_rel, ttest_ind
 from scipy.signal import find_peaks as findPeaks
 
+#
 samplingRateNeuropixels = 30000.0
 
-def extractSpikeSortingData(session):
+#
+matlabScriptTemplate = """animal = '{0}'
+date = '{1}'
+addpath('/home/jbhunt/Documents/MATLAB/npy-matlab-master/npy-matlab')
+addpath('/home/jbhunt/Documents/MATLAB/spikes-master/analysis')
+spikeTimesFile = '/media/jbhunt/JH-DATA-04/{0}/{1}/ephys/sorting/spike_times.npy'
+spikeClustersFile = '/media/jbhunt/JH-DATA-04/{0}/{1}/ephys/sorting/spike_clusters.npy'
+gwf.dataDir = '/media/jbhunt/JH-DATA-04/{0}/{1}/ephys/sorting/'
+gwf.fileName = 'continuous.dat'
+gwf.dataType = 'int16'
+gwf.nCh = 384
+gwf.wfWin = [-31 30]
+gwf.nWf = {2}
+gwf.spikeTimes = readNPY(spikeTimesFile)
+gwf.spikeClusters = readNPY(spikeClustersFile)
+result = getWaveForms(gwf)
+waveforms = result.waveFormsMean;
+fname = '/media/jbhunt/JH-DATA-04/{0}/{1}/ephys/sorting/spike_waveforms.npy'
+writeNPY(waveforms, fname)
+exit
+"""
+
+
+def extractSpikeDatasets(session):
     """
     """
 
+    if session.hasDataset('population/spikes/clusters') and session.hasDataset('population/spikes/timestamps'):
+        return
     session.log(f'Extracting spike clusters and timestamps', level='info')
 
     spikeTimestamps = np.array([])
@@ -40,11 +68,32 @@ def extractSpikeSortingData(session):
     session.save('spikes/timestamps', spikeTimestamps)
     session.save('spikes/clusters', spikeClusters)
 
+    return
+
+def extractKilosortLabels(
+    session
+    ):
+    """
+    """
+
+    #
+    if session.hasDataset('population/metrics/ksl'):
+        return
+
+    #
+    spikeClusters = np.array([])
+    result = list(session.folders.ephys.joinpath('sorting').glob('spike_clusters.npy'))
+    if len(result) != 1:
+        raise Exception('Could not locate the cluster ID data')
+    else:
+        spikeClusters = np.around(
+            np.load(str(result.pop())).flatten(),
+            3
+        )
+
     #
     clusterNumbers = np.unique(spikeClusters)
-    session.save('population/clusters', clusterNumbers)
     nUnits = clusterNumbers.size
-    session.log(f'{nUnits} units detected')
 
     # Extract the label assigned to each unit by Kilosort
     clusterLabels = list()
@@ -65,6 +114,76 @@ def extractSpikeSortingData(session):
     
     #
     session.save('population/metrics/ksl', clusterLabels)
+
+    return
+
+def extractSpikeWaveforms(
+    session,
+    nWaveforms=50,
+    ):
+
+    #
+    # if session.hasDataset('population/metrics/bsw'):
+    #     return
+
+    #
+    matlabScriptLines = matlabScriptTemplate.format(session.date, session.animal, nWaveforms)
+    scriptFilePath = session.folders.ephys.joinpath('sorting', 'extractSpikeWaveforms.m')
+    with open(scriptFilePath, 'w') as stream:
+        for line in matlabScriptLines:
+            stream.write(line)
+
+    #
+    runMatlabScript(
+        scriptFilePath,
+        nogui=True
+    )
+    spikeWaveformsFile = session.folders.ephys.joinpath('sorting', 'spike_waveforms.npy')
+    if spikeWaveformsFile.exists() == False:
+        raise Exception(f'Failed to extract spike waveforms')
+    scriptFilePath.unlink() # Delete script
+    spikeWaveformsArray = np.load(spikeWaveformsFile)
+
+    #
+    nUnits, nChannels, nSamples = spikeWaveformsArray.shape
+    bestSpikeWaveforms = np.full([nUnits, nSamples], np.nan)
+    for iUnit in range(nUnits):
+        bestSpikeWaveform = spikeWaveformsArray[iUnit, 0, :]
+        bestSpikeWaveforms[iUnit :] = bestSpikeWaveform
+
+    #
+    session.save(f'population/metrics/bsw', bestSpikeWaveforms)
+
+    return
+
+def extractUnitPositions(session):
+    """
+    """
+
+    #
+    if session.hasDataset('population/metrics/msp'):
+        return
+
+    #
+    kilosortResultsFile = session.folders.ephys.joinpath('sorting', 'rez.mat')
+    kilosortResults = mat73.loadmat(kilosortResultsFile)['rez']
+    spikeCoordinates = kilosortResults['xy']
+    spikeClustersFile = session.folders.ephys.joinpath('sorting', 'spike_clusters.npy')
+    spikeClusters = np.load(spikeClustersFile)
+    
+    #
+    uniqueSpikeClusters = np.unique(spikeClusters)
+    nUnits = uniqueSpikeClusters.size
+    meanSpikePositions = np.full([nUnits, 2], np.nan)
+    for iUnit, uniqueSpikeCluster in enumerate(uniqueSpikeClusters):
+        mask = spikeClusters.flatten() == uniqueSpikeCluster
+        meanSpikePosition = np.around(spikeCoordinates[mask, :].mean(0), 2)
+        meanSpikePositions[iUnit] = meanSpikePosition
+
+    # Need to swap x and y coordinates
+    meanSpikePositions = np.fliplr(meanSpikePositions)
+    session.save('population/metrics/msp', meanSpikePositions)
+
 
     return
 

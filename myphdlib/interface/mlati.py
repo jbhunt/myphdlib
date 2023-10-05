@@ -776,7 +776,14 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
         # Read the metadata file
         result = list(self.folders.stimuli.rglob('*driftingGratingMetadata*'))
         if len(result) != 1:
+            emptyArray = np.array([], dtype=float)
+            self.save(f'stimuli/dg/grating/timestamps', emptyArray)
+            self.save(f'stimuli/dg/motion/timestamps', emptyArray)
+            self.save(f'stimuli/dg/iti/timestamps', emptyArray)
+            for key in ('timestamps'):
+                self.save(f'stimuli/dg/probe/{key}', emptyArray)
             self.log('Could not locate the drifting grating stimulus metadata', level='warning')
+
             return
         file = result.pop()
         if self.cohort != 4:

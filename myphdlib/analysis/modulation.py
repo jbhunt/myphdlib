@@ -19,57 +19,8 @@ from decimal import Decimal
 
 def determineResponseWindow(
     unit,
-    minimumPeakHeight=0,
-    minimumPeakProminence=0,
-    initialResponseWindow=(0, 0.5),
-    maximumResponseWindow=(0, 0.5),
-    defaultResponseWindow=(0.05, 0.15),
-    windowHeadSize=0.04,
-    windowTailSize=0.06,
-    binsize=0.01,
     ):
-    """
-    """
-
-    # load datasets
-    extrasaccadicTrialIndices = np.where(unit.session.filterProbes(
-        trialType='es',
-        windowBufferForExtrasaccadicTrials=0.5
-    ))[0]
-
-    # Compute baseline-subtracted signal
-    t, M = psth2(
-        unit.session.probeTimestamps[extrasaccadicTrialIndices],
-        unit.timestamps,
-        window=initialResponseWindow,
-        binsize=binsize
-    )
-    fr = M.mean(0) / binsize
-
-    #
-    peakIndices, peakProps = find_peaks(
-        fr,
-        height=minimumPeakHeight,
-        prominence=minimumPeakProminence
-    )
-
-    # No peaks detected
-    if peakIndices.size == 0:
-        return defaultResponseWindow
-
-    #
-    peakHeights = peakProps['peak_heights']
-    iPeak = np.argmax(peakHeights)
-    tIndex = peakIndices[iPeak]
-
-    #
-    windowCenter = t[tIndex]
-    window = np.around(np.array([
-        np.clip(float(Decimal(str(windowCenter)) - Decimal(str(windowHeadSize))), maximumResponseWindow[0], maximumResponseWindow[1]),
-        np.clip(float(Decimal(str(windowCenter)) + Decimal(str(windowTailSize))), maximumResponseWindow[0], maximumResponseWindow[1])
-    ]), 2)
-
-    return window
+    return
 
 def measureVisualOnlyResponse(
     unit,
@@ -78,7 +29,7 @@ def measureVisualOnlyResponse(
     baselineResponseWindow=(-5, -4),
     perisaccadicWindow=(-0.05, 0.1),
     perisaccadicTrialIndices=None,
-    tBuffer=3,
+    tBuffer=0.1,
     binsize=0.01,
     ):
     """
@@ -86,9 +37,10 @@ def measureVisualOnlyResponse(
     """
 
     # Filter out peri-saccadic trials
-    trialIndices = np.where(np.logical_and(
-        unit.session.gratingMotionDuringProbes == probeMotion,
-        np.abs(unit.session.probeLatencies) > tBuffer
+    trialIndices = np.where(unit.session.filterProbes(
+        trialType='es',
+        windowBufferForExtrasaccadicTrials=tBuffer,
+        probeDirections=(probeMotion,),
     ))[0]
 
     #
@@ -98,16 +50,20 @@ def measureVisualOnlyResponse(
         window=baselineResponseWindow,
         binsize=None
     )
-    bl = M.flatten().mean() / np.diff(baselineResponseWindow).item()
+    bl = np.mean(M.flatten() / np.diff(baselineResponseWindow).item())
 
     #
+    if binsize is None:
+        dt = np.diff(visualResponseWindow).item()
+    else:
+        dt = binsize
     t2, M = psth2(
         unit.session.probeTimestamps[trialIndices],
         unit.timestamps,
         window=visualResponseWindow,
         binsize=binsize
     )  
-    fr = M.mean(0) / binsize
+    fr = M.mean(0) / dt
 
     return t1, t2, bl, fr
 
@@ -145,16 +101,21 @@ def measurePerisaccadicVisualResponse(
         window=baselineResponseWindow,
         binsize=None
     )
-    bl = M.flatten() / np.diff(baselineResponseWindow).item()
+    # bl = np.mean(M.flatten() / np.diff(baselineResponseWindow).item())
+    bl = M / np.diff(baselineResponseWindow).item()
 
     #
+    if binsize is None:
+        dt = np.diff(visualResponseWindow).item()
+    else:
+        dt = binsize
     t2, M = psth2(
         unit.session.probeTimestamps[perisaccadicTrialIndices_],
         unit.timestamps,
         window=visualResponseWindow,
         binsize=binsize
     )
-    fr = M / binsize
+    fr = M / dt
 
     return t1, t2, bl, fr
 
@@ -192,10 +153,14 @@ def estimateSaccadeRelatedActivity(
         window=baselineResponseWindow,
         binsize=None
     )
-    bl = M.flatten().mean() / np.diff(baselineResponseWindow).item()
+    bl = np.mean(M.flatten() / np.diff(baselineResponseWindow).item())
 
     #
     fr = list()
+    if binsize is None:
+        dt = np.diff(visualResponseWindow).item()
+    else:
+        dt = binsize
     for probeLatency in unit.session.probeLatencies[perisaccadictrialIndices_]:
 
         # Shift the saccade psth by the latency from the saccade to the probe
@@ -205,7 +170,7 @@ def estimateSaccadeRelatedActivity(
             window=visualResponseWindow,
             binsize=binsize
         )
-        fri = M.mean(0) / binsize
+        fri = M.mean(0) / dt
         fr.append(fri)
 
     #
@@ -215,16 +180,33 @@ def estimateSaccadeRelatedActivity(
 def computeUnidirectionalModulationIndex(
     unit,
     probeMotion=-1,
-    visualResponseWindow=(0, 0.3),
-    baselineResponseWindow=(-11, -10),
+    responseWindowSize=0.1,
+    baselineResponseWindowRightEdge=-10,
     perisaccadicWindow=(-0.05, 0.1),
     perisaccadicTrialIndices=None,
-    clipNegativeRatesObserved=False,
-    clipNegativeRatesExpected=True,
-    binsize=0.01
+    clipResidualActivity=False,
+    removeBaselineActivity=False,
+    binsize=None
     ):
     """
     """
+
+    # Define the visual response window
+    if probeMotion == -1:
+        peakResponseLatency = unit.lvrl
+    else:
+        peakResponseLatency = unit.lvrr
+    windowHalfWidth = round(responseWindowSize / 2, 2)
+    visualResponseWindow = np.around(np.array([
+        peakResponseLatency - windowHalfWidth,
+        peakResponseLatency + windowHalfWidth
+    ]), 2)
+
+    # Define the baseline response window
+    baselineResponseWindow = np.around(np.array([
+        baselineResponseWindowRightEdge - (2 * windowHalfWidth),
+        baselineResponseWindowRightEdge
+    ]), 2)
 
     #
     kwargs = {
@@ -241,12 +223,7 @@ def computeUnidirectionalModulationIndex(
         unit,
         **kwargs
     )
-
-    #
-    t1, t2, baselineResponseSaccade, targetResponseSaccade = estimateSaccadeRelatedActivity(
-        unit,
-        **kwargs
-    )
+    t = np.copy(t2)
 
     #
     t1, t2, baselineResponseMixed, targetResponseMixed = measurePerisaccadicVisualResponse(
@@ -254,33 +231,88 @@ def computeUnidirectionalModulationIndex(
         **kwargs
     )
 
+    # Make the target resonse window the same as the baseline window
+    t1, t2, baselineResponseControl, targetResponseControl = estimateSaccadeRelatedActivity(
+        unit,
+        probeMotion=kwargs['probeMotion'],
+        visualResponseWindow=kwargs['baselineResponseWindow'],
+        baselineResponseWindow=kwargs['baselineResponseWindow'],
+        perisaccadicWindow=kwargs['perisaccadicWindow'],
+        perisaccadicTrialIndices=kwargs['perisaccadicTrialIndices'],
+        binsize=kwargs['binsize']
+    )
+
     #
-    nTrials, nBins = targetResponseMixed.shape
-    rObserved = list()
-    rExpected = list()
+    t1, t2, baselineResponseSaccade, targetResponseSaccade = estimateSaccadeRelatedActivity(
+        unit,
+        **kwargs
+    )
+
+    # Shape of responses
+    if binsize is None:
+        nTrials = targetResponseMixed.size
+        nBins = 1
+    else:
+        nTrials, nBins = targetResponseMixed.shape
+
+    # Set the minimum for clipping residual activity
+    if clipResidualActivity:
+        minimumResidualActivity = 0
+    else:
+        minimumResidualActivity = -np.inf
+
+    # Compute the response offsets
+    if removeBaselineActivity:
+        responseOffsetProbe = -1 * baselineResponseProbe
+    else:
+        responseOffsetProbe = 0
+
+    #
+    observedResponses = np.full([nTrials, nBins], np.nan)
+    expectedResponses = np.full([nTrials, nBins], np.nan)
+    modulationIndices = np.full(nTrials, np.nan)
     for iTrial in range(nTrials):
 
         #
-        rpi = targetResponseProbe - baselineResponseProbe # visual-only response
-        rsi = targetResponseSaccade[iTrial] - baselineResponseSaccade # Residual saccade-related activity
-        rmi = targetResponseMixed[iTrial] - baselineResponseMixed[iTrial] # Peri-saccadic response
-        
+        baselineResidualActivity = np.clip(
+            targetResponseControl[iTrial] - baselineResponseControl,
+            minimumResidualActivity,
+            np.inf
+        )
+        saccadeRelatedResidualActivity = np.clip(
+            targetResponseSaccade[iTrial] - baselineResponseSaccade,
+            minimumResidualActivity,
+            np.inf
+        )
+
         #
-        if clipNegativeRatesObserved:
-            roi = np.clip(rmi, 0, np.inf)
-        else:
-            roi = rmi
-        if clipNegativeRatesExpected:
-            rei = np.clip(rpi, 0, np.inf) + np.clip(rsi, 0, np.inf)
-        else:
-            rei = rpi + rsi
-        rObserved.append(roi)
-        rExpected.append(rei)
+        responseOffsetMixed = -1 * baselineResponseMixed[iTrial] if removeBaselineActivity else 0
+
+        #
+        ro = targetResponseMixed[iTrial] + responseOffsetMixed + baselineResidualActivity
+        re = targetResponseProbe + responseOffsetProbe + saccadeRelatedResidualActivity
+        mi = (np.clip(ro.sum(), 0, np.inf) - np.clip(re.sum(), 0, np.inf)) / (np.clip(ro.sum(), 0, np.inf) + np.clip(re.sum(), 0, np.inf))
+
+        #
+        observedResponses[iTrial] = ro
+        expectedResponses[iTrial] = re
+        modulationIndices[iTrial] = mi
 
     #
-    rObserved = np.array(rObserved)
-    rExpected = np.array(rExpected)
-    return rObserved, rExpected
+    # numerator = np.clip(
+    #     observedResponses.mean(0).sum() - expectedResponses.mean(0).sum(),
+    #     0,
+    #     np.inf
+    # )
+    # denominator = np.clip(
+    #     observedResponses.mean(0).sum() + expectedResponses.mean(0).sum(),
+    #     0,
+    #     np.inf
+    # )
+    # mi = numerator / denominator
+
+    #
+    return t, modulationIndices, observedResponses, expectedResponses
 
 def computeUnidirectionalModulationIndexUsingAverageResponse(
     unit,

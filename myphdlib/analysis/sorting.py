@@ -18,6 +18,11 @@ def createManualSpikeSortingLog(
     sessionNumber = 1
 
     for session in sessions:
+
+        #
+        if session.probeTimestamps is None:
+            continue
+        
         
         #
         sessionEntries = list()
