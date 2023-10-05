@@ -1,10 +1,11 @@
 import os
+import time
 import mat73
 import numpy as np
 from zetapy import getZeta
 from joblib import Parallel, delayed
 from myphdlib.general.toolkit import psth2, smooth, computeAngleFromStandardPosition
-from myphdlib.extensions.matlab import runMatlabScript
+from myphdlib.extensions.matlab import runMatlabScript, locatMatlabAddonsFolder
 from simple_spykes.util.ecephys import run_quality_metrics
 from scipy.stats import ttest_rel, ttest_ind
 from scipy.signal import find_peaks as findPeaks
@@ -13,23 +14,22 @@ from scipy.signal import find_peaks as findPeaks
 samplingRateNeuropixels = 30000.0
 
 #
-matlabScriptTemplate = """animal = '{0}'
-date = '{1}'
-addpath('/home/jbhunt/Documents/MATLAB/npy-matlab-master/npy-matlab')
-addpath('/home/jbhunt/Documents/MATLAB/spikes-master/analysis')
-spikeTimesFile = '/media/jbhunt/JH-DATA-04/{0}/{1}/ephys/sorting/spike_times.npy'
-spikeClustersFile = '/media/jbhunt/JH-DATA-04/{0}/{1}/ephys/sorting/spike_clusters.npy'
-gwf.dataDir = '/media/jbhunt/JH-DATA-04/{0}/{1}/ephys/sorting/'
+matlabScriptTemplate = """
+addpath('{0}/npy-matlab-master/npy-matlab')
+addpath('{0}/spikes-master/analysis')
+spikeTimesFile = '{1}'
+spikeClustersFile = '{2}'
+gwf.dataDir = '{3}'
 gwf.fileName = 'continuous.dat'
 gwf.dataType = 'int16'
 gwf.nCh = 384
 gwf.wfWin = [-31 30]
-gwf.nWf = {2}
+gwf.nWf = {4}
 gwf.spikeTimes = readNPY(spikeTimesFile)
 gwf.spikeClusters = readNPY(spikeClustersFile)
 result = getWaveForms(gwf)
 waveforms = result.waveFormsMean;
-fname = '/media/jbhunt/JH-DATA-04/{0}/{1}/ephys/sorting/spike_waveforms.npy'
+fname = '{5}'
 writeNPY(waveforms, fname)
 exit
 """
@@ -120,6 +120,8 @@ def extractKilosortLabels(
 def extractSpikeWaveforms(
     session,
     nWaveforms=50,
+    nogui=True,
+    windowsProcessTimeout=60*10,
     ):
 
     #
@@ -127,7 +129,19 @@ def extractSpikeWaveforms(
     #     return
 
     #
-    matlabScriptLines = matlabScriptTemplate.format(session.date, session.animal, nWaveforms)
+    partsFromEphysFolder = (
+        'continuous',
+        'Neuropix-PXI-100.ProbeA-AP'
+    )
+    matlabAddonsFolder = locatMatlabAddonsFolder()
+    matlabScriptLines = matlabScriptTemplate.format(
+        matlabAddonsFolder,
+        session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_times.npy'),
+        session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_clusters.npy'),
+        session.folders.ephys.joinpath(*partsFromEphysFolder),
+        nWaveforms,
+        session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_waveforms.npy'),
+    ).strip('\n')
     scriptFilePath = session.folders.ephys.joinpath('sorting', 'extractSpikeWaveforms.m')
     with open(scriptFilePath, 'w') as stream:
         for line in matlabScriptLines:
@@ -136,11 +150,25 @@ def extractSpikeWaveforms(
     #
     runMatlabScript(
         scriptFilePath,
-        nogui=True
+        nogui=nogui
     )
-    spikeWaveformsFile = session.folders.ephys.joinpath('sorting', 'spike_waveforms.npy')
-    if spikeWaveformsFile.exists() == False:
-        raise Exception(f'Failed to extract spike waveforms')
+
+    #
+    if os.name == 'nt':
+        t0 = time.time()
+        while True:
+            if time.time() - t0 > windowsProcessTimeout:
+                raise Exception(f'Failed to extract spike waveforms')
+            spikeWaveformsFile = session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_waveforms.npy')
+            if spikeWaveformsFile.exists():
+                break
+
+    #
+    elif os.name == 'posix':
+        if spikeWaveformsFile.exists() == False:
+            raise Exception(f'Failed to extract spike waveforms')
+        
+    #
     scriptFilePath.unlink() # Delete script
     spikeWaveformsArray = np.load(spikeWaveformsFile)
 
