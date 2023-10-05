@@ -2,7 +2,19 @@ import os
 import pathlib as pl
 import subprocess as sp
 
-def locateMatlabExecutable():
+def locatMatlabAddonsFolder(
+    ):
+    """
+    """
+
+    if os.name == 'nt':
+        matlabAddonsFolder = 'C:/Users/NeuroPixel1/Documents/MATLAB'
+
+    return matlabAddonsFolder
+
+def locateMatlabExecutable(
+    matlabVersion='2021a',
+    ):
     """
     """
 
