@@ -78,6 +78,7 @@ For spike-sorting quality metrics, the following thresholds were used to delimit
 - `population/metrics/gvr` - (1 x N units, float) Greatest (peak) visual response (in standard deviations)
 - `population/metrics/pr` - (1 x N units, float) Presence ratio
 - `population/metrics/rpvr` - (1 x N units, float) Refractory period violation rate
+- `population/metrics/ksl` - (1 x N units, int) Unit classification assigned by Kilosort (0=mult-unit, 1=single-unit)
 
 #### ZETA test ####
 ZETA-test p-values and latency to peak response computed for probe stimuli (left and right) and saccades (nasal and temporal).
