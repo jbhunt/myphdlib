@@ -67,6 +67,14 @@ pathsToKeep = {
     "population/metrics/dsi", # Direction-selectivity index
     "population/metrics/mi", # Saccadic modulatio index
 
+    # PSTHs
+    "population/psths",
+    "population/psths/probe",
+    "population/psths/probe/left",
+    "population/psths/probe/right",
+    "population/psths/saccade",
+    "population/psths/saccade/nasal",
+    "population/psths/saccade/temporal",
 
     # ZETA test data
     "population/zeta",

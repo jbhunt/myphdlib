@@ -156,7 +156,8 @@ class SingleUnit():
     def ksl(self):
         if self._ksl is None:
             if self.session.population.datasets[('metrics', 'ksl')] is not None:
-                self._ksl = self.session.population.datasets[('metrics', 'ksl')][self.index]
+                label = self.session.population.datasets[('metrics', 'ksl')][self.index]
+                self._ksl = 'm' if label == 0 else 'g'
 
         return self._ksl
 

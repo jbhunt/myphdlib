@@ -71,13 +71,14 @@ def extractSpikeDatasets(session):
     return
 
 def extractKilosortLabels(
-    session
+    session,
+    overwrite=True,
     ):
     """
     """
 
     #
-    if session.hasDataset('population/metrics/ksl'):
+    if session.hasDataset('population/metrics/ksl') and overwrite == False:
         return
 
     #
@@ -92,12 +93,12 @@ def extractKilosortLabels(
         )
 
     #
-    clusterNumbers = np.unique(spikeClusters)
-    nUnits = clusterNumbers.size
+    clusterNumbers1 = np.unique(spikeClusters)
+    nUnits = clusterNumbers1.size
 
     # Extract the label assigned to each unit by Kilosort
     clusterLabels = list()
-    clusterNumbers = list()
+    clusterNumbers2 = list()
     result = list(session.folders.ephys.joinpath('sorting').glob('cluster_KSLabel.tsv'))
     if len(result) != 1:
         session.log(f'Could not locate Kilosort labels', level='warning')
@@ -108,9 +109,18 @@ def extractKilosortLabels(
             lines = stream.readlines()[1:]
         for line in lines:
             cluster, label = line.rstrip('\n').split('\t')
-            clusterNumbers.append(int(cluster))
+            clusterNumbers2.append(int(cluster))
             clusterLabels.append(0 if label == 'mua' else 1)
-        clusterLabels = np.array(clusterLabels)[np.argsort(clusterNumbers)]
+        clusterLabels = np.array(clusterLabels)[np.argsort(clusterNumbers2)]
+
+    # Need to delete labels where the cluster number is missing
+    missingClusterNumbers = np.setdiff1d(clusterNumbers2, clusterNumbers1)
+    missingClusterIndices = np.array([
+        np.where(clusterNumbers2 == missingClusterNumber)[0].item()
+            for missingClusterNumber in missingClusterNumbers
+    ])
+    if missingClusterIndices.size != 0:
+        clusterLabels = np.delete(clusterLabels, missingClusterIndices)
     
     #
     session.save('population/metrics/ksl', clusterLabels)
@@ -120,8 +130,9 @@ def extractKilosortLabels(
 def extractSpikeWaveforms(
     session,
     nWaveforms=50,
+    nBestChannels=5,
     nogui=True,
-    windowsProcessTimeout=60*10,
+    windowsProcessTimeout=60*10, # Ten minutes
     ):
 
     #
@@ -130,53 +141,63 @@ def extractSpikeWaveforms(
 
     #
     partsFromEphysFolder = (
-        'continuous',
-        'Neuropix-PXI-100.ProbeA-AP'
+        'sorting',
     )
-    matlabAddonsFolder = locatMatlabAddonsFolder()
-    matlabScriptLines = matlabScriptTemplate.format(
-        matlabAddonsFolder,
-        session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_times.npy'),
-        session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_clusters.npy'),
-        session.folders.ephys.joinpath(*partsFromEphysFolder),
-        nWaveforms,
-        session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_waveforms.npy'),
-    ).strip('\n')
-    scriptFilePath = session.folders.ephys.joinpath('sorting', 'extractSpikeWaveforms.m')
-    with open(scriptFilePath, 'w') as stream:
-        for line in matlabScriptLines:
-            stream.write(line)
+    spikeWaveformsFile = session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_waveforms.npy')
 
     #
-    runMatlabScript(
-        scriptFilePath,
-        nogui=nogui
-    )
+    if spikeWaveformsFile.exists() == False:
+        matlabAddonsFolder = locatMatlabAddonsFolder()
+        matlabScriptLines = matlabScriptTemplate.format(
+            matlabAddonsFolder,
+            session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_times.npy'),
+            session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_clusters.npy'),
+            session.folders.ephys.joinpath(*partsFromEphysFolder),
+            nWaveforms,
+            session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_waveforms.npy'),
+        ).strip('\n')
+        scriptFilePath = session.folders.ephys.joinpath('sorting', 'extractSpikeWaveforms.m')
+        with open(scriptFilePath, 'w') as stream:
+            for line in matlabScriptLines:
+                stream.write(line)
 
-    #
-    if os.name == 'nt':
-        t0 = time.time()
-        while True:
-            if time.time() - t0 > windowsProcessTimeout:
+        #
+        runMatlabScript(
+            scriptFilePath,
+            nogui=nogui
+        )
+
+        #
+        if os.name == 'nt':
+            t0 = time.time()
+            while True:
+                if time.time() - t0 > windowsProcessTimeout:
+                    raise Exception(f'Failed to extract spike waveforms')
+                spikeWaveformsFile = session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_waveforms.npy')
+                if spikeWaveformsFile.exists():
+                    break
+
+        #
+        elif os.name == 'posix':
+            if spikeWaveformsFile.exists() == False:
                 raise Exception(f'Failed to extract spike waveforms')
-            spikeWaveformsFile = session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_waveforms.npy')
-            if spikeWaveformsFile.exists():
-                break
+            
+        #
+        scriptFilePath.unlink() # Delete script
 
     #
-    elif os.name == 'posix':
-        if spikeWaveformsFile.exists() == False:
-            raise Exception(f'Failed to extract spike waveforms')
-        
-    #
-    scriptFilePath.unlink() # Delete script
     spikeWaveformsArray = np.load(spikeWaveformsFile)
 
     #
     nUnits, nChannels, nSamples = spikeWaveformsArray.shape
     bestSpikeWaveforms = np.full([nUnits, nSamples], np.nan)
     for iUnit in range(nUnits):
-        bestSpikeWaveform = spikeWaveformsArray[iUnit, 0, :]
+        lfp = spikeWaveformsArray[iUnit, :, :].mean(0)
+        adv = np.array([
+            np.abs(wf - lfp) for wf in spikeWaveformsArray[iUnit]
+        ])
+        channelIndices = np.argsort(adv.sum(axis=1))[::-1][:nBestChannels]
+        bestSpikeWaveform = spikeWaveformsArray[iUnit, channelIndices, :].mean(0)
         bestSpikeWaveforms[iUnit :] = bestSpikeWaveform
 
     #
@@ -373,15 +394,21 @@ def measureSpikeSortingQuality(
 
 def measureVisualResponseAmplitude(
     session,
-    visualResponseWindow=(-0.1, 0.3),
-    baselineResponseWindow=(-11, -10),
-    binsize=0.01
+    responseWindowSize=0.1,
+    baselineWindowEdge=-10,
     ):
     """
     """
 
     nUnits = len(session.population)
     responseAmplitudes = np.full([nUnits, 2], np.nan)
+
+    # Skip this session
+    if session.probeTimestamps is None:
+        session.save('population/metrics/gvr', np.full(nUnits, np.nan))
+        return
+
+    #
     for probeDirection, columnIndex in zip(('left', 'right'), (0, 1)):
 
         #
@@ -392,43 +419,138 @@ def measureVisualResponseAmplitude(
         responseLatencies = session.load(f'population/zeta/probe/{probeDirection}/latency')
 
         #
+        nFailed = 0
         for unit in session.population:
 
             #
             p = responseProbabilities[unit.index]
             l = responseLatencies[unit.index]
 
-            # Peak response is outside of the target response window
-            if l < visualResponseWindow[0] and l > visualResponseWindow[1]:
-                continue
+            # Define the response and baseline windows
+            windowHalfWidth = responseWindowSize / 2
+            visualResponseWindow = np.around(np.array([
+                l - windowHalfWidth,
+                l + windowHalfWidth
+            ]), 2)
+            baselineResponseWindow = np.around(np.array([
+                baselineWindowEdge - responseWindowSize,
+                baselineWindowEdge,
+            ]), 2)
 
-            #
+            # Measure the mean FR in the response window
             t, M = psth2(
                 session.probeTimestamps[session.gratingMotionDuringProbes == probeMotion],
                 unit.timestamps,
                 window=visualResponseWindow,
-                binsize=binsize
+                binsize=None
             )
-            fr = M.mean(0) / binsize
+            fr = M.mean(0) / responseWindowSize
+
+            # Estimate the mean and std of the baseline FR
             mu, sigma = unit.describe(
                 session.probeTimestamps[session.gratingMotionDuringProbes == probeMotion],
                 window=baselineResponseWindow,
-                binsize=binsize
+                binsize=None
             )
 
             # Standardization is undefined
             if sigma == 0:
+                nFailed += 1
                 continue
             else:
                 z = (fr - mu) / sigma
 
-            # Figure out which bin contains the peak response
-            binIndex = np.argmin(np.abs(t - l))
-            responseAmplitudes[unit.index, columnIndex] = z[binIndex]
+            # 
+            responseAmplitudes[unit.index, columnIndex] = z
+
+        #
+        session.log(f'Response amplitude estimation failed for {nFailed} out of {nUnits} units (probe motion={probeMotion})', level='warning')
 
     # Select the largest amplitude response (across motion directions)
     greatestVisualResponse = np.max(responseAmplitudes, axis=1)
     session.save('population/metrics/gvr', greatestVisualResponse)
+
+    return
+
+def computeStandardizedResponseCurves(
+    session,
+    binsize=0.01,
+    responseWindow=(-0.5, 0.5),
+    baselineWindowEdge=-10,
+    ):
+    """
+    """
+
+    #
+    responseWindowSize = np.diff(responseWindow).item()
+    baselineWindow = np.around(np.array([
+        baselineWindowEdge - responseWindowSize,
+        baselineWindowEdge
+    ]))
+
+    #
+    events = (
+        session.probeTimestamps,
+        session.probeTimestamps,
+        session.saccadeTimestamps,
+        session.saccadeTimestamps,
+    )
+    masks = (
+        session.filterProbes(trialType='es', probeDirections=(-1,)),
+        session.filterProbes(trialType='es', probeDirections=(+1,)),
+        session.filterSaccades(saccadeDirections=('n',)),
+        session.filterSaccades(saccadeDirections=('t',))
+    )
+    keys = (
+        ('probe', 'left'),
+        ('probe', 'right'),
+        ('saccade', 'nasal'),
+        ('saccade', 'temporal'),
+    )
+
+    #
+    nBins = int(round(np.diff(responseWindow).item() / binsize, 0))
+    nUnits = len(session.population)
+
+    #
+    for eventTimestamps, eventMask, (eventType, eventDirection) in zip(events, masks, keys):
+
+        # Initialize the dataset
+        Z = np.full([nUnits, nBins], np.nan)
+
+        # Skip this event
+        if eventTimestamps is None:
+            session.save(f'population/psths/{eventType}/{eventDirection}', Z)
+            continue
+
+        #
+        for iUnit, unit in enumerate(session.population):
+
+            # Compute the event-related response
+            t, R1 = psth2(
+                eventTimestamps,
+                unit.timestamps,
+                window=responseWindow,
+                binsize=binsize
+            )
+            fr = R1.mean(0) / binsize
+
+            # Estimate the mean and std of the baseline FR
+            mu, sigma = unit.describe(
+                eventTimestamps,
+                unit.timestamps,
+                window=baselineWindow,
+                binsize=binsize
+            )
+
+            # Standardize (z-score)
+            if sigma == 0:
+                continue
+            z = (fr - mu) / sigma
+            Z[iUnit, :] = z
+    
+        #
+        session.save(f'population/psths/{eventType}/{eventDirection}', Z)
 
     return
 

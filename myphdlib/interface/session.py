@@ -799,7 +799,7 @@ class SessionBase():
         trialType='ps',
         perisaccadicWindow=(-0.05, 0.1),
         probeDirections=(-1, 1),
-        windowBufferForExtrasaccadicTrials=0.5,
+        windowBufferForExtrasaccadicTrials=0,
         ):
         """
         Filter visual probes based on latency to nearest saccade
@@ -868,9 +868,9 @@ class SessionBase():
 
     def filterUnits(
         self,
-        utypes=('vr', 'sr', 'nr', 'ud'),
+        utypes=('vr', 'sr', 'nr', 'ud', 'vm'),
         quality=('lq', 'hq'),
-        minimumResponseAmplitude=0.3,
+        minimumResponseAmplitude=None,
         ):
         """
         Filter single units based on unit type and spike-sorting quality
@@ -884,10 +884,17 @@ class SessionBase():
 
         # Filter
         populationMask = list()
-        for unit in self.population:
-            if unit.utype in utypes and unit.quality in quality and unit.gvr >= minimumResponseAmplitude:
-                populationMask.append(True)
-            else:
-                populationMask.append(False)
+        if minimumResponseAmplitude is None:
+            sufficientResponseAmplitude = np.full(len(self.population), True)
+        else:
+            sufficientResponseAmplitude = np.array([
+                True if unit.gvr >= minimumResponseAmplitude else False
+                    for unit in self.population
+        ])
+        filter_ = np.vstack([
+            np.array([unit.utype in utypes for unit in self.population]),
+            np.array([unit.quality in quality for unit in self.population]),
+            sufficientResponseAmplitude
+        ]).all(0)
 
-        return np.array(populationMask)
+        return filter_

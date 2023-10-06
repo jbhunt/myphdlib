@@ -9,6 +9,8 @@ def locatMatlabAddonsFolder(
 
     if os.name == 'nt':
         matlabAddonsFolder = 'C:/Users/NeuroPixel1/Documents/MATLAB'
+    elif os.name == 'posix':
+        matlabAddonsFolder = '/home/jbhunt/Documents/MATLAB'
 
     return matlabAddonsFolder
 
