@@ -1,240 +1,13 @@
-import os
-import time
-import mat73
-import numpy as np
 from zetapy import getZeta
 from joblib import Parallel, delayed
-from myphdlib.general.toolkit import psth2, smooth, computeAngleFromStandardPosition
-from myphdlib.extensions.matlab import runMatlabScript, locatMatlabAddonsFolder
-from simple_spykes.util.ecephys import run_quality_metrics
-from scipy.stats import ttest_rel, ttest_ind
-from scipy.signal import find_peaks as findPeaks
+from myphdlib.general.toolkit import psth2
+from myphdlib.pipeline.main import ModuleBase
+import numpy as np
 
-#
-samplingRateNeuropixels = 30000.0
-
-#
-matlabScriptTemplate = """
-addpath('{0}/npy-matlab-master/npy-matlab')
-addpath('{0}/spikes-master/analysis')
-spikeTimesFile = '{1}'
-spikeClustersFile = '{2}'
-gwf.dataDir = '{3}'
-gwf.fileName = 'continuous.dat'
-gwf.dataType = 'int16'
-gwf.nCh = 384
-gwf.wfWin = [-31 30]
-gwf.nWf = {4}
-gwf.spikeTimes = readNPY(spikeTimesFile)
-gwf.spikeClusters = readNPY(spikeClustersFile)
-result = getWaveForms(gwf)
-waveforms = result.waveFormsMean;
-fname = '{5}'
-writeNPY(waveforms, fname)
-exit
-"""
-
-
-def extractSpikeDatasets(session):
-    """
-    """
-
-    if session.hasDataset('population/spikes/clusters') and session.hasDataset('population/spikes/timestamps'):
-        return
-    session.log(f'Extracting spike clusters and timestamps', level='info')
-
-    spikeTimestamps = np.array([])
-    result = list(session.folders.ephys.joinpath('sorting').glob('spike_times.npy'))
-    if len(result) != 1:
-        raise Exception('Could not locate the spike times data')
-    else:
-        spikeTimestamps = np.around(
-            np.load(str(result.pop())).flatten() / samplingRateNeuropixels,
-            3
-        )
-    
-    #
-    spikeClusters = np.array([])
-    result = list(session.folders.ephys.joinpath('sorting').glob('spike_clusters.npy'))
-    if len(result) != 1:
-        raise Exception('Could not locate the cluster ID data')
-    else:
-        spikeClusters = np.around(
-            np.load(str(result.pop())).flatten(),
-            3
-        )
-
-    #
-    session.save('spikes/timestamps', spikeTimestamps)
-    session.save('spikes/clusters', spikeClusters)
-
-    return
-
-def extractKilosortLabels(
-    session,
-    overwrite=True,
-    ):
-    """
-    """
-
-    #
-    if session.hasDataset('population/metrics/ksl') and overwrite == False:
-        return
-
-    #
-    spikeClusters = np.array([])
-    result = list(session.folders.ephys.joinpath('sorting').glob('spike_clusters.npy'))
-    if len(result) != 1:
-        raise Exception('Could not locate the cluster ID data')
-    else:
-        spikeClusters = np.around(
-            np.load(str(result.pop())).flatten(),
-            3
-        )
-
-    #
-    clusterNumbers1 = np.unique(spikeClusters)
-    nUnits = clusterNumbers1.size
-
-    # Extract the label assigned to each unit by Kilosort
-    clusterLabels = list()
-    clusterNumbers2 = list()
-    result = list(session.folders.ephys.joinpath('sorting').glob('cluster_KSLabel.tsv'))
-    if len(result) != 1:
-        session.log(f'Could not locate Kilosort labels', level='warning')
-        clusterLabels = np.full(nUnits, np.nan)
-    else:
-        tsv = result.pop()
-        with open(tsv, 'r') as stream:
-            lines = stream.readlines()[1:]
-        for line in lines:
-            cluster, label = line.rstrip('\n').split('\t')
-            clusterNumbers2.append(int(cluster))
-            clusterLabels.append(0 if label == 'mua' else 1)
-        clusterLabels = np.array(clusterLabels)[np.argsort(clusterNumbers2)]
-
-    # Need to delete labels where the cluster number is missing
-    missingClusterNumbers = np.setdiff1d(clusterNumbers2, clusterNumbers1)
-    missingClusterIndices = np.array([
-        np.where(clusterNumbers2 == missingClusterNumber)[0].item()
-            for missingClusterNumber in missingClusterNumbers
-    ])
-    if missingClusterIndices.size != 0:
-        clusterLabels = np.delete(clusterLabels, missingClusterIndices)
-    
-    #
-    session.save('population/metrics/ksl', clusterLabels)
-
-    return
-
-def extractSpikeWaveforms(
-    session,
-    nWaveforms=50,
-    nBestChannels=5,
-    nogui=True,
-    windowsProcessTimeout=60*10, # Ten minutes
-    ):
-
-    #
-    # if session.hasDataset('population/metrics/bsw'):
-    #     return
-
-    #
-    partsFromEphysFolder = (
-        'sorting',
-    )
-    spikeWaveformsFile = session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_waveforms.npy')
-
-    #
-    if spikeWaveformsFile.exists() == False:
-        matlabAddonsFolder = locatMatlabAddonsFolder()
-        matlabScriptLines = matlabScriptTemplate.format(
-            matlabAddonsFolder,
-            session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_times.npy'),
-            session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_clusters.npy'),
-            session.folders.ephys.joinpath(*partsFromEphysFolder),
-            nWaveforms,
-            session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_waveforms.npy'),
-        ).strip('\n')
-        scriptFilePath = session.folders.ephys.joinpath('sorting', 'extractSpikeWaveforms.m')
-        with open(scriptFilePath, 'w') as stream:
-            for line in matlabScriptLines:
-                stream.write(line)
-
-        #
-        runMatlabScript(
-            scriptFilePath,
-            nogui=nogui
-        )
-
-        #
-        if os.name == 'nt':
-            t0 = time.time()
-            while True:
-                if time.time() - t0 > windowsProcessTimeout:
-                    raise Exception(f'Failed to extract spike waveforms')
-                spikeWaveformsFile = session.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_waveforms.npy')
-                if spikeWaveformsFile.exists():
-                    break
-
-        #
-        elif os.name == 'posix':
-            if spikeWaveformsFile.exists() == False:
-                raise Exception(f'Failed to extract spike waveforms')
-            
-        #
-        scriptFilePath.unlink() # Delete script
-
-    #
-    spikeWaveformsArray = np.load(spikeWaveformsFile)
-
-    #
-    nUnits, nChannels, nSamples = spikeWaveformsArray.shape
-    bestSpikeWaveforms = np.full([nUnits, nSamples], np.nan)
-    for iUnit in range(nUnits):
-        lfp = spikeWaveformsArray[iUnit, :, :].mean(0)
-        adv = np.array([
-            np.abs(wf - lfp) for wf in spikeWaveformsArray[iUnit]
-        ])
-        channelIndices = np.argsort(adv.sum(axis=1))[::-1][:nBestChannels]
-        bestSpikeWaveform = spikeWaveformsArray[iUnit, channelIndices, :].mean(0)
-        bestSpikeWaveforms[iUnit :] = bestSpikeWaveform
-
-    #
-    session.save(f'population/metrics/bsw', bestSpikeWaveforms)
-
-    return
-
-def extractUnitPositions(session):
-    """
-    """
-
-    #
-    if session.hasDataset('population/metrics/msp'):
-        return
-
-    #
-    kilosortResultsFile = session.folders.ephys.joinpath('sorting', 'rez.mat')
-    kilosortResults = mat73.loadmat(kilosortResultsFile)['rez']
-    spikeCoordinates = kilosortResults['xy']
-    spikeClustersFile = session.folders.ephys.joinpath('sorting', 'spike_clusters.npy')
-    spikeClusters = np.load(spikeClustersFile)
-    
-    #
-    uniqueSpikeClusters = np.unique(spikeClusters)
-    nUnits = uniqueSpikeClusters.size
-    meanSpikePositions = np.full([nUnits, 2], np.nan)
-    for iUnit, uniqueSpikeCluster in enumerate(uniqueSpikeClusters):
-        mask = spikeClusters.flatten() == uniqueSpikeCluster
-        meanSpikePosition = np.around(spikeCoordinates[mask, :].mean(0), 2)
-        meanSpikePositions[iUnit] = meanSpikePosition
-
-    # Need to swap x and y coordinates
-    meanSpikePositions = np.fliplr(meanSpikePositions)
-    session.save('population/metrics/msp', meanSpikePositions)
-
-
-    return
+# TODO
+# [ ] Recompute the visual response amplitudes and compute respone amplitudes to saccades
+# [ ] Measure the latency to the very first peak response
+# [ ] Measure baseline activity? Maybe don't do this yet
 
 def _runZetaTestForBatch(
     units,
@@ -276,6 +49,7 @@ def runZetaTests(
     parallelize=True,
     nUnitsPerBatch=3,
     latencyMetric='peak',
+    overwrite=False
     ):
     """
     """
@@ -302,8 +76,13 @@ def runZetaTests(
     #
     for ev, n, d in zip(eventTimestamps, eventNames, eventDirections):
 
+        # Check if dataset already exists
+        if session.hasDataset(f'population/zeta/{n}/{d}/p') and overwrite == False:
+            session.log(f'Skipping ZETA test for activity related to {n}s (direction={d}, window=[{responseWindow[0]}, {responseWindow[1]}] sec)', level='info')
+            continue
+
         #
-        session.log(f'Running ZETA test for activity related to {n}s, (direction={d}, window=[{responseWindow[0]}, {responseWindow[1]}] sec)', level='info')
+        session.log(f'Running ZETA test for activity related to {n}s (direction={d}, window=[{responseWindow[0]}, {responseWindow[1]}] sec)', level='info')
 
         # Create batches of units
         batches = [
@@ -345,63 +124,151 @@ def runZetaTests(
 
     return
 
-def measureSpikeSortingQuality(
-    session,
-    **kwargs
+def _runBaselineEstimationForBatch(
+    units,
+    eventTimestamps,
+    baselineWindowSize,
+    baselineBoundaries,
+    nRuns
     ):
     """
-    Notes
-    -----
-    Default threshold values are based on the quality metrics tutorial from the Allen Institute:
-    https://allensdk.readthedocs.io/en/latest/_static/examples/nb/ecephys_quality_metrics.html
     """
 
-    print(f'INFO[{session.animal}, {session.date}]: Measuring spike-sorting quality')
+    params = list()
+    for unit in units:
+        mu, sigma = unit.estimateBaselineParameters(
+            eventTimestamps,
+            baselineWindowSize,
+            baselineBoundaries,
+            nRuns,
+        )
+        params.append([mu, sigma, unit.index])
 
-    # ecephys spike sorting backend
-    params_ = {
-        "isi_threshold": 0.0015,
-        "min_isi": 0.000166,
-        "num_channels_to_compare": 7,
-        "max_spikes_for_unit": 500,
-        "max_spikes_for_nn": 10000,
-        "n_neighbors": 4,
-        'n_silhouette': 10000,
-        "drift_metrics_interval_s": 51,
-        "drift_metrics_min_spikes_per_interval": 10,
-        "include_pc_metrics": False
-    }
-    params_.update(kwargs)
+    return params
+
+def measureBaselineActivity2(
+    session,
+    ):
+    """
+    """
+
+    return
+
+def measureBaselineActivity(
+    session,
+    baselineBoundaries=(-10, -5),
+    baselineWindowSize=0.1,
+    nRunsPerUnit=100,
+    nUnitsPerBatch=3,
+    parallelize=True,
+    overwrite=False,
+    nJobs=-3
+    ):
+    """
+    """
 
     #
-    sortingResultsFolder = session.folders.ephys.joinpath('sorting')
-    metrics = run_quality_metrics(
-        str(sortingResultsFolder),
-        30000.0,
-        params_,
-        save_to_file=str(sortingResultsFolder.joinpath('quality_metrics.json'))
+    nUnits = len(session.population)
+
+    #
+    datasetKeys = (
+        ('probe', 'left'),
+        ('probe', 'right'),
+        ('saccade', 'nasal'),
+        ('saccade', 'temporal')
     )
-    presenceRatios = np.array(list(metrics['presence_ratio'].values())).astype(float)
-    isiViolationRates = np.array(list(metrics['isi_viol'].values())).astype(float)
-    amplitudeCutoffs = np.array(list(metrics['amplitude_cutoff'].values())).astype(float)
+
+    # Skip sessions with no visual probes
+    if session.probeTimestamps is None:
+        for (eventName, eventDirection) in datasetKeys:
+            for feature in ('mu', 'sigma'):
+                session.save(f'population/baseline/{eventName}/{eventDirection}/{feature}', np.full(nUnits, np.nan))
+        return
+
 
     #
-    session.save('population/metrics/pr', presenceRatios)
-    session.save('population/metrics/rpvr', isiViolationRates)
-    session.save('population/metrics/ac', amplitudeCutoffs)
+    eventTimestamps = (
+        session.probeTimestamps[session.filterProbes(trialType='es', probeDirections=(-1,))],
+        session.probeTimestamps[session.filterProbes(trialType='es', probeDirections=(+1,))],
+        session.saccadeTimestamps[session.filterSaccades(trialType='es', saccadeDirections=('n',))],
+        session.saccadeTimestamps[session.filterSaccades(trialType='es', saccadeDirections=('t',))]
+    )
+
+    #
+    for (eventName, eventDirection), evt in zip(datasetKeys, eventTimestamps):
+
+        #
+        if session.hasDataset(f'population/baseline/{eventName}/{eventDirection}/mu') and overwrite == False:
+            session.log(f'Skipping baseline estimation (event={eventName}, direction={eventDirection})', level='info')
+            continue
+
+        #
+        session.log(f'Estimating baseline parameters (event={eventName}, direction={eventDirection})', level='info')
+
+        #
+        if parallelize:
+            batches = list()
+            for i in range(0, nUnits, nUnitsPerBatch):
+                batch = session.population[i:i + nUnitsPerBatch]
+                batches.append(batch)
+            results = Parallel(n_jobs=nJobs)(delayed(_runBaselineEstimationForBatch)(
+                batch,
+                evt,
+                baselineWindowSize,
+                baselineBoundaries,
+                nRunsPerUnit
+                )
+                    for batch in batches
+            )
+            params = np.vstack([
+                np.array(result) for result in results
+            ])
+            average, deviation, indices = params[:, 0], params[:, 1], params[:, 2]
+            index = np.argsort(indices)
+            average = average[index]
+            deviation = deviation[index]
+
+        #
+        else:
+            average, deviation = np.full(nUnits, np.nan), np.full(nUnits, np.nan)
+            for iUnit, unit in enumerate(session.population):
+                mu, sigma = unit.estimateBaselineParameters(
+                    evt,
+                    baselineWindowSize=baselineWindowSize,
+                    baselineBoundaries=baselineBoundaries,
+                    nRuns=nRunsPerUnit
+                )
+                if sigma == 0:
+                    average[iUnit] = np.nan
+                    deviation[iUnit] = np.nan
+                else:
+                    average[iUnit] = mu
+                    deviation[iUnit] = sigma
+
+        #
+        session.save(f'population/baseline/{eventName}/{eventDirection}/mu', average)
+        session.save(f'population/baseline/{eventName}/{eventDirection}/sigma', deviation)
 
     return
 
 def measureVisualResponseAmplitude(
     session,
     responseWindowSize=0.1,
-    baselineWindowEdge=-10,
+    baselineWindowEdge=-5,
+    zscoreMethod=2,
+    nRuns=100,
+    overwrite=False
     ):
     """
     """
 
     nUnits = len(session.population)
     responseAmplitudes = np.full([nUnits, 2], np.nan)
+
+    #
+    if session.hasDataset('population/metrics/gvr') and overwrite == False:
+        session.log('Skipping estimation of visual response amplitude', level='info')
+        return
 
     # Skip this session
     if session.probeTimestamps is None:
@@ -447,11 +314,21 @@ def measureVisualResponseAmplitude(
             fr = M.mean(0) / responseWindowSize
 
             # Estimate the mean and std of the baseline FR
-            mu, sigma = unit.describe(
-                session.probeTimestamps[session.gratingMotionDuringProbes == probeMotion],
-                window=baselineResponseWindow,
+            if zscoreMethod == 1:
+                mu, sigma = unit.describe(
+                    session.probeTimestamps[session.gratingMotionDuringProbes == probeMotion],
+                    window=baselineResponseWindow,
                 binsize=None
-            )
+                )
+            elif zscoreMethod == 2:
+                mu, sigma = (unit.upl, unit.spl) if probeMotion == -1 else (unit.upr, unit.spr)
+                if mu is None and sigma is None:
+                    print('Uh-oh')
+                    mu, sigma = unit.estimateBaselineParameters(
+                        session.probeTimestamps[session.gratingMotionDuringProbes == probeMotion],
+                        baselineWindowSize=responseWindowSize,
+                        nRuns=nRuns,
+                    )
 
             # Standardization is undefined
             if sigma == 0:
@@ -476,7 +353,10 @@ def computeStandardizedResponseCurves(
     session,
     binsize=0.01,
     responseWindow=(-0.5, 0.5),
-    baselineWindowEdge=-10,
+    baselineWindowEdge=-5,
+    zscoreMethod=1,
+    nRuns=100,
+    overwrite=False
     ):
     """
     """
@@ -498,8 +378,8 @@ def computeStandardizedResponseCurves(
     masks = (
         session.filterProbes(trialType='es', probeDirections=(-1,)),
         session.filterProbes(trialType='es', probeDirections=(+1,)),
-        session.filterSaccades(saccadeDirections=('n',)),
-        session.filterSaccades(saccadeDirections=('t',))
+        session.filterSaccades(trialType='es', saccadeDirections=('n',)),
+        session.filterSaccades(trialType='es', saccadeDirections=('t',))
     )
     keys = (
         ('probe', 'left'),
@@ -515,6 +395,11 @@ def computeStandardizedResponseCurves(
     #
     for eventTimestamps, eventMask, (eventType, eventDirection) in zip(events, masks, keys):
 
+        #
+        if session.hasDataset(f'population/psths/{eventType}/{eventDirection}') and overwrite == False:
+            session.log(f'Skipping estimation of standardized psth (event={eventType}, direction={eventDirection})', level='info')
+            continue
+
         # Initialize the dataset
         Z = np.full([nUnits, nBins], np.nan)
 
@@ -526,9 +411,11 @@ def computeStandardizedResponseCurves(
         #
         for iUnit, unit in enumerate(session.population):
 
+            session.log(f'Computing standardized psth for unit {unit.cluster} (event={eventType}, direction={eventDirection})', level='info')
+
             # Compute the event-related response
             t, R1 = psth2(
-                eventTimestamps,
+                eventTimestamps[eventMask],
                 unit.timestamps,
                 window=responseWindow,
                 binsize=binsize
@@ -536,12 +423,23 @@ def computeStandardizedResponseCurves(
             fr = R1.mean(0) / binsize
 
             # Estimate the mean and std of the baseline FR
-            mu, sigma = unit.describe(
-                eventTimestamps,
-                unit.timestamps,
-                window=baselineWindow,
-                binsize=binsize
-            )
+            if zscoreMethod == 1:
+                mu, sigma = unit.describe(
+                    eventTimestamps,
+                    window=baselineWindow,
+                    binsize=binsize
+                )
+            elif zscoreMethod == 2:
+                if eventType == 'probe':
+                    mu, sigma = (unit.upl, unit.spl) if eventDirection == 'left' else (unit.upr, unit.spr)
+                elif eventType == 'saccade':
+                    mu, sigma = (unit.usn, unit.ssn) if eventDirection == 'nasal' else (unit.ust, unit.sst)
+                if mu is None and sigma is None:
+                    mu, sigma = unit.estimateBaselineParameters(
+                        session.probeTimestamps[session.gratingMotionDuringProbes == probeMotion],
+                        baselineWindowSize=responseWindowSize,
+                        nRuns=nRuns,
+                    )
 
             # Standardize (z-score)
             if sigma == 0:
@@ -554,66 +452,41 @@ def computeStandardizedResponseCurves(
 
     return
 
-def createPopulationMasks(
-    session,
-    minimumResponseProbability=0.05,
-    maximumResponseLatencyForSaccadeRelatedUnits=0.04,
-    minimumPresenceRatio=0.9,
-    maximumRefractoryPeriodViolationRate=0.5,
-    maximumAmplitudeCutoff=0.1,
-    ):
-    """
-    """
+class ActivityModule():
 
-    #
-    nUnits = len(session.population)
-    maskVisuallyResponsive = np.full(nUnits, False)
-    maskSaccadeRelated = np.full(nUnits, False)
+    def __init__(
+        self
+        ):
+        self._sessions = list()
+        return
 
-    for probeDirection in ('left', 'right'):
-        responseProbabilities = session.load(f'population/zeta/probe/{probeDirection}/p')
-        for unit in session.population:
-            p = responseProbabilities[unit.index]
-            if p < minimumResponseProbability:
-                maskVisuallyResponsive[unit.index] = True
+    def addSession(
+        self,
+        session,
+        ):
+        """
+        """
 
-    for saccadeDirection in ('nasal', 'temporal'):
-        responseProbabilities = session.load(f'population/zeta/saccade/{saccadeDirection}/p')
-        responseLatencies = session.load(f'population/zeta/saccade/{saccadeDirection}/latency')
-        for unit in session.population:
-            p = responseProbabilities[unit.index]
-            l = responseLatencies[unit.index]
-            if p < minimumResponseProbability and l < maximumResponseLatencyForSaccadeRelatedUnits:
-                maskSaccadeRelated[unit.index] = True
+        self._sessions.append(session)
 
-    #
-    session.save('population/masks/sr', maskSaccadeRelated)
-    session.save('population/masks/vr', maskVisuallyResponsive)
+        return
 
-    #
-    spikeSortingQualityFilters = np.vstack([
-        session.load('population/metrics/pr') >= minimumPresenceRatio,
-        session.load('population/metrics/rpvr') <= maximumRefractoryPeriodViolationRate,
-        session.load('population/metrics/ac') <= maximumAmplitudeCutoff
-    ])
-    maskHighQuality = spikeSortingQualityFilters.all(0)
-    session.save('population/masks/hq', maskHighQuality)
+    def run(
+        self,
+        overwrite=False,
+        ):
+        """
+        """
 
-    return
+        submodules = (
+            runZetaTests,
+            measureBaselineActivity,
+            measureVisualResponseAmplitude,
+            computeStandardizedResponseCurves,
+        )
 
-def processEphysData(session):
-    """
-    """
+        for session in self._sessions:
+            for submodule in submodules:
+                submodule(session, overwrite=overwrite)
 
-    modules = (
-        extractSpikeSortingData,
-        runZetaTests,
-        measureSpikeSortingQuality,
-        measureVisualResponseAmplitude,
-        createPopulationMasks,
-    )
-
-    for module in modules:
-        module(session)
-
-    return
+        return

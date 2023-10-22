@@ -47,10 +47,15 @@ class SessionFactory(object):
 
         # Linux
         elif os.name == 'posix':
-            for user in pl.Path('/media/').iterdir():
-                for drive in user.iterdir():
-                    if bool(re.search(f'.*{tag}.*', str(drive.name))):
-                        self.volumes.append(drive)
+            if 'gdrive' in tag:
+                drive = pl.Path().joinpath(os.environ['HOME'], 'gdrive', 'Josh')
+                self.volumes.append(drive)
+            
+            else:
+                for user in pl.Path('/media/').iterdir():
+                    for drive in user.iterdir():
+                        if bool(re.search(f'.*{tag}.*', str(drive.name))):
+                            self.volumes.append(drive)
 
         #
         else:

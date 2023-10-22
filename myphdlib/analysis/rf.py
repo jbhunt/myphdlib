@@ -1,9 +1,14 @@
+import numpy as np
+from myphdlib.general.toolkit import psth2
+
 def estimateReceptiveFieldsWithSparseNoise(session, window=(0, 0.2), phase='on'):
     """
     """
 
     rfs = list()
     fields = session.load(f'stimuli/sn/pre/fields')
+    if fields is None:
+        fields = session.load(f'stimuli/sn/post/fields')
     nDots, nRows, nCols = fields.shape
 
     #

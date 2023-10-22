@@ -443,19 +443,21 @@ def computeRelativeEventTiming(
 
     #
     for trialIndex, probeTimestamp in enumerate(session.probeTimestamps):
+        if np.isnan(probeTimestamp):
+            continue
         saccadeTimestampsRelative = session.saccadeTimestamps - probeTimestamp
         closestSaccadeIndex = np.argmin(np.abs(saccadeTimestampsRelative))
         closestSaccadeDirection = session.saccadeDirections[closestSaccadeIndex]
-        probeLatency = probeTimestamp - session.saccadeTimestamps[closestSaccadeIndex]
+        probeLatency = round(probeTimestamp - session.saccadeTimestamps[closestSaccadeIndex], 3)
         data['dos'][trialIndex] = -1 if closestSaccadeDirection == 't' else +1
         data['tts'][trialIndex] = probeLatency
 
     #
     for trialIndex, saccadeTimestamp in enumerate(session.saccadeTimestamps):
         probeTimestampsRelative = session.probeTimestamps - saccadeTimestamp
-        closestProbeIndex = np.argmin(np.abs(probeTimestampsRelative))
+        closestProbeIndex = np.nanargmin(np.abs(probeTimestampsRelative))
         closestProbeDirection = session.gratingMotionDuringProbes[closestProbeIndex]
-        saccadeLatency = saccadeTimestamp - session.probeTimestamps[closestProbeIndex]
+        saccadeLatency = round(saccadeTimestamp - session.probeTimestamps[closestProbeIndex], 3)
         data['ttp'][trialIndex] = saccadeLatency
         data['dop'][trialIndex] = closestProbeDirection
 

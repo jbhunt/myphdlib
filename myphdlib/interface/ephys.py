@@ -1,3 +1,4 @@
+import h5py
 import numpy as np
 from myphdlib.general.toolkit import psth2
 
@@ -23,9 +24,21 @@ class SingleUnit():
         self._quality = None
         self._index = None
         self._ksl = None
-        self._lvrl = None
-        self._lvrr = None
+        self._lpl = None
+        self._lpr = None
         self._gvr = None
+        self._upl = None
+        self._upr = None
+        self._usn = None
+        self._ust = None
+        self._spl = None
+        self._spr = None
+        self._ssn = None
+        self._sst = None
+        self._ppl = None
+        self._ppr = None
+        self._psn = None
+        self._pst = None
 
         return
     
@@ -59,7 +72,7 @@ class SingleUnit():
                 binsize=binsize
             )
             if binsize is None:
-                dt = np.diff(window)
+                dt = np.diff(window).item()
                 fr = M.flatten() / dt
                 mu = np.mean(fr)
                 sigma = np.std(fr)
@@ -70,12 +83,113 @@ class SingleUnit():
 
         return mu, sigma
 
+    def estimateTrueBaseline(
+        self,
+        ):
+        """
+        """
+
+        epochs = list()
+        gratingOnsetTimestamps = self.session.load('stimuli/dg/grating/timestamps')
+        gratingOffsetTimestamps = self.session.load('stimuli/dg/iti/timestamps')
+        nBlocks = gratingOnsetTimestamps.size
+        for iBlock in range(nBlocks):
+            epoch = gratingOnsetTimestamps[iBlock], gratingOffsetTimestamps[iBlock]
+            epochs.append(epoch)
+        epochs = np.array(epochs)
+        sample = list()
+        for epoch in epochs:
+            nSpikes = np.sum(np.logical_and(
+                self.timestamps >= epoch[0],
+                self.timestamps <= epoch[1]
+            ))
+            dt = np.diff(epoch)
+            fr = nSpikes / dt
+            sample.append(fr)
+
+        return np.array(sample), np.mean(sample), np.std(sample)
+
+    def bootstrapBaselineDescription(
+        self,
+        eventTimestamps,
+        baselineWindowSize=0.1,
+        baselineBoundaries=(-10, -5),
+        nRuns=30,
+        ):
+        """
+        Estimate mean and std of baseline FR using boostrap procedure
+        """
+
+        mu, sigma = np.full(nRuns, np.nan), np.full(nRuns, np.nan)
+        windowHalfWidth = round(baselineWindowSize / 2, 2)
+        for iRun in range(nRuns):
+            baselineWindowCenter = np.around(np.random.uniform(
+                low=baselineBoundaries[0] + windowHalfWidth,
+                high=baselineBoundaries[1] - windowHalfWidth,
+                size=1,
+            ), 2).item()
+            baselineWindowEdges = np.array([
+                baselineWindowCenter - windowHalfWidth,
+                baselineWindowCenter + windowHalfWidth
+            ])
+            t, R = psth2(
+                eventTimestamps,
+                self.timestamps,
+                window=baselineWindowEdges,
+                binsize=None
+            )
+            mu[iRun] = R.mean(0) / baselineWindowSize
+            sigma[iRun] = R.std(0) / baselineWindowSize
+
+        return round(mu.mean(), 3), round(sigma.mean(), 3)
+
+    def peth(
+        self,
+        eventTimestamps,
+        responseWindow=(-0.3, 0.5),
+        baselineWindow=(-8, -5),
+        binsize=0.01,
+        standardize=True
+        ):
+        """
+        """
+
+        #
+        t, m = psth2(
+            eventTimestamps,
+            self.timestamps,
+            window=responseWindow,
+            binsize=binsize
+        )
+        fr = m.mean(0) / binsize
+
+        #
+        if standardize == False:
+            return t, fr
+
+        #
+        mu, sigma = self.describe(
+            eventTimestamps,
+            window=baselineWindow,
+            binsize=None
+        )
+        if sigma == 0:
+            z = np.full(t.size, np.nan)
+        else:
+            z = (fr - mu) / sigma
+
+        return t, z
+
     @property
     def index(self):
         """
         """
 
         if self._index is None:
+            # with h5py.File(str(self.session.hdf), 'r') as stream:
+            #     spikeClusters = stream['spikes/clusters']
+            #     uniqueSpikeClusters = np.unique(spikeClusters)
+            #     self._index = np.where(uniqueSpikeClusters == self.cluster)[0].item()
             self._index = np.where(self.session.population.uniqueSpikeClusters == self.cluster)[0].item()
 
         return self._index
@@ -100,6 +214,11 @@ class SingleUnit():
         """
 
         if self._timestamps is None:
+            # with h5py.File(str(self.session.hdf), 'r') as stream:
+            #     spikeTimestamps = stream['spikes/timestamps']
+            #     spikeClusters = stream['spikes/clusters']
+            #     spikeIndices = np.where(spikeClusters == self.cluster)
+            #     self._timestamps = np.array(spikeTimestamps[spikeIndices])
             spikeIndices = np.where(self.session.population.allSpikeClusters == self.cluster)[0]
             self._timestamps = self.session.population.allSpikeTimestamps[spikeIndices]
 
@@ -112,29 +231,24 @@ class SingleUnit():
 
         if self._utype is None:
 
+            self._utype = list()
+
             #
             if self.session.population.datasets[('masks', 'vr')] is not None:
                 vr = self.session.population.datasets[('masks', 'vr')][self.index]
-            else:
-                vr = None
+                if vr:
+                    self._utype.append('vr')
 
             #
             if self.session.population.datasets[('masks', 'sr')] is not None:
                 sr = self.session.population.datasets[('masks', 'sr')][self.index]
-            else:
-                sr = None
+                if sr:
+                    self._utype.append('sr')
 
             #
-            if vr == True and sr == True:
-                self._utype = 'vm'
-            elif vr == True and sr == False:
-                self._utype = 'vr'
-            elif vr == False and sr == True:
-                self._utype = 'sr'
-            elif vr == False and sr == False:
-                self._utype = 'nr'
-            else:
-                self._utype = 'ud' # undefined
+            if len(self._utype) == 0:
+                self._utype.append('nr')
+            self._utype = tuple(self._utype)
 
         return self._utype
 
@@ -161,48 +275,121 @@ class SingleUnit():
 
         return self._ksl
 
-    # TODO: Code these properties
-
     # Probability visually responsive (left)
     @property
-    def pvrl(self):
-        return
+    def ppl(self):
+        if self._ppl is None:
+            if self.session.population.datasets[('zeta', 'probe', 'left', 'p')] is not None:
+                self._ppl = round(self.session.population.datasets[('zeta', 'probe', 'left', 'p')][self.index], 2)
+        return self._ppl
     
     # Probability visually responsive (right)
     @property
-    def pvrr(self):
-        return
+    def ppr(self):
+        if self._ppr is None:
+            if self.session.population.datasets[('zeta', 'probe', 'right', 'p')] is not None:
+                self._ppr = round(self.session.population.datasets[('zeta', 'probe', 'right', 'p')][self.index], 2)
+        return self._ppr
 
     # Probability saccade related (nasal)
     @property
-    def psrn(self):
-        return
+    def psn(self):
+        if self._psn is None:
+            if self.session.population.datasets[('zeta', 'probe', 'left', 'latency')] is not None:
+                self._psn = round(self.session.population.datasets[('zeta', 'saccade', 'nasal', 'p')][self.index], 2)
+        return self._psn
 
     # Probability saccade related (temporal)
     @property
-    def psrt(self):
-        return
-
-    @property
-    def lvrl(self):
-        if self._lvrl is None:
+    def pst(self):
+        if self._pst is None:
             if self.session.population.datasets[('zeta', 'probe', 'left', 'latency')] is not None:
-                self._lvrl = round(self.session.population.datasets[('zeta', 'probe', 'left', 'latency')][self.index], 2)
-        return self._lvrl
+                self._pst = round(self.session.population.datasets[('zeta', 'saccade', 'nasal', 'p')][self.index], 2)
+        return self._pst
 
+    #
     @property
-    def lvrr(self):
-        if self._lvrr is None:
-            if self.session.population.datasets[('zeta', 'probe', 'right', 'latency')] is not None:
-                self._lvrr = round(self.session.population.datasets[('zeta', 'probe', 'right', 'latency')][self.index], 2)
-        return self._lvrr
+    def lpl(self):
+        if self._lpl is None:
+            if self.session.population.datasets[('zeta', 'probe', 'left', 'latency')] is not None:
+                self._lpl = round(self.session.population.datasets[('zeta', 'probe', 'left', 'latency')][self.index], 2)
+        return self._lpl
 
+    #
+    @property
+    def lpr(self):
+        if self._lpr is None:
+            if self.session.population.datasets[('zeta', 'probe', 'right', 'latency')] is not None:
+                self._lpr = round(self.session.population.datasets[('zeta', 'probe', 'right', 'latency')][self.index], 2)
+        return self._lpr
+
+    # Greatest visual response (amplitude, z-scored spikes/second)
     @property
     def gvr(self):
         if self._gvr is None:
             if self.session.population.datasets[('metrics', 'gvr')] is not None:
                 self._gvr = round(self.session.population.datasets[('metrics', 'gvr')][self.index], 3)
         return self._gvr
+
+    # Mean baseline FR preceding probe stimulus during leftward motion
+    @property
+    def upl(self):
+        if self._upl is None:
+            if self.session.population.datasets[('baseline', 'probe', 'left', 'mu')] is not None:
+                self._upl = round(self.session.population.datasets[('baseline', 'probe', 'left', 'mu')][self.index], 3)
+        return self._upl
+    
+    # Mean baseline FR preceding probe stimulus during rightward motion
+    @property
+    def upr(self):
+        if self._upr is None:
+            if self.session.population.datasets[('baseline', 'probe', 'right', 'mu')] is not None:
+                self._upr = round(self.session.population.datasets[('baseline', 'probe', 'right', 'mu')][self.index], 3)
+        return self._upr
+    
+    # Mean baseline FR preceding nasal saccades
+    @property
+    def usn(self):
+        if self._upr is None:
+            if self.session.population.datasets[('baseline', 'probe', 'right', 'mu')] is not None:
+                self._upr = round(self.session.population.datasets[('baseline', 'probe', 'right', 'mu')][self.index], 3)
+        return self._upr
+
+    # Mean baseline FR preceding temporal saccades
+    @property
+    def ust(self):
+        if self._upr is None:
+            if self.session.population.datasets[('baseline', 'probe', 'right', 'mu')] is not None:
+                self._upr = round(self.session.population.datasets[('baseline', 'probe', 'right', 'mu')][self.index], 3)
+        return self._upr
+
+    @property
+    def spl(self):
+        if self._spl is None:
+            if self.session.population.datasets[('baseline', 'probe', 'left', 'sigma')] is not None:
+                self._spl = round(self.session.population.datasets[('baseline', 'probe', 'left', 'sigma')][self.index], 3)
+        return self._spl
+    
+    @property
+    def spr(self):
+        if self._spr is None:
+            if self.session.population.datasets[('baseline', 'probe', 'right', 'sigma')] is not None:
+                self._spr = round(self.session.population.datasets[('baseline', 'probe', 'right', 'sigma')][self.index], 3)
+        return self._spr
+    
+    @property
+    def ssn(self):
+        if self._ssn is None:
+            if self.session.population.datasets[('baseline', 'saccade', 'nasal', 'sigma')] is not None:
+                self._snn = round(self.session.population.datasets[('baseline', 'saccade', 'nasal', 'sigma')][self.index], 3)
+        return self._snn
+
+    @property
+    def sst(self):
+        if self._sst is None:
+            if self.session.population.datasets[('baseline', 'saccade', 'temporal', 'sigma')] is not None:
+                self._sst = round(self.session.population.datasets[('baseline', 'saccade', 'temporal', 'sigma')][self.index], 3)
+        return self._sst
 
 class Population():
     """
@@ -253,9 +440,13 @@ class Population():
         self._allSpikeClusters = self._session.load('spikes/clusters')
         self._allSpikeTimestamps = self._session.load('spikes/timestamps')
         self._uniqueSpikeClusters = np.unique(self.allSpikeClusters)
+        # with h5py.File(str(self._session.hdf), 'r') as stream:
+        #     spikeClusters = stream['spikes/clusters']
+        #    uniqueSpikeClusters = np.unique(spikeClusters)
 
         #
-        for cluster in np.unique(self._allSpikeClusters):
+        # for cluster in np.unique(self._allSpikeClusters):
+        for cluster in self.uniqueSpikeClusters:
             unit = SingleUnit(self._session, cluster)
             self._units.append(unit)
 

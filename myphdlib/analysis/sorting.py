@@ -83,7 +83,7 @@ def createManualSpikeSortingLog(
             sessionEntries.append(entry)
 
         # Sort entries by the p-values
-        probabilityValues = np.array([entry[6] for entry in sessionEntries])
+        probabilityValues = np.array([entry[8] for entry in sessionEntries])
         for entryIndex in np.argsort(probabilityValues):
             allEntries.append(sessionEntries[entryIndex])
 

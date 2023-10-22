@@ -65,7 +65,7 @@ pathsToKeep = {
     "population/metrics/pd", # Preferred direction
     "population/metrics/nd", # Null direction
     "population/metrics/dsi", # Direction-selectivity index
-    "population/metrics/mi", # Saccadic modulatio index
+    "population/metrics/mi", # Saccadic modulation index
 
     # PSTHs
     "population/psths",
@@ -75,6 +75,22 @@ pathsToKeep = {
     "population/psths/saccade",
     "population/psths/saccade/nasal",
     "population/psths/saccade/temporal",
+
+    # Baseline estimates
+    "population/baseline/probe",
+    "population/baseline/probe/left",
+    "population/baseline/probe/left/mu",
+    "population/baseline/probe/left/sigma",
+    "population/baseline/probe/right",
+    "population/baseline/probe/right/mu",
+    "population/baseline/probe/right/sigma",
+    "population/baseline/saccade",
+    "population/baseline/saccade/nasal",
+    "population/baseline/saccade/nasal/mu",
+    "population/baseline/saccade/nasal/sigma",
+    "population/baseline/saccade/temporal",
+    "population/baseline/saccade/temporal/mu",
+    "population/baseline/saccade/temporal/sigma",
 
     # ZETA test data
     "population/zeta",

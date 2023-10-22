@@ -16,23 +16,38 @@ from myphdlib.pipeline.saccades import (
     detectPutativeSaccades,
     classifyPutativeSaccades,
     determineSaccadeOnset,
-    sortProbeStimuli,
     determineGratingMotionAssociatedWithEachSaccade
 )
 
-from myphdlib.pipeline.activity import (
-    extractSingleUnitData,
-    identifyUnitsWithEventRelatedActivity,
-    measureSpikeSortingQuality,
-    estimateResponseLatency,
-    predictUnitClassification
-)
-
 from myphdlib.pipeline.cleanup import (
-    cleanupOutputFile,
+    removeObsoleteDatasets,
 )
 
 from myphdlib.interface.factory import SessionFactory
+
+class ModuleBase():
+    
+    def __init__(
+        self,
+        ):
+        """
+        """
+        self._sessions = list()
+        return
+
+    def addSession(
+        self,
+        session,
+        ):
+        """
+        """
+        self._sessions.append(session)
+        return
+
+    def run(self):
+        """
+        """
+        return
 
 def processWholeDataset(
     sessions,

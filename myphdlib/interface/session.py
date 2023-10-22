@@ -7,6 +7,7 @@ import pathlib as pl
 from datetime import date
 from types import SimpleNamespace
 from scipy.stats import pearsonr
+from scipy.signal import find_peaks
 from scipy.interpolate import interp1d as interp
 from myphdlib.general.labjack import loadLabjackData, filterPulsesFromPhotologicDevice
 from myphdlib.interface.ephys import Population
@@ -103,7 +104,7 @@ class SessionBase():
     """
     """
 
-    def __init__(self, home, eye='left', loadEphysData=True, loadPropertyValues=False):
+    def __init__(self, home, eye='left', loadEphysData=False, loadPropertyValues=False):
         """
         """
 
@@ -120,7 +121,6 @@ class SessionBase():
         self._metadata = None
         self._eye = eye
         self._folders = None
-        self._saccadeOnsetTimestamps = None
         self._labjackSamplingRate = None
         self._population = None
         self._probeTimestamps = None
@@ -130,6 +130,7 @@ class SessionBase():
         self._saccadeTimestamps = None
         self._saccadeDirections = None
         self._saccadeWaveforms = None
+        self._saccadeLatencies = None
         self._gratingMotionDuringSaccades = None
 
         #
@@ -839,30 +840,34 @@ class SessionBase():
 
     def filterSaccades(
         self,
+        trialType='es',
         saccadeDirections=('n', 't'),
         peristimulusWindow=(-0.1, 0.05),
         peristimulusWindowBuffer=0,
         ):
         """
-        Exlude saccades coincident with a probe as defined by the peristimulus window
+        Create a mask which delimits extra-/peri-stimulus saccades
         """
 
-        if type(saccadeDirections) == int:
+        if type(saccadeDirections) in (int, str):
             saccadeDirections = (saccadeDirections,)
         saccadesByDirection = np.array([
             True if direction in saccadeDirections else False
                 for direction in self.saccadeDirections
         ])
 
-        #
-        if peristimulusWindow is None:
-            trialMask = saccadesByDirection
-        else:
-            trialMask = np.array([
-                self.saccadeLatencies < peristimulusWindow[0] - peristimulusWindowBuffer[0],
-                self.saccadeLatencies > peristimulusWindow[1] + peristimulusWindowBuffer[1],
-                saccadesByDirection
-            ]).all(axis=0)
+        # Extra-stimulus trial mask
+        trialMask = np.array([
+            np.logical_or(
+                self.saccadeLatencies < (peristimulusWindow[0] - peristimulusWindowBuffer),
+                self.saccadeLatencies > (peristimulusWindow[1] + peristimulusWindowBuffer),
+            ),
+            saccadesByDirection
+        ]).all(axis=0)
+
+        # Peri-stimulus trial mask
+        if trialType == 'ps':
+            trialMask = np.invert(trialMask)
 
         return trialMask
 
@@ -898,3 +903,69 @@ class SessionBase():
         ]).all(0)
 
         return filter_
+
+    def summarizeEventRelatedActivity(
+        self,
+        responseWindow=(-0.3, 0.5),
+        baselineWindow=(-8, -5),
+        binsize=0.01,
+        minimumPeakHeight=2,
+        peakLatencyRangeForVisualResponses=(0.05, 0.2),
+        peakLatencyRangeForSaccadeRelatedActivity=(-0.1, 0.2),
+        referenceEvent=0,
+        ):
+        """
+        """
+
+        #
+        if self.probeTimestamps is None:
+            return None
+
+        eventTimestamps = (
+            self.probeTimestamps[self.filterProbes('es', probeDirections=(-1,))],
+            self.probeTimestamps[self.filterProbes('es', probeDirections=(+1,))],
+            self.saccadeTimestamps[self.filterSaccades('es', saccadeDirections=('n',))],
+            self.saccadeTimestamps[self.filterSaccades('es', saccadeDirections=('t',))]
+        )
+        peakLatencyRanges = (
+            peakLatencyRangeForVisualResponses,
+            peakLatencyRangeForVisualResponses,
+            peakLatencyRangeForSaccadeRelatedActivity,
+            peakLatencyRangeForSaccadeRelatedActivity
+        )
+        umask = self.filterUnits(
+            utypes=('vr', 'vm', 'sr'),
+            quality=('hq',)
+        )
+        heatmaps = list()
+        for evt, plr in zip(eventTimestamps, peakLatencyRanges):
+            heatmap = list()
+            for unit in self.population[umask]:
+                t, z = unit.peth(
+                    evt,
+                    responseWindow=responseWindow,
+                    baselineWindow=baselineWindow,
+                    binsize=binsize,
+                    standardize=True
+                )
+                heatmap.append(z)
+            heatmaps.append(heatmap)
+
+        #
+
+        for heatmap in heatmaps:
+            for z in heatmap:
+                if z.max() < minimumPeakHeight:
+                    continue
+
+                #
+                peakIndices, peakProps = find_peaks(z, height=minimumPeakHeight - 0.5)
+                if peakIndices.size == 0:
+                    continue
+                firstPeakLatency = t[peakIndices[np.argmin(peakIndices)]]
+                if firstPeakLatency < plr[0]:
+                    continue
+                if firstPeakLatency > plr[1]:
+                    continue
+
+        return tuple([np.array(heatmap) for heatmap in heatmaps])
