@@ -62,30 +62,30 @@ pathsToKeep = {
     "population/metrics/vra/left",
     "population/metrics/vra/right",
     "population/metrics/mi", # Modulation index
-    "population/metrics/mi/left"
-    "population/metrics/mi/left/x"
-    "population/metrics/mi/left/p"
+    "population/metrics/mi/left",
+    "population/metrics/mi/left/x",
+    "population/metrics/mi/left/p",
     "population/metrics/mi",
-    "population/metrics/mi/right"
-    "population/metrics/mi/right/x"
-    "population/metrics/mi/right/p"
+    "population/metrics/mi/right",
+    "population/metrics/mi/right/x",
+    "population/metrics/mi/right/p",
     "population/metrics/dr", # Delta-response (i.e., MI numerator)
-    "population/metrics/dr/left"
-    "population/metrics/dr/left/x"
-    "population/metrics/dr/left/p"
+    "population/metrics/dr/left",
+    "population/metrics/dr/left/x",
+    "population/metrics/dr/left/p",
     "population/metrics/dr",
-    "population/metrics/dr/right"
-    "population/metrics/dr/right/x"
-    "population/metrics/dr/right/p"
+    "population/metrics/dr/right",
+    "population/metrics/dr/right/x",
+    "population/metrics/dr/right/p",
 
     # PSTHs
-    "population/psths",
-    "population/psths/probe",
-    "population/psths/probe/left",
-    "population/psths/probe/right",
-    "population/psths/saccade",
-    "population/psths/saccade/nasal",
-    "population/psths/saccade/temporal",
+    # "population/psths",
+    # "population/psths/probe",
+    # "population/psths/probe/left",
+    # "population/psths/probe/right",
+    # "population/psths/saccade",
+    # "population/psths/saccade/nasal",
+    # "population/psths/saccade/temporal",
 
     # ZETA test data
     "population/zeta",
@@ -163,6 +163,10 @@ pathsToKeep = {
     "saccades/predicted/right/temporal/motion",
     "saccades/predicted/right/temporal/timestamps",
     "saccades/predicted/right/temporal/waveforms",
+
+    # Unsigned saccade datasets
+    "saccades/predicted/left/unsigned",
+    "saccades/predicted/right/unsigned",
 
     # Unsigned saccade datasets (left eye)
     "saccades/predicted/left/unsigned/dop",
@@ -311,7 +315,7 @@ def removeObsoleteDatasets(
 
     #
     for path in pathsToRemove:
-        print(f'INFO[{session.animal}, {session.date}]: Removing "{path}" from output file')
+        session.log(f'Removing "{path}" dataset from output file')
         if dryrun:
             continue
         session.remove(path)
