@@ -124,140 +124,12 @@ def runZetaTests(
 
     return
 
-def _runBaselineEstimationForBatch(
-    units,
-    eventTimestamps,
-    baselineWindowSize,
-    baselineBoundaries,
-    nRuns
-    ):
-    """
-    """
-
-    params = list()
-    for unit in units:
-        mu, sigma = unit.estimateBaselineParameters(
-            eventTimestamps,
-            baselineWindowSize,
-            baselineBoundaries,
-            nRuns,
-        )
-        params.append([mu, sigma, unit.index])
-
-    return params
-
-def measureBaselineActivity2(
-    session,
-    ):
-    """
-    """
-
-    return
-
-def measureBaselineActivity(
-    session,
-    baselineBoundaries=(-10, -5),
-    baselineWindowSize=0.1,
-    nRunsPerUnit=100,
-    nUnitsPerBatch=3,
-    parallelize=True,
-    overwrite=False,
-    nJobs=-3
-    ):
-    """
-    """
-
-    #
-    nUnits = len(session.population)
-
-    #
-    datasetKeys = (
-        ('probe', 'left'),
-        ('probe', 'right'),
-        ('saccade', 'nasal'),
-        ('saccade', 'temporal')
-    )
-
-    # Skip sessions with no visual probes
-    if session.probeTimestamps is None:
-        for (eventName, eventDirection) in datasetKeys:
-            for feature in ('mu', 'sigma'):
-                session.save(f'population/baseline/{eventName}/{eventDirection}/{feature}', np.full(nUnits, np.nan))
-        return
-
-
-    #
-    eventTimestamps = (
-        session.probeTimestamps[session.filterProbes(trialType='es', probeDirections=(-1,))],
-        session.probeTimestamps[session.filterProbes(trialType='es', probeDirections=(+1,))],
-        session.saccadeTimestamps[session.filterSaccades(trialType='es', saccadeDirections=('n',))],
-        session.saccadeTimestamps[session.filterSaccades(trialType='es', saccadeDirections=('t',))]
-    )
-
-    #
-    for (eventName, eventDirection), evt in zip(datasetKeys, eventTimestamps):
-
-        #
-        if session.hasDataset(f'population/baseline/{eventName}/{eventDirection}/mu') and overwrite == False:
-            session.log(f'Skipping baseline estimation (event={eventName}, direction={eventDirection})', level='info')
-            continue
-
-        #
-        session.log(f'Estimating baseline parameters (event={eventName}, direction={eventDirection})', level='info')
-
-        #
-        if parallelize:
-            batches = list()
-            for i in range(0, nUnits, nUnitsPerBatch):
-                batch = session.population[i:i + nUnitsPerBatch]
-                batches.append(batch)
-            results = Parallel(n_jobs=nJobs)(delayed(_runBaselineEstimationForBatch)(
-                batch,
-                evt,
-                baselineWindowSize,
-                baselineBoundaries,
-                nRunsPerUnit
-                )
-                    for batch in batches
-            )
-            params = np.vstack([
-                np.array(result) for result in results
-            ])
-            average, deviation, indices = params[:, 0], params[:, 1], params[:, 2]
-            index = np.argsort(indices)
-            average = average[index]
-            deviation = deviation[index]
-
-        #
-        else:
-            average, deviation = np.full(nUnits, np.nan), np.full(nUnits, np.nan)
-            for iUnit, unit in enumerate(session.population):
-                mu, sigma = unit.estimateBaselineParameters(
-                    evt,
-                    baselineWindowSize=baselineWindowSize,
-                    baselineBoundaries=baselineBoundaries,
-                    nRuns=nRunsPerUnit
-                )
-                if sigma == 0:
-                    average[iUnit] = np.nan
-                    deviation[iUnit] = np.nan
-                else:
-                    average[iUnit] = mu
-                    deviation[iUnit] = sigma
-
-        #
-        session.save(f'population/baseline/{eventName}/{eventDirection}/mu', average)
-        session.save(f'population/baseline/{eventName}/{eventDirection}/sigma', deviation)
-
-    return
-
 def measureVisualResponseAmplitude(
     session,
-    responseWindowSize=0.1,
-    baselineWindowEdge=-5,
-    zscoreMethod=2,
-    nRuns=100,
-    overwrite=False
+    responseWindowSize=0.05,
+    baselineWindowEdge=-2,
+    baselineWindowSize=3,
+    overwrite=True
     ):
     """
     """
@@ -266,69 +138,68 @@ def measureVisualResponseAmplitude(
     responseAmplitudes = np.full([nUnits, 2], np.nan)
 
     #
-    if session.hasDataset('population/metrics/gvr') and overwrite == False:
+    if session.hasDataset('population/metrics/vra/left') and overwrite == False:
         session.log('Skipping estimation of visual response amplitude', level='info')
         return
 
     # Skip this session
     if session.probeTimestamps is None:
-        session.save('population/metrics/gvr', np.full(nUnits, np.nan))
-        return
+        for probeDirection in ('left', 'right'):
+            session.save(f'population/metrics/vra/{probeDirection}', np.full(nUnits, np.nan))
+            return
 
     #
     for probeDirection, columnIndex in zip(('left', 'right'), (0, 1)):
 
         #
         probeMotion = -1 if probeDirection == 'left' else +1
+        probeTimestamps = session.probeTimestamps[
+            session.filterProbes('es', probeDirections=(probeMotion,))
+        ]
 
         #
-        responseProbabilities = session.load(f'population/zeta/probe/{probeDirection}/p')
+        # responseProbabilities = session.load(f'population/zeta/probe/{probeDirection}/p')
         responseLatencies = session.load(f'population/zeta/probe/{probeDirection}/latency')
 
         #
         nFailed = 0
-        for unit in session.population:
+        for iUnit, unit in enumerate(session.population):
+
+            session.log(
+                f'Measuring visual response amlplitude for unit {unit.cluster} ({iUnit +z})',
+                level='info'
+            )
 
             #
-            p = responseProbabilities[unit.index]
+            # p = responseProbabilities[unit.index]
             l = responseLatencies[unit.index]
 
             # Define the response and baseline windows
             windowHalfWidth = responseWindowSize / 2
-            visualResponseWindow = np.around(np.array([
+            responseWindow = np.around(np.array([
                 l - windowHalfWidth,
                 l + windowHalfWidth
             ]), 2)
-            baselineResponseWindow = np.around(np.array([
-                baselineWindowEdge - responseWindowSize,
+            baselineWindow = np.around(np.array([
+                baselineWindowEdge - baselineWindowSize,
                 baselineWindowEdge,
             ]), 2)
 
             # Measure the mean FR in the response window
             t, M = psth2(
-                session.probeTimestamps[session.gratingMotionDuringProbes == probeMotion],
+                probeTimestamps,
                 unit.timestamps,
-                window=visualResponseWindow,
+                window=responseWindow,
                 binsize=None
             )
             fr = M.mean(0) / responseWindowSize
 
             # Estimate the mean and std of the baseline FR
-            if zscoreMethod == 1:
-                mu, sigma = unit.describe(
-                    session.probeTimestamps[session.gratingMotionDuringProbes == probeMotion],
-                    window=baselineResponseWindow,
-                binsize=None
-                )
-            elif zscoreMethod == 2:
-                mu, sigma = (unit.upl, unit.spl) if probeMotion == -1 else (unit.upr, unit.spr)
-                if mu is None and sigma is None:
-                    print('Uh-oh')
-                    mu, sigma = unit.estimateBaselineParameters(
-                        session.probeTimestamps[session.gratingMotionDuringProbes == probeMotion],
-                        baselineWindowSize=responseWindowSize,
-                        nRuns=nRuns,
-                    )
+            mu, sigma = unit.describe2(
+                probeTimestamps,
+                baselineWindowBoundaries=baselineWindow,
+                binsize=responseWindowSize
+            )
 
             # Standardization is undefined
             if sigma == 0:
@@ -344,18 +215,16 @@ def measureVisualResponseAmplitude(
         session.log(f'Response amplitude estimation failed for {nFailed} out of {nUnits} units (probe motion={probeMotion})', level='warning')
 
     # Select the largest amplitude response (across motion directions)
-    greatestVisualResponse = np.max(responseAmplitudes, axis=1)
-    session.save('population/metrics/gvr', greatestVisualResponse)
+    for iColumn, probeDirection in zip([0, 1], ['left', 'right']):
+        session.save(f'population/metrics/vra/{probeDirection}', responseAmplitudes[:, iColumn])
 
     return
 
 def computeStandardizedResponseCurves(
     session,
-    binsize=0.01,
+    binsize=0.02,
     responseWindow=(-0.5, 0.5),
     baselineWindowEdge=-5,
-    zscoreMethod=1,
-    nRuns=100,
     overwrite=False
     ):
     """
@@ -411,35 +280,24 @@ def computeStandardizedResponseCurves(
         #
         for iUnit, unit in enumerate(session.population):
 
-            session.log(f'Computing standardized psth for unit {unit.cluster} (event={eventType}, direction={eventDirection})', level='info')
+            session.log(f'Computing standardized psth for unit {iUnit + 1} out of {nUnits} (event={eventType}, direction={eventDirection})', level='info')
 
             # Compute the event-related response
-            t, R1 = psth2(
+            t, R = psth2(
                 eventTimestamps[eventMask],
                 unit.timestamps,
                 window=responseWindow,
                 binsize=binsize
             )
-            fr = R1.mean(0) / binsize
+            fr = R.mean(0) / binsize
 
             # Estimate the mean and std of the baseline FR
-            if zscoreMethod == 1:
-                mu, sigma = unit.describe(
-                    eventTimestamps,
-                    window=baselineWindow,
-                    binsize=binsize
-                )
-            elif zscoreMethod == 2:
-                if eventType == 'probe':
-                    mu, sigma = (unit.upl, unit.spl) if eventDirection == 'left' else (unit.upr, unit.spr)
-                elif eventType == 'saccade':
-                    mu, sigma = (unit.usn, unit.ssn) if eventDirection == 'nasal' else (unit.ust, unit.sst)
-                if mu is None and sigma is None:
-                    mu, sigma = unit.estimateBaselineParameters(
-                        session.probeTimestamps[session.gratingMotionDuringProbes == probeMotion],
-                        baselineWindowSize=responseWindowSize,
-                        nRuns=nRuns,
-                    )
+            mu, sigma = unit.describe2(
+                eventTimestamps[eventMask],
+                baselineWindowBoundaries=baselineWindow,
+                binsize=binsize,
+                nRuns=100,
+            )
 
             # Standardize (z-score)
             if sigma == 0:
@@ -480,7 +338,6 @@ class ActivityModule():
 
         submodules = (
             runZetaTests,
-            measureBaselineActivity,
             measureVisualResponseAmplitude,
             computeStandardizedResponseCurves,
         )

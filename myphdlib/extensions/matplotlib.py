@@ -564,4 +564,10 @@ parulaColorspace = [
     [0.9763, 0.9831, 0.0538]
 ]
 
-parula = LinearSegmentedColormap.from_list('parula', parulaColorspace)
+def getParulaColormap(N=256):
+    """
+    """
+
+    cmap = LinearSegmentedColormap.from_list('parula', parulaColorspace, N=N)
+
+    return cmap

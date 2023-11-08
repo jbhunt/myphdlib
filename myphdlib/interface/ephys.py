@@ -1,5 +1,6 @@
 import h5py
 import numpy as np
+from dotmap import DotMap
 from myphdlib.general.toolkit import psth2
 
 # TODO
@@ -23,22 +24,16 @@ class SingleUnit():
         self._utype = None
         self._quality = None
         self._index = None
-        self._ksl = None
-        self._lpl = None
-        self._lpr = None
-        self._gvr = None
-        self._upl = None
-        self._upr = None
-        self._usn = None
-        self._ust = None
-        self._spl = None
-        self._spr = None
-        self._ssn = None
-        self._sst = None
-        self._ppl = None
-        self._ppr = None
-        self._psn = None
-        self._pst = None
+        self._kilosortLabel = None
+        self._visualResponseLatency = None
+        self._visualResponseAmplitude = None
+        self._visualResponseProbability = None
+        self._presenceRatio = None
+        self._refractoryPeriodViolationRate = None
+        self._amplitudeCutoff = None
+        self._deltaResponseValue = None
+        self._deltaResponseProbability = None
+        self._visualResponseCurve = None
 
         return
     
@@ -83,72 +78,84 @@ class SingleUnit():
 
         return mu, sigma
 
-    def estimateTrueBaseline(
-        self,
-        ):
-        """
-        """
-
-        epochs = list()
-        gratingOnsetTimestamps = self.session.load('stimuli/dg/grating/timestamps')
-        gratingOffsetTimestamps = self.session.load('stimuli/dg/iti/timestamps')
-        nBlocks = gratingOnsetTimestamps.size
-        for iBlock in range(nBlocks):
-            epoch = gratingOnsetTimestamps[iBlock], gratingOffsetTimestamps[iBlock]
-            epochs.append(epoch)
-        epochs = np.array(epochs)
-        sample = list()
-        for epoch in epochs:
-            nSpikes = np.sum(np.logical_and(
-                self.timestamps >= epoch[0],
-                self.timestamps <= epoch[1]
-            ))
-            dt = np.diff(epoch)
-            fr = nSpikes / dt
-            sample.append(fr)
-
-        return np.array(sample), np.mean(sample), np.std(sample)
-
-    def bootstrapBaselineDescription(
+    def describe2(
         self,
         eventTimestamps,
-        baselineWindowSize=0.1,
-        baselineBoundaries=(-10, -5),
-        nRuns=30,
+        baselineWindowBoundaries=(-5, -2),
+        windowSize=0.5,
+        nRuns=100,
+        binsize=None,
         ):
         """
-        Estimate mean and std of baseline FR using boostrap procedure
         """
 
-        mu, sigma = np.full(nRuns, np.nan), np.full(nRuns, np.nan)
-        windowHalfWidth = round(baselineWindowSize / 2, 2)
-        for iRun in range(nRuns):
-            baselineWindowCenter = np.around(np.random.uniform(
-                low=baselineBoundaries[0] + windowHalfWidth,
-                high=baselineBoundaries[1] - windowHalfWidth,
-                size=1,
-            ), 2).item()
-            baselineWindowEdges = np.array([
-                baselineWindowCenter - windowHalfWidth,
-                baselineWindowCenter + windowHalfWidth
+        if binsize is None:
+            dt = windowSize
+        else:
+            dt = binsize
+
+        #
+        samples = list()
+        for i in range(nRuns):
+
+            #
+            baselineWindowEdge = np.random.uniform(
+                low=baselineWindowBoundaries[0] + windowSize,
+                high=baselineWindowBoundaries[1],
+                size=1
+            ).item()
+            baselineWindow = np.array([
+                baselineWindowEdge,
+                baselineWindowEdge + windowSize
             ])
-            t, R = psth2(
+
+            #
+            t, M = psth2(
                 eventTimestamps,
                 self.timestamps,
-                window=baselineWindowEdges,
-                binsize=None
+                window=baselineWindow,
+                binsize=binsize,
             )
-            mu[iRun] = R.mean(0) / baselineWindowSize
-            sigma[iRun] = R.std(0) / baselineWindowSize
+            fr = M.mean(0) / dt
+            samples.append([fr.mean(), fr.std()])
 
-        return round(mu.mean(), 3), round(sigma.mean(), 3)
+        #
+        samples = np.around(np.array(samples), 2)
+
+        return round(samples[:, 0].mean(), 2), round(samples[:, 1].mean(), 2)
+
+    def describe3(
+        self,
+        eventTimestamps,
+        baselineWindow=(-5, -2),
+        binsize=None,
+        ):
+        """
+        Get the mean and SD of the mean FR in a baseline window
+        """
+
+        if binsize is None:
+            dt = np.diff(baselineWindow).item()
+        else:
+            dt = binsize
+
+        #
+        t, M = psth2(
+            eventTimestamps,
+            self.timestamps,
+            baselineWindow,
+            binsize=binsize
+        )
+        fr = M.mean(0) / dt
+
+        return round(fr.mean(), 2), round(fr.std(), 2)
 
     def peth(
         self,
         eventTimestamps,
         responseWindow=(-0.3, 0.5),
-        baselineWindow=(-8, -5),
-        binsize=0.01,
+        baselineWindow=(-5, -2),
+        binsize=0.02,
         standardize=True
         ):
         """
@@ -168,10 +175,12 @@ class SingleUnit():
             return t, fr
 
         #
-        mu, sigma = self.describe(
+        mu, sigma = self.describe2(
             eventTimestamps,
-            window=baselineWindow,
-            binsize=None
+            baselineWindowBoundaries=baselineWindow,
+            windowSize=0.5,
+            binsize=binsize,
+            nRuns=100,
         )
         if sigma == 0:
             z = np.full(t.size, np.nan)
@@ -186,10 +195,6 @@ class SingleUnit():
         """
 
         if self._index is None:
-            # with h5py.File(str(self.session.hdf), 'r') as stream:
-            #     spikeClusters = stream['spikes/clusters']
-            #     uniqueSpikeClusters = np.unique(spikeClusters)
-            #     self._index = np.where(uniqueSpikeClusters == self.cluster)[0].item()
             self._index = np.where(self.session.population.uniqueSpikeClusters == self.cluster)[0].item()
 
         return self._index
@@ -214,182 +219,215 @@ class SingleUnit():
         """
 
         if self._timestamps is None:
-            # with h5py.File(str(self.session.hdf), 'r') as stream:
-            #     spikeTimestamps = stream['spikes/timestamps']
-            #     spikeClusters = stream['spikes/clusters']
-            #     spikeIndices = np.where(spikeClusters == self.cluster)
-            #     self._timestamps = np.array(spikeTimestamps[spikeIndices])
             spikeIndices = np.where(self.session.population.allSpikeClusters == self.cluster)[0]
             self._timestamps = self.session.population.allSpikeTimestamps[spikeIndices]
 
         return self._timestamps
-    
-    @property
-    def utype(self):
-        """
-        """
-
-        if self._utype is None:
-
-            self._utype = list()
-
-            #
-            if self.session.population.datasets[('masks', 'vr')] is not None:
-                vr = self.session.population.datasets[('masks', 'vr')][self.index]
-                if vr:
-                    self._utype.append('vr')
-
-            #
-            if self.session.population.datasets[('masks', 'sr')] is not None:
-                sr = self.session.population.datasets[('masks', 'sr')][self.index]
-                if sr:
-                    self._utype.append('sr')
-
-            #
-            if len(self._utype) == 0:
-                self._utype.append('nr')
-            self._utype = tuple(self._utype)
-
-        return self._utype
-
-    # Spike-sorting quality (high/low)
-    @property
-    def quality(self):
-        if self._quality is None:
-            if self.session.population.datasets[('masks', 'hq')] is not None:
-                hq = self.session.population.datasets[('masks', 'hq')][self.index]
-                if hq:
-                    self._quality = 'hq'
-                else:
-                    self._quality = 'lq'
-
-        return self._quality
 
     # Kilosort label
     @property
-    def ksl(self):
-        if self._ksl is None:
+    def kilosortLabel(self):
+        if self._kilosortLabel is None:
             if self.session.population.datasets[('metrics', 'ksl')] is not None:
                 label = self.session.population.datasets[('metrics', 'ksl')][self.index]
-                self._ksl = 'm' if label == 0 else 'g'
+                self._kilosortLabel = 'm' if label == 0 else 'g'
 
-        return self._ksl
+        return self._kilosortLabel
 
-    # Probability visually responsive (left)
+    # Response latency (onset-to-peak)
     @property
-    def ppl(self):
-        if self._ppl is None:
-            if self.session.population.datasets[('zeta', 'probe', 'left', 'p')] is not None:
-                self._ppl = round(self.session.population.datasets[('zeta', 'probe', 'left', 'p')][self.index], 2)
-        return self._ppl
-    
-    # Probability visually responsive (right)
-    @property
-    def ppr(self):
-        if self._ppr is None:
-            if self.session.population.datasets[('zeta', 'probe', 'right', 'p')] is not None:
-                self._ppr = round(self.session.population.datasets[('zeta', 'probe', 'right', 'p')][self.index], 2)
-        return self._ppr
+    def visualResponseLatency(self):
+        """
+        """
 
-    # Probability saccade related (nasal)
-    @property
-    def psn(self):
-        if self._psn is None:
-            if self.session.population.datasets[('zeta', 'probe', 'left', 'latency')] is not None:
-                self._psn = round(self.session.population.datasets[('zeta', 'saccade', 'nasal', 'p')][self.index], 2)
-        return self._psn
+        if self._visualResponseLatency is None:
+            vrl = {
+                'left': None,
+                'right': None
+            }
+            keys = (
+                ('zeta', 'probe', 'left', 'latency'),
+                ('zeta', 'probe', 'right', 'latency')
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                probeDirection = key[2]
+                vrl[probeDirection] = round(self.session.population.datasets[key][self.index], 3)
+            self._visualResponseLatency = DotMap(vrl)
 
-    # Probability saccade related (temporal)
+        return self._visualResponseLatency
+
+    # Response amplitude (z-scored)
     @property
-    def pst(self):
-        if self._pst is None:
-            if self.session.population.datasets[('zeta', 'probe', 'left', 'latency')] is not None:
-                self._pst = round(self.session.population.datasets[('zeta', 'saccade', 'nasal', 'p')][self.index], 2)
-        return self._pst
+    def visualResponseAmplitude(self):
+        """
+        """
+
+        if self._visualResponseAmplitude is None:
+            vra = {
+                'left': None,
+                'right': None
+            }
+            keys = (
+                ('metrics', 'vra', 'left'),
+                ('metrics', 'vra', 'right')
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                probeDirection = key[-1]
+                vra[probeDirection] = round(self.session.population.datasets[key][self.index], 3)
+            self._visualResponseAmplitude = DotMap(vra)
+
+        return self._visualResponseAmplitude
+
+    # Probability of being a visually-responsive unit
+    @property
+    def visualResponseProbability(self):
+        """
+        """
+
+        if self._visualResponseProbability is None:
+            vrp = {
+                'left': None,
+                'right': None
+            }
+            keys = (
+                ('zeta', 'probe', 'left', 'p'),
+                ('zeta', 'probe', 'right', 'p')
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                probeDirection = key[2]
+                vrp[probeDirection] = round(1 - self.session.population.datasets[key][self.index], 3)
+            self._visualResponseProbability = DotMap(vrp)
+
+        return self._visualResponseProbability
 
     #
     @property
-    def lpl(self):
-        if self._lpl is None:
-            if self.session.population.datasets[('zeta', 'probe', 'left', 'latency')] is not None:
-                self._lpl = round(self.session.population.datasets[('zeta', 'probe', 'left', 'latency')][self.index], 2)
-        return self._lpl
+    def visualResponseCurve(self):
+        """
+        """
+
+        if self._visualResponseCurve is None:
+            vrc = {
+                'left': None,
+                'right': None
+            }
+            keys = (
+                ('psths', 'probe', 'left'),
+                ('psths', 'probe', 'right')
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                probeDirection = key[2]
+                vrc[probeDirection] = self.session.population.datasets[key][self.index]
+            self._visualResponseCurve = DotMap(vrc)
+
+        return self._visualResponseCurve
+    
+    #
+    @property
+    def deltaResponseValue(self):
+        """
+        """
+
+        if self._deltaResponseValue is None:
+            dr = {
+                'left': None,
+                'right': None,
+            }
+            keys = (
+                ('metrics', 'dr', 'left', 'x'),
+                ('metrics', 'dr', 'right', 'x')
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                probeDirection = key[2]
+                dr[probeDirection] = round(self.session.population.datasets[key][self.index], 3)
+            self._deltaResponseValue = DotMap(dr)
+
+        return self._deltaResponseValue
 
     #
     @property
-    def lpr(self):
-        if self._lpr is None:
-            if self.session.population.datasets[('zeta', 'probe', 'right', 'latency')] is not None:
-                self._lpr = round(self.session.population.datasets[('zeta', 'probe', 'right', 'latency')][self.index], 2)
-        return self._lpr
+    def deltaResponseProbability(self):
+        """
+        """
 
-    # Greatest visual response (amplitude, z-scored spikes/second)
-    @property
-    def gvr(self):
-        if self._gvr is None:
-            if self.session.population.datasets[('metrics', 'gvr')] is not None:
-                self._gvr = round(self.session.population.datasets[('metrics', 'gvr')][self.index], 3)
-        return self._gvr
+        if self._deltaResponseProbability is None:
+            ps = {
+                'left': None,
+                'right': None,
+            }
+            keys = (
+                ('metrics', 'dr', 'left', 'p'),
+                ('metrics', 'dr', 'right', 'p')
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                probeDirection = key[2]
+                ps[probeDirection] = round(1 - self.session.population.datasets[key][self.index], 3)
+            self._deltaResponseProbability = DotMap(ps)
 
-    # Mean baseline FR preceding probe stimulus during leftward motion
-    @property
-    def upl(self):
-        if self._upl is None:
-            if self.session.population.datasets[('baseline', 'probe', 'left', 'mu')] is not None:
-                self._upl = round(self.session.population.datasets[('baseline', 'probe', 'left', 'mu')][self.index], 3)
-        return self._upl
-    
-    # Mean baseline FR preceding probe stimulus during rightward motion
-    @property
-    def upr(self):
-        if self._upr is None:
-            if self.session.population.datasets[('baseline', 'probe', 'right', 'mu')] is not None:
-                self._upr = round(self.session.population.datasets[('baseline', 'probe', 'right', 'mu')][self.index], 3)
-        return self._upr
-    
-    # Mean baseline FR preceding nasal saccades
-    @property
-    def usn(self):
-        if self._upr is None:
-            if self.session.population.datasets[('baseline', 'probe', 'right', 'mu')] is not None:
-                self._upr = round(self.session.population.datasets[('baseline', 'probe', 'right', 'mu')][self.index], 3)
-        return self._upr
+        return self._deltaResponseProbability
 
-    # Mean baseline FR preceding temporal saccades
+    # Presence ratio metric
     @property
-    def ust(self):
-        if self._upr is None:
-            if self.session.population.datasets[('baseline', 'probe', 'right', 'mu')] is not None:
-                self._upr = round(self.session.population.datasets[('baseline', 'probe', 'right', 'mu')][self.index], 3)
-        return self._upr
+    def presenceRatio(self):
+        """
+        """
 
-    @property
-    def spl(self):
-        if self._spl is None:
-            if self.session.population.datasets[('baseline', 'probe', 'left', 'sigma')] is not None:
-                self._spl = round(self.session.population.datasets[('baseline', 'probe', 'left', 'sigma')][self.index], 3)
-        return self._spl
-    
-    @property
-    def spr(self):
-        if self._spr is None:
-            if self.session.population.datasets[('baseline', 'probe', 'right', 'sigma')] is not None:
-                self._spr = round(self.session.population.datasets[('baseline', 'probe', 'right', 'sigma')][self.index], 3)
-        return self._spr
-    
-    @property
-    def ssn(self):
-        if self._ssn is None:
-            if self.session.population.datasets[('baseline', 'saccade', 'nasal', 'sigma')] is not None:
-                self._snn = round(self.session.population.datasets[('baseline', 'saccade', 'nasal', 'sigma')][self.index], 3)
-        return self._snn
+        if self._presenceRatio is None:
+            keys = (
+                ('metrics', 'pr'),
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                self._presenceRatio = self.session.population.datasets[key][self.index]
 
+        return self._presenceRatio
+
+    #
     @property
-    def sst(self):
-        if self._sst is None:
-            if self.session.population.datasets[('baseline', 'saccade', 'temporal', 'sigma')] is not None:
-                self._sst = round(self.session.population.datasets[('baseline', 'saccade', 'temporal', 'sigma')][self.index], 3)
-        return self._sst
+    def refractoryPeriodViolationRate(self):
+        """
+        """
+
+        if self._refractoryPeriodViolationRate is None:
+            keys = (
+                ('metrics', 'rpvr'),
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                self._refractoryPeriodViolationRate = self.session.population.datasets[key][self.index]
+
+        return self._refractoryPeriodViolationRate
+
+    #
+    @property
+    def amplitudeCutoff(self):
+        """
+        """
+
+        if self._amplitudeCutoff is None:
+            keys = (
+                ('metrics', 'ac'),
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                self._amplitudeCutoff = self.session.population.datasets[key][self.index]
+
+        return self._amplitudeCutoff
 
 class Population():
     """
@@ -403,14 +441,12 @@ class Population():
         self._units = None
         self._index = 0
         self._datasets = {
-            ('masks', 'vr'): None,
-            ('masks', 'sr'): None,
-            ('masks', 'hq'): None,
             ('metrics', 'pr'): None,
             ('metrics', 'rpvr'): None,
             ('metrics', 'ac'): None,
-            ('metrics', 'gvr'): None,
             ('metrics', 'ksl'): None,
+            ('metrics', 'vra', 'left'): None,
+            ('metrics', 'vra', 'right'): None,
             ('zeta', 'probe', 'left', 'p'): None,
             ('zeta', 'probe', 'left', 'latency'): None,
             ('zeta', 'probe', 'right', 'p'): None,
@@ -419,6 +455,12 @@ class Population():
             ('zeta', 'saccade', 'nasal', 'latency'): None,
             ('zeta', 'saccade', 'temporal', 'p'): None,
             ('zeta', 'saccade', 'temporal', 'latency'): None,
+            ('metrics', 'dr', 'left', 'x'): None,
+            ('metrics', 'dr', 'left', 'p'): None,
+            ('metrics', 'dr', 'right', 'x'): None,
+            ('metrics', 'dr', 'right', 'p'): None,
+            ('psths', 'probe', 'left'): None,
+            ('psths', 'probe', 'right'): None,
         }
 
         if autoload:
@@ -440,19 +482,14 @@ class Population():
         self._allSpikeClusters = self._session.load('spikes/clusters')
         self._allSpikeTimestamps = self._session.load('spikes/timestamps')
         self._uniqueSpikeClusters = np.unique(self.allSpikeClusters)
-        # with h5py.File(str(self._session.hdf), 'r') as stream:
-        #     spikeClusters = stream['spikes/clusters']
-        #    uniqueSpikeClusters = np.unique(spikeClusters)
 
         #
-        # for cluster in np.unique(self._allSpikeClusters):
         for cluster in self.uniqueSpikeClusters:
             unit = SingleUnit(self._session, cluster)
             self._units.append(unit)
 
         return
 
-    # TODO: Code this
     def _loadPopulationDatasets(
         self
         ):
@@ -467,6 +504,7 @@ class Population():
                 if self._session.hasDataset(datasetPath):
                     self._datasets[k] = self._session.load(datasetPath)
 
+
         return
 
     def indexByCluster(self, cluster):
@@ -478,6 +516,94 @@ class Population():
                 return unit
 
         return
+
+    def filter(
+        self,
+        probeMotion=None,
+        presenceRatio=0.9,
+        refractoryPeriodViolationRate=0.5,
+        amplitudeCutoff=0.1,
+        visualResponseProbability=0.99,
+        visualResponseAmplitude=5,
+        visualResponseLatencyRange=(0.05, 0.2),
+        ):
+        """
+        """
+
+        #
+        if probeMotion is not None:
+            probeDirections = ('left',) if probeMotion == -1 else ('right',)
+        else:
+            probeDirections = ('left', 'right')
+
+        # Reset the list of units
+        if self.count(filtered=False) != self.count(filtered=True):
+            self._loadSingleUnitData()
+
+        #
+        filtered = list()
+        for unit in self._units:
+
+            # Filter out units with poor clustering quality metric scores
+            if presenceRatio is not None and unit.presenceRatio < presenceRatio:
+                continue
+            if refractoryPeriodViolationRate is not None and unit.refractoryPeriodViolationRate > refractoryPeriodViolationRate:
+                continue
+            if amplitudeCutoff is not None and unit.amplitudeCutoff > amplitudeCutoff:
+                continue
+
+
+            # Filter out units with no or weak visual responses
+            filtersPassed = False
+            for probeDirection in probeDirections:
+                if visualResponseProbability is not None and unit.visualResponseProbability[probeDirection] < visualResponseProbability:
+                    continue
+                if visualResponseAmplitude is not None and unit.visualResponseAmplitude[probeDirection] < visualResponseAmplitude:
+                    continue
+                filtersPassed = True
+            if filtersPassed == False:
+                continue
+
+            # Filter out units with peak responses that are too fast or too delayed
+            filterPassed = True
+            for probeDirection in probeDirections:
+                if visualResponseLatencyRange is not None:
+                    if unit.visualResponseLatency[probeDirection] < visualResponseLatencyRange[0]:
+                        filterPassed = False
+                        break
+                    if unit.visualResponseLatency[probeDirection] > visualResponseLatencyRange[1]:
+                        filterPassed = False
+                        break
+            if filterPassed == False:
+                continue
+
+            # All filters passed
+            filtered.append(unit)
+
+        #
+        self._units = filtered
+
+        return
+
+    def unfilter(
+        self,
+        ):
+        """
+        """
+
+        self._loadSingleUnitData()
+
+        return
+
+    def count(self, filtered=False):
+        """
+        Return a count of the number of units in the population
+        """
+
+        if filtered:
+            return len(self._units)
+        else:
+            return len(self.uniqueSpikeClusters)
 
     @property
     def allSpikeClusters(self):

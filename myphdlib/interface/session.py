@@ -833,6 +833,9 @@ class SessionBase():
             )
 
         #
+        elif trialType is None:
+            trialMask = probesByDirection
+
         else:
             raise Exception(f'{trialType} is not a valid trial type')
 

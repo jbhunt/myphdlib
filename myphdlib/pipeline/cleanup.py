@@ -49,23 +49,34 @@ pathsToKeep = {
     #
     "population/clusters",
 
-    # Masks
-    "population/masks",
-    "population/masks/hq",
-    "population/masks/sr",
-    "population/masks/vr",
-
     # Metrics
     "population/metrics",
     "population/metrics/ac", # Amplitude cutoff
-    "population/metrics/gvr", # Greatest visual response
     "population/metrics/pr", # Presence ratio
     "population/metrics/rpvr", # Refractory period violation rate
     "population/metrics/ksl", # Kilosort label
     "population/metrics/pd", # Preferred direction
     "population/metrics/nd", # Null direction
     "population/metrics/dsi", # Direction-selectivity index
-    "population/metrics/mi", # Saccadic modulation index
+    "population/metrics/vra", # Visual response amplitude
+    "population/metrics/vra/left",
+    "population/metrics/vra/right",
+    "population/metrics/mi", # Modulation index
+    "population/metrics/mi/left"
+    "population/metrics/mi/left/x"
+    "population/metrics/mi/left/p"
+    "population/metrics/mi",
+    "population/metrics/mi/right"
+    "population/metrics/mi/right/x"
+    "population/metrics/mi/right/p"
+    "population/metrics/dr", # Delta-response (i.e., MI numerator)
+    "population/metrics/dr/left"
+    "population/metrics/dr/left/x"
+    "population/metrics/dr/left/p"
+    "population/metrics/dr",
+    "population/metrics/dr/right"
+    "population/metrics/dr/right/x"
+    "population/metrics/dr/right/p"
 
     # PSTHs
     "population/psths",
@@ -75,22 +86,6 @@ pathsToKeep = {
     "population/psths/saccade",
     "population/psths/saccade/nasal",
     "population/psths/saccade/temporal",
-
-    # Baseline estimates
-    "population/baseline/probe",
-    "population/baseline/probe/left",
-    "population/baseline/probe/left/mu",
-    "population/baseline/probe/left/sigma",
-    "population/baseline/probe/right",
-    "population/baseline/probe/right/mu",
-    "population/baseline/probe/right/sigma",
-    "population/baseline/saccade",
-    "population/baseline/saccade/nasal",
-    "population/baseline/saccade/nasal/mu",
-    "population/baseline/saccade/nasal/sigma",
-    "population/baseline/saccade/temporal",
-    "population/baseline/saccade/temporal/mu",
-    "population/baseline/saccade/temporal/sigma",
 
     # ZETA test data
     "population/zeta",
