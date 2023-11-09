@@ -16,19 +16,21 @@ class SessionFactory(object):
 
     def __init__(
         self,
-        tag='JH-DATA-'
+        tag='JH-DATA-',
+        mount=None,
         ):
         """
         """
 
-        self._findDataVolumes(tag)
+        self._findDataVolumes(tag, mount)
         self._loadExperimentData()
 
         return
     
     def _findDataVolumes(
         self,
-        tag='JH-DATA-'
+        tag='JH-DATA-',
+        mount=None
         ):
         """
         """
@@ -47,8 +49,8 @@ class SessionFactory(object):
 
         # Linux
         elif os.name == 'posix':
-            if 'gdrive' in tag:
-                drive = pl.Path().joinpath(os.environ['HOME'], 'gdrive', 'Josh')
+            if mount is not None:
+                drive = pl.Path(mount)
                 self.volumes.append(drive)
             
             else:
