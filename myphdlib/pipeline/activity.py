@@ -220,6 +220,71 @@ def measureVisualResponseAmplitude(
 
     return
 
+def measureEventRelatedBaselines(
+    session,
+    baselineWindowBoundaries=(-5, -2),
+    slidingWindowSize=0.5,
+    binsize=0.02,
+    nRuns=30,
+    filterUnits=False,
+    ):
+    """
+    """
+
+    #
+    if filterUnits:
+        session.population.filter()
+    nUnits = session.population.count(filtered=False)
+
+    #
+    datasets = {
+        'population/metrics/bl/probe/left/mu': np.full(nUnits, np.nan),
+        'population/metrics/bl/probe/left/sigma': np.full(nUnits, np.nan),
+        'population/metrics/bl/probe/right/mu': np.full(nUnits, np.nan),
+        'population/metrics/bl/probe/right/sigma': np.full(nUnits, np.nan),
+        'population/metrics/bl/saccade/nasal/mu': np.full(nUnits, np.nan),
+        'population/metrics/bl/saccade/nasal/sigma': np.full(nUnits, np.nan),
+        'population/metrics/bl/saccade/temporal/mu': np.full(nUnits, np.nan),
+        'population/metrics/bl/saccade/temporal/sigma': np.full(nUnits, np.nan),
+    }
+
+    #
+    eventTimestamps = (
+        session.filterProbes('es', probeDirections=(-1,)),
+        session.filterProbes('es', probeDirections=(+1,)),
+        session.filterSaccades('es', saccadeDirections=('n',)),
+        session.filterSaccades('es', saccadeDirections=('t',)),
+    )
+
+    #
+    eventKeys = (
+        ('probe', 'left'),
+        ('probe', 'right'),
+        ('saccade', 'nasal'),
+        ('saccade', 'temporal')
+    )
+    
+    #
+    for unit in session.population:
+        for timestamps, (eventType, eventDirection) in zip(eventTimestamps, eventKeys):
+            xb, sd = unit.describe2(
+                timestamps,
+                baselineWindowBoundaries=baselineWindowBoundaries,
+                windowSize=slidingWindowSize,
+                binsize=binsize
+            )
+            for feature, value in zip(('mu', 'sigma'), (xb, sd)):
+                if np.isnan(value):
+                    continue
+                datasetPath = f'population/metrics/bl/{eventType}/{eventDirection}/{feature}'
+                datasets[datasetPath][unit.index] = round(value, 2)
+
+    #
+    for datasetPath, datasetArray in datasets.items():
+        session.save(datasetPath, datasetArray)
+
+    return
+
 def computeStandardizedResponseCurves(
     session,
     binsize=0.02,
