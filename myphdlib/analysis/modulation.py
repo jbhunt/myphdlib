@@ -18,6 +18,71 @@ from decimal import Decimal
 #     - Use the peak latency determined with the ZETA test to identify which bin to look in
 # [ ] Come up with a different way to estimate the baseline saccade-related activity to add to the observed response
 
+def measureVisualOnlyResponseDuringFictiveSaccadesProtocol(
+    unit,
+    probeMotion=-1,
+    responseWindow=(0, 0.3),
+    baselineWindow=(-3, -1),
+    perisaccadicWindow=(-0.05, 0.1),
+    perisaccadicTrialIndices=None,
+    excludePerisaccadicTrials=True,
+    binsize=0.01,
+    ):
+    """
+    """
+
+    # TODO: Implement a property that loads and stores these data
+    probeTimestamps = unit.session.load('stimuli/fs/probes/timestamps')
+    coincidenceMask = unit.session.load('stimuli/fs/coincident')
+    gratingMotion = unit.session.load('stimuli/fs/motion')
+
+    #
+    trialIndices = np.where(
+        np.vstack([
+            np.invert(coincidenceMask),
+            gratingMotion == probeMotion
+        ]).all(0)
+    )[0]
+    import pdb; pdb.set_trace()
+
+    #
+    if binsize is None:
+        dt = np.diff(responseWindow).item()
+    else:
+        dt = binsize
+    t, M = psth2(
+        probeTimestamps[trialIndices],
+        unit.timestamps,
+        window=responseWindow,
+        binsize=binsize
+    )  
+    fr = M / dt
+
+    #
+    mu, sigma = unit.describe3(
+        probeTimestamps[trialIndices],
+        baselineWindow=baselineWindow,
+        binsize=binsize
+    )
+
+    return t, fr, mu, sigma
+
+def measurePerisaccadicVisualResponseDuringFictiveSaccadesProtocol(
+    unit,
+    ):
+    """
+    """
+
+    return
+
+def estimateSaccadeRelatedAcrtivityDuringFictiveSaccadesProtocol(
+    unit,
+    ):
+    """
+    """
+
+    return
+
 def measureVisualOnlyResponse(
     unit,
     probeMotion=-1,

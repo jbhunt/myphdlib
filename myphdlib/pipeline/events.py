@@ -325,49 +325,11 @@ def estimateTimestampingFunction(
 
     return
 
-def findDroppedFrames(session, pad=1000000):
-    """
-    """
-
-    #
-    for eye in ('left', 'right'):
-
-        #
-        file = session.leftCameraTimestamps if eye == 'left' else session.rightCameraTimestamps
-        if file is None:
-            print(f'WARNING: Could not find the timestamps for the {eye} camera video')
-            continue
-        intervals = np.loadtxt(file, dtype=np.int64) / 1000000 # in ms
-        expected = 1 / session.fps * 1000 # in ms
-        dropped = np.full(intervals.size + 1 + pad, -1.0).astype(float)
-
-        #
-        index = 0
-        nDropped = 0
-
-        #
-        for interval in intervals:
-            nFrames = int(round(interval / expected, 0))
-            if nFrames > 1:
-                nDropped += nFrames - 1
-                for iFrame in range(nFrames - 1):
-                    dropped[index] = 1
-                    index += 1
-            dropped[index] = 0
-            index += 1
-        
-        #
-        dropped = np.delete(dropped, np.where(dropped == -1)[0])
-        dropped = dropped.astype(bool)
-        session.save(f'frames/{eye}/dropped', dropped)
-        
-    return
-
 def timestampCameraTrigger(session, factor=1.3):
     """
     Compute the timestamps for all acquisition trigger events
 
-    notes
+    Notes
     -----
     This function will try to interpolate through periods in which
     the labjack device experienced data loss given the framerate of
@@ -409,9 +371,63 @@ def timestampCameraTrigger(session, factor=1.3):
     interpolated[missing] = predicted
 
     # Compute the timestamps for all edges
-    timestamps = session.computeTimestamps(interpolated)
+    cameraTriggerTimestamps = session.computeTimestamps(interpolated)
     session.save('labjack/cameras/missing', missing)
-    session.save('labjack/cameras/timestamps', timestamps)
+    session.save('labjack/cameras/timestamps', cameraTriggerTimestamps)
+
+    return
+
+def findDroppedFrames(session, pad=1000000):
+    """
+    """
+
+    #
+    for eye in ('left', 'right'):
+
+        #
+        file = session.leftCameraTimestamps if eye == 'left' else session.rightCameraTimestamps
+        if file is None:
+            print(f'WARNING: Could not find the timestamps for the {eye} camera video')
+            continue
+        intervals = np.loadtxt(file, dtype=np.int64) / 1000000 # in ms
+        expected = 1 / session.fps * 1000 # in ms
+        dropped = np.full(intervals.size + 1 + pad, -1.0).astype(float)
+
+        #
+        index = 0
+        nDropped = 0
+
+        #
+        for interval in intervals:
+            nFrames = int(round(interval / expected, 0))
+            if nFrames > 1:
+                nDropped += nFrames - 1
+                for iFrame in range(nFrames - 1):
+                    dropped[index] = 1
+                    index += 1
+            dropped[index] = 0
+            index += 1
+        
+        #
+        dropped = np.delete(dropped, np.where(dropped == -1)[0])
+        dropped = dropped.astype(bool)
+        session.save(f'frames/{eye}/dropped', dropped)
+        
+    return
+
+def timestampVideoFrames(
+    session,
+    ):
+    """
+    """
+
+    cameraTriggerTimestamps = session.load('labjack/cameras/timestamps')
+
+    for camera in ('left', 'right'):
+        dropped = session.load(f'frames/{camera}/dropped')
+        nFrames = dropped.size
+        videoFrameTimestamps = cameraTriggerTimestamps[:nFrames]
+        session.save(f'frames/{camera}/timestamps', videoFrameTimestamps)
 
     return
 

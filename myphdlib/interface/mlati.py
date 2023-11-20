@@ -626,6 +626,8 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
             entry = [saccadeTimestamp, probeTimestamp]
             trials.append(entry)
 
+        import pdb; pdb.set_trace()
+
         #
         trials = np.unique(trials, axis=0)
 
@@ -634,6 +636,12 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
         self.save('stimuli/fs/saccades/timestamps', trials[:, 0])
         self.save('stimuli/fs/probes/timestamps', trials[:, 1])
         self.save('stimuli/fs/coincident', coincident)
+
+        #
+        gratingMotion = np.array([
+            item[1] for item in metadata['trials']
+        ]).astype(int)
+        self.save('stimuli/fs/motion', gratingMotion)
 
         return
 
