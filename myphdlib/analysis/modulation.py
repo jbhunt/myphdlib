@@ -18,7 +18,7 @@ from decimal import Decimal
 #     - Use the peak latency determined with the ZETA test to identify which bin to look in
 # [ ] Come up with a different way to estimate the baseline saccade-related activity to add to the observed response
 
-def measureVisualOnlyResponseDuringFictiveSaccadesProtocol(
+def computeModulationIndices2(
     unit,
     probeMotion=-1,
     responseWindow=(0, 0.3),
@@ -32,18 +32,22 @@ def measureVisualOnlyResponseDuringFictiveSaccadesProtocol(
     """
 
     # TODO: Implement a property that loads and stores these data
-    probeTimestamps = unit.session.load('stimuli/fs/probes/timestamps')
-    coincidenceMask = unit.session.load('stimuli/fs/coincident')
-    gratingMotion = unit.session.load('stimuli/fs/motion')
+    probeTimestamps = unit.session.load('stimuli/fs/probe/timestamps')
+    gratingMotionDuringProbes = unit.session.load('stimuli/fs/probe/motion')
+    saccadeTimestamps = unit.session.load('sitmuli/fs/saccade/timestamps')
+    # gratingMotionDuringSaccades = unit.session.load('stimuli/fs/saccade/motion')
 
     #
-    trialIndices = np.where(
-        np.vstack([
-            np.invert(coincidenceMask),
-            gratingMotion == probeMotion
-        ]).all(0)
-    )[0]
-    import pdb; pdb.set_trace()
+    trialIndices = list()
+    for trialIndex, probeTimestamp in enumerate(probeTimestamps):
+        if gratingMotionDuringProbes[trialIndex] != probeMotion:
+            continue
+        saccadeTimestampsRelative = probeTimestamp - saccadeTimestamps
+        closestSaccadeIndex = np.argmin(np.abs(saccadeTimestampsRelative))
+        saccadeLatency = probeTimestamp - saccadeTimestamps[closestSaccadeIndex]
+        probeLatency = -1 * saccadeLatency
+        if probeLatency < perisaccadicWindow[0] or probeLatency > perisaccadicWindow[1]:
+            trialIndices.append(trialIndex)
 
     #
     if binsize is None:
@@ -67,22 +71,6 @@ def measureVisualOnlyResponseDuringFictiveSaccadesProtocol(
 
     return t, fr, mu, sigma
 
-def measurePerisaccadicVisualResponseDuringFictiveSaccadesProtocol(
-    unit,
-    ):
-    """
-    """
-
-    return
-
-def estimateSaccadeRelatedAcrtivityDuringFictiveSaccadesProtocol(
-    unit,
-    ):
-    """
-    """
-
-    return
-
 def measureVisualOnlyResponse(
     unit,
     probeMotion=-1,
@@ -92,6 +80,7 @@ def measureVisualOnlyResponse(
     perisaccadicTrialIndices=None,
     excludePerisaccadicTrials=True,
     binsize=0.01,
+    fictiveSaccadesProtocol=False
     ):
     """
     Measure the visual-only response
