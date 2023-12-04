@@ -1,104 +1,12 @@
 import re
 import yaml
 import h5py
-import pickle
 import numpy as np
 import pathlib as pl
 from datetime import date
 from types import SimpleNamespace
-from scipy.stats import pearsonr
-from scipy.signal import find_peaks
 from scipy.interpolate import interp1d as interp
-from myphdlib.general.labjack import loadLabjackData, filterPulsesFromPhotologicDevice
 from myphdlib.interface.ephys import Population
-from myphdlib.general.toolkit import psth2, smooth
-
-# TODO:
-# [ ]: Create properties for population mapped data
-
-class StimulusProcessingMixinBase():
-    """
-    """
-
-    def _processMovingBarsProtocol(
-        self,
-        invertOrientations=True
-        ):
-        """
-        """
-
-        print(f'INFO[{self.animal}, {self.date}]: Processing the moving bars stimulus data')
-
-        #
-        M = self.load('labjack/matrix')
-        start, stop = self.load('epochs/mb')
-        signal = M[start: stop, self.labjackChannelMapping['stimulus']]
-
-        # Check for data loss
-        if np.isnan(signal).sum() > 0:
-            print(f'WARNING[{self.animal}, {self.date}]: Data loss detected during the moving bars stimulus')
-            return
-        
-        #
-        filtered = filterPulsesFromPhotologicDevice(signal, minimumPulseWidthInSeconds=0.03)
-
-        #
-        risingEdgeIndices = np.where(np.diff(filtered) > 0.5)[0]
-        barOnsetIndices = risingEdgeIndices[0::2]
-        barOffsetIndices = risingEdgeIndices[1::2]
-        barCenteredIndices = barOffsetIndices - barOnsetIndices
-        barOnsetTimestamps = self.computeTimestamps(
-            barOnsetIndices + start
-        )
-        barOffsetTimestamps = self.computeTimestamps(
-            barOffsetIndices + start
-        )
-        self.save('stimuli/mb/onset/timestamps', barOnsetTimestamps)
-        self.save('stimuli/mb/offset/timestamps', barOffsetTimestamps)
-
-        #
-        result = list(self.folders.stimuli.rglob('*movingBarsMetadata*'))
-        if len(result) != 1:
-            raise Exception('Could not locate moving bars stimulus metadata')
-        file = result.pop()
-        with open(file, 'r') as stream:
-            lines = stream.readlines()[5:]
-        orientation = list()
-        for line in lines:
-            event, orientation_, timestamp = line.rstrip('\n').split(', ')
-            if int(event) == 1:
-                if invertOrientations:
-                    orientation_ = round(np.mod(float(orientation_) + 180, 360), 2)
-                orientation.append(float(orientation_))
-        self.save('stimuli/mb/orientation', np.array(orientation))
-
-        return
-
-    def _correctForCableDisconnectionDuringDriftingGrating(
-        self,
-        filtered,
-        maximumPulseWidthInSeconds=0.6,
-        ):
-        """
-        """
-
-        corrected = np.copy(filtered)
-        risingEdgeIndices = np.where(np.diff(filtered) > 0.5)[0]
-        fallingEdgeIndices = np.where(np.diff(filtered) * -1 > 0.5)[0] + 1
-        pulseEpochIndices = np.hstack([
-            risingEdgeIndices.reshape(-1, 1),
-            fallingEdgeIndices.reshape(-1, 1)
-        ])
-        pulseWidthsInSeconds = np.diff(pulseEpochIndices, axis=1) / self.labjackSamplingRate
-        for flag, epoch in zip(pulseWidthsInSeconds > maximumPulseWidthInSeconds, pulseEpochIndices):
-            if flag:
-                start, stop = epoch
-                corrected[start: stop] = 0
-
-        return corrected
-
-    def processVisualEvents(self):
-        return
 
 class SessionBase():
     """
@@ -128,7 +36,7 @@ class SessionBase():
         self._gratingMotionDuringProbes = None
         self._saccadeIndicesChronological = None
         self._saccadeTimestamps = None
-        self._saccadeDirections = None
+        self._saccadeLabels = None
         self._saccadeWaveforms = None
         self._saccadeLatencies = None
         self._gratingMotionDuringSaccades = None
@@ -155,6 +63,8 @@ class SessionBase():
         file = self.home.joinpath('metadata.txt')
         if file.exists():
             self._metadata = dict()
+
+            #
             with open(file, 'r') as stream:
                 lines = stream.readlines()
             for line in lines:
@@ -166,6 +76,14 @@ class SessionBase():
                 elif key == 'Session' and value == 'None':
                     value = None
                 self._metadata[key] = value
+        
+            #
+            letter = 'a'
+            matches = list(re.findall('\d\D', self.home.name))
+            if len(matches) == 1:
+                match = matches.pop()
+                number, letter = match
+                self._metadata['letter'] = letter
 
         else:
             raise Exception('Could not locate metadata file')
@@ -309,11 +227,14 @@ class SessionBase():
 
         return
     
-    def log(self, message, level='info'):
+    def log(self, message, level='info', end=None):
         """
         """
 
-        print(f'{level.upper()}[{self.date}, {self.animal}]: {message}')
+        if end is None:
+            print(f'{level.upper()}: ({self.animal}, {self.date}) {message}')
+        else:
+            print(f'{level.upper()}: ({self.animal}, {self.date}) {message}', end=end)
 
         return
 
@@ -331,12 +252,23 @@ class SessionBase():
 
         return pathsInFile
 
-    @property
-    def hdf(self):
+    def _makeOutputFile(
+        self,
+        overwrite=False
+        ):
         """
         """
 
-        return self.home.joinpath('output.hdf')
+        outputFile = self.home.joinpath('output.hdf')
+        if outputFile.exists() and overwrite == False:
+            return
+        with h5py.File(str(outputFile), 'w') as file:
+            pass
+
+        return
+
+    @property
+    def hdf(self): return self.home.joinpath('output.hdf')
     
     @property
     def leftCameraMovie(self): return
@@ -401,6 +333,11 @@ class SessionBase():
     def date(self):
         if self._metadata is not None:
             return self._metadata['Date']
+
+    @property
+    def letter(self):
+        if self._metadata is not None:
+            return self._metadata['letter']
         
     @property
     def cohort(self):
@@ -602,16 +539,6 @@ class SessionBase():
             except KeyError:
                 return False
 
-    def hasDeeplabcutPoseEstimates(self):
-        """
-        Looks for processed eye position data in the output file
-        """
-
-        if self.leftEyePose is not None or self.rightEyePose is not None:
-            return True
-        else:
-            return False
-
     def hasTrainingDataForSaccadeClassification(
         self,
         dataForBothEyes=True
@@ -633,6 +560,10 @@ class SessionBase():
             return all(list(flags.values()))
         else:
             return any(list(flags.values()))
+
+    @property
+    def hasLabjackData(self):
+        return True if self.home.joinpath('labjack').exists() else False
 
     @property
     def fps(self):
@@ -657,24 +588,6 @@ class SessionBase():
                     break
 
         return framerate
-    
-    @property
-    def isAutosorted(self):
-        """
-        """
-
-        filenames = (
-            'spike_times.npy',
-            'spike_clusters.npy'
-        )
-        results = list()
-        for filename in filenames:
-            if len(list(self.folders.ephys.rglob(f'*{filename}'))) == 1:
-                results.append(True)
-            else:
-                results.append(False)
-
-        return all(results)
 
     @property
     def probeTimestamps(self):
@@ -698,102 +611,100 @@ class SessionBase():
         return self._gratingMotionDuringProbes
 
     @property
-    def saccadeIndicesChronological(self):
-        if self._saccadeIndicesChronological is None:
-            result = all([
-                self.hasDataset(f'saccades/predicted/{self.eye}/nasal/timestamps'),
-                self.hasDataset(f'saccades/predicted/{self.eye}/temporal/timestamps')
-            ])
-            if result:
-                nasalSaccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/nasal/timestamps')
-                temporalSaccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/temporal/timestamps')
-                allSaccadeTimestamps = np.concatenate([
-                    nasalSaccadeTimestamps,
-                    temporalSaccadeTimestamps
-                ])
-                self._saccadeIndicesChronological = np.argsort(allSaccadeTimestamps)
-
-        return self._saccadeIndicesChronological
-
-    @property
     def saccadeTimestamps(self):
         if self._saccadeTimestamps is None:
-            result = all([
-                self.hasDataset(f'saccades/predicted/{self.eye}/nasal/timestamps'),
-                self.hasDataset(f'saccades/predicted/{self.eye}/temporal/timestamps')
-            ])
-            if result:
-                nasalSaccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/nasal/timestamps')
-                temporalSaccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/temporal/timestamps')
-                allSaccadeTimestamps = np.concatenate([
-                    nasalSaccadeTimestamps,
-                    temporalSaccadeTimestamps
-                ])
-                self._saccadeIndicesChronological = np.argsort(allSaccadeTimestamps)
-                self._saccadeTimestamps = allSaccadeTimestamps[self.saccadeIndicesChronological]
+            if self.hasDataset(f'saccades/predicted/{self.eye}/timestamps'):
+                self._saccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/timestamps')
 
         return self._saccadeTimestamps
 
     @property
     def saccadeLatencies(self):
         if self._saccadeLatencies is None:
-            if self.hasDataset(f'saccades/predicted/{self.eye}/unsigned/ttp'):
-                self._saccadeLatencies = self.load(f'saccades/predicted/{self.eye}/unsigned/ttp')
+            if self.hasDataset(f'saccades/predicted/{self.eye}/ttp'):
+                self._saccadeLatencies = self.load(f'saccades/predicted/{self.eye}/ttp')
         return self._saccadeLatencies
 
     @property
-    def saccadeDirections(self):
-        if self._saccadeDirections is None:
-            result = all([
-                self.hasDataset(f'saccades/predicted/{self.eye}/nasal/timestamps'),
-                self.hasDataset(f'saccades/predicted/{self.eye}/temporal/timestamps'),
-            ])
-            if result:
-                nasalSaccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/nasal/timestamps')
-                temporalSaccadeTimestamps = self.load(f'saccades/predicted/{self.eye}/temporal/timestamps')
-                saccadeDirectionsUnordered = np.concatenate([
-                    np.full(nasalSaccadeTimestamps.size, 'n', dtype=str),
-                    np.full(temporalSaccadeTimestamps.size, 't', dtype=str)
-                ])
-                self._saccadeDirections = saccadeDirectionsUnordered[self.saccadeIndicesChronological]
+    def saccadeLabels(self):
+        if self._saccadeLabels is None:
+            if self.hasDataset(f'saccades/predicted/{self.eye}/labels'):
+                self._saccadeLabels = self.load(f'saccades/predicted/{self.eye}/labels')
 
-        return self._saccadeDirections
+        return self._saccadeLabels
 
     @property
     def saccadeWaveforms(self):
         if self._saccadeWaveforms is None:
-            result = all([
-                self.hasDataset(f'saccades/predicted/{self.eye}/nasal/waveforms'),
-                self.hasDataset(f'saccades/predicted/{self.eye}/temporal/waveforms'),
-            ])
-            if result:
-                nasalSaccadeWaveforms = self.load(f'saccades/predicted/{self.eye}/nasal/waveforms')
-                temporalSaccadeWaveforms = self.load(f'saccades/predicted/{self.eye}/temporal/waveforms')
-                saccadeWaveformsUnordered = np.concatenate([
-                    nasalSaccadeWaveforms,
-                    temporalSaccadeWaveforms,
-                ], axis=0)
-                self._saccadeWaveforms = saccadeWaveformsUnordered[self.saccadeIndicesChronological]
+            if self.hasDataset(f'saccades/predicted/{self.eye}/waveforms'):
+                self._saccadeWaveforms = self.load(f'saccades/predicted/{self.eye}/waveforms')
 
         return self._saccadeWaveforms
 
     @property
     def gratingMotionDuringSaccades(self):
         if self._gratingMotionDuringSaccades is None:
-            result = all([
-                self.hasDataset(f'saccades/predicted/{self.eye}/nasal/motion'),
-                self.hasDataset(f'saccades/predicted/{self.eye}/temporal/motion'),
-            ])
-            if result:
-                gratingMotionDuringNasalSaccades = self.load(f'saccades/predicted/{self.eye}/nasal/motion')
-                gratingMotionDuringTemporalSaccades = self.load(f'saccades/predicted/{self.eye}/temporal/motion')
-                gratingMotionDuringSaccadesUnordered = np.concatenate([
-                    gratingMotionDuringNasalSaccades,
-                    gratingMotionDuringTemporalSaccades,
-                ], axis=0)
-                self._gratingMotionDuringSaccades = gratingMotionDuringSaccadesUnordered[self.saccadeIndicesChronological]
+            if self.hasDataset(f'saccades/predicted/{self.eye}/motion'):
+                self._gratingMotionDuringSaccades = self.load(f'saccades/predicted/{self.eye}/gmds')
 
         return self._gratingMotionDuringSaccades
+
+    def parseEvents(
+        self,
+        coincident=False,
+        eventName='probe',
+        eventDirection=None,
+        coincidenceWindow=(-0.05, 0.05),
+        ):
+        """
+        Create a mask that idenitfies coincident or non-coincident events
+        """
+
+        #
+        if eventName == 'probe':
+            if eventDirection is None:
+                probeDirections = (-1, 1)
+            else:
+                probeDirections = (eventDirection,)
+            f1 = np.array([
+                True if probeDirection in probeDirections else False
+                    for probeDirection in self.gratingMotionDruingProbes
+            ])
+            eventLatencies = self.probeLatencies
+
+        #
+        elif eventName == 'saccades':
+            if eventDirection is None:
+                saccadeDirections = ('n', 't')
+            else:
+                saccadeDirections = (eventDirection,)
+            f1 = np.array([
+                True if saccadeDirection in saccadeDirections else False
+                    for saccadeDirection in self.saccadeDirections
+            ])
+            eventLatencies = self.saccadeLatencies
+
+        #
+        if coincident:
+            f2 = np.logical_and(
+                eventLatencies >= coincidenceWindow[0],
+                eventLatencies <= coincidenceWindow[1]
+            )
+
+        #
+        else:
+            f2 = np.logical_or(
+                eventLatencies < coincidenceWindow[0],
+                eventLatencies > coincidenceWindow[1]
+            )
+
+        #
+        eventMask = np.logical_and(
+            f1,
+            f2
+        )
+
+        return eventMask
 
     def filterProbes(
         self,
@@ -873,102 +784,3 @@ class SessionBase():
             trialMask = np.invert(trialMask)
 
         return trialMask
-
-    def filterUnits(
-        self,
-        utypes=('vr', 'sr', 'nr', 'ud', 'vm'),
-        quality=('lq', 'hq'),
-        minimumResponseAmplitude=None,
-        ):
-        """
-        Filter single units based on unit type and spike-sorting quality
-        """
-
-        # Cast values to tuple if needed
-        if type(utypes) == str:
-            utypes = (utypes,)
-        if type(quality) == str:
-            quality = (quality,)
-
-        # Filter
-        populationMask = list()
-        if minimumResponseAmplitude is None:
-            sufficientResponseAmplitude = np.full(len(self.population), True)
-        else:
-            sufficientResponseAmplitude = np.array([
-                True if unit.gvr >= minimumResponseAmplitude else False
-                    for unit in self.population
-        ])
-        filter_ = np.vstack([
-            np.array([unit.utype in utypes for unit in self.population]),
-            np.array([unit.quality in quality for unit in self.population]),
-            sufficientResponseAmplitude
-        ]).all(0)
-
-        return filter_
-
-    def summarizeEventRelatedActivity(
-        self,
-        responseWindow=(-0.3, 0.5),
-        baselineWindow=(-8, -5),
-        binsize=0.01,
-        minimumPeakHeight=2,
-        peakLatencyRangeForVisualResponses=(0.05, 0.2),
-        peakLatencyRangeForSaccadeRelatedActivity=(-0.1, 0.2),
-        referenceEvent=0,
-        ):
-        """
-        """
-
-        #
-        if self.probeTimestamps is None:
-            return None
-
-        eventTimestamps = (
-            self.probeTimestamps[self.filterProbes('es', probeDirections=(-1,))],
-            self.probeTimestamps[self.filterProbes('es', probeDirections=(+1,))],
-            self.saccadeTimestamps[self.filterSaccades('es', saccadeDirections=('n',))],
-            self.saccadeTimestamps[self.filterSaccades('es', saccadeDirections=('t',))]
-        )
-        peakLatencyRanges = (
-            peakLatencyRangeForVisualResponses,
-            peakLatencyRangeForVisualResponses,
-            peakLatencyRangeForSaccadeRelatedActivity,
-            peakLatencyRangeForSaccadeRelatedActivity
-        )
-        umask = self.filterUnits(
-            utypes=('vr', 'vm', 'sr'),
-            quality=('hq',)
-        )
-        heatmaps = list()
-        for evt, plr in zip(eventTimestamps, peakLatencyRanges):
-            heatmap = list()
-            for unit in self.population[umask]:
-                t, z = unit.peth(
-                    evt,
-                    responseWindow=responseWindow,
-                    baselineWindow=baselineWindow,
-                    binsize=binsize,
-                    standardize=True
-                )
-                heatmap.append(z)
-            heatmaps.append(heatmap)
-
-        #
-
-        for heatmap in heatmaps:
-            for z in heatmap:
-                if z.max() < minimumPeakHeight:
-                    continue
-
-                #
-                peakIndices, peakProps = find_peaks(z, height=minimumPeakHeight - 0.5)
-                if peakIndices.size == 0:
-                    continue
-                firstPeakLatency = t[peakIndices[np.argmin(peakIndices)]]
-                if firstPeakLatency < plr[0]:
-                    continue
-                if firstPeakLatency > plr[1]:
-                    continue
-
-        return tuple([np.array(heatmap) for heatmap in heatmaps])

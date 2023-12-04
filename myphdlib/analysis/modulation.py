@@ -18,59 +18,6 @@ from decimal import Decimal
 #     - Use the peak latency determined with the ZETA test to identify which bin to look in
 # [ ] Come up with a different way to estimate the baseline saccade-related activity to add to the observed response
 
-def computeModulationIndices2(
-    unit,
-    probeMotion=-1,
-    responseWindow=(0, 0.3),
-    baselineWindow=(-3, -1),
-    perisaccadicWindow=(-0.05, 0.1),
-    perisaccadicTrialIndices=None,
-    excludePerisaccadicTrials=True,
-    binsize=0.01,
-    ):
-    """
-    """
-
-    # TODO: Implement a property that loads and stores these data
-    probeTimestamps = unit.session.load('stimuli/fs/probe/timestamps')
-    gratingMotionDuringProbes = unit.session.load('stimuli/fs/probe/motion')
-    saccadeTimestamps = unit.session.load('sitmuli/fs/saccade/timestamps')
-    # gratingMotionDuringSaccades = unit.session.load('stimuli/fs/saccade/motion')
-
-    #
-    trialIndices = list()
-    for trialIndex, probeTimestamp in enumerate(probeTimestamps):
-        if gratingMotionDuringProbes[trialIndex] != probeMotion:
-            continue
-        saccadeTimestampsRelative = probeTimestamp - saccadeTimestamps
-        closestSaccadeIndex = np.argmin(np.abs(saccadeTimestampsRelative))
-        saccadeLatency = probeTimestamp - saccadeTimestamps[closestSaccadeIndex]
-        probeLatency = -1 * saccadeLatency
-        if probeLatency < perisaccadicWindow[0] or probeLatency > perisaccadicWindow[1]:
-            trialIndices.append(trialIndex)
-
-    #
-    if binsize is None:
-        dt = np.diff(responseWindow).item()
-    else:
-        dt = binsize
-    t, M = psth2(
-        probeTimestamps[trialIndices],
-        unit.timestamps,
-        window=responseWindow,
-        binsize=binsize
-    )  
-    fr = M / dt
-
-    #
-    mu, sigma = unit.describe3(
-        probeTimestamps[trialIndices],
-        baselineWindow=baselineWindow,
-        binsize=binsize
-    )
-
-    return t, fr, mu, sigma
-
 def measureVisualOnlyResponse(
     unit,
     probeMotion=-1,
@@ -247,6 +194,120 @@ def estimateSaccadeRelatedActivity(
 
     return t, fr, mu, sigma
 
+def computeFictiveSaccadeResponses(
+    unit,
+    probeMotion=-1,
+    responseWindow=(0, 0.3),
+    responseWindowSize=0.3,
+    baselineWindow=(-3, -1),
+    perisaccadicWindow=(-0.05, 0.1),
+    binsize=0.01,
+    priorParameterEstimates=None,
+    sigma=1
+    ):
+    """
+    """
+
+    # TODO: Implement a property that loads and stores these data
+    probeTimestamps = unit.session.load('stimuli/fs/probe/timestamps')
+    gratingMotionDuringProbes = unit.session.load('stimuli/fs/probe/motion')
+    saccadeTimestamps = unit.session.load('stimuli/fs/saccade/timestamps')
+    gratingMotionDuringSaccades = unit.session.load('stimuli/fs/saccade/motion')
+
+    #
+    if binsize is None:
+        dt = np.diff(responseWindow).item()
+    else:
+        dt = binsize
+
+    # Parse probes
+    probeIndices, probeLatencies = dict(ps=list(), es=list()), list()
+    for trialIndex, probeTimestamp in enumerate(probeTimestamps):
+        if gratingMotionDuringProbes[trialIndex] != probeMotion:
+            continue
+        saccadeTimestampsRelative = probeTimestamp - saccadeTimestamps
+        closestSaccadeIndex = np.argmin(np.abs(saccadeTimestampsRelative))
+        probeLatency = probeTimestamp - saccadeTimestamps[closestSaccadeIndex]
+        probeLatencies.append(probeLatency)
+        if probeLatency >= perisaccadicWindow[0] and probeLatency <= perisaccadicWindow[1]:
+            probeIndices['ps'].append(trialIndex)
+        else:
+            probeIndices['es'].append(trialIndex)
+
+    # Parse saccades
+    saccadeIndices, saccadeLatencies = dict(ps=list(), es=list()), list()
+    for trialIndex, saccadeTimestamp in enumerate(saccadeTimestamps):
+        if gratingMotionDuringSaccades[trialIndex] != probeMotion:
+            continue
+        probeTimestampsRelative = saccadeTimestamp - probeTimestamps
+        closestProbeIndex = np.argmin(np.abs(probeTimestampsRelative))
+        saccadeLatency = saccadeTimestamp - probeTimestamps[closestProbeIndex]
+        saccadeLatencies.append(saccadeLatency)
+        if saccadeLatency >= perisaccadicWindow[0] and saccadeLatency <= perisaccadicWindow[1]:
+            saccadeIndices['ps'].append(trialIndex)
+        else:
+            saccadeIndices['es'].append(trialIndex)
+
+    # === Measure visual-only response ===
+
+    mu, sigma_ = unit.describe3(
+        probeTimestamps[probeIndices['es']],
+        baselineWindow=baselineWindow,
+        binsize=binsize
+    )
+
+    t, M = psth2(
+        probeTimestamps[probeIndices['es']],
+        unit.timestamps,
+        window=responseWindow,
+        binsize=binsize
+    )  
+    fr = M / dt
+    rProbe = np.mean((fr - mu) / sigma, axis=0)
+
+    # === Measure peri-saccadic response ===
+
+    mu, sigma_ = unit.describe3(
+        probeTimestamps[probeIndices['ps']],
+        baselineWindow=baselineWindow,
+        binsize=binsize
+    )
+
+    t_, M = psth2(
+        probeTimestamps[probeIndices['ps']],
+        unit.timestamps,
+        window=responseWindow,
+        binsize=binsize
+    )
+    fr = M / dt
+    rMixed = np.mean((fr - mu) / sigma, axis=0)
+
+    # === Compute saccade-related activity ===
+    mu, sigma_ = unit.describe3(
+        saccadeTimestamps[saccadeIndices['es']],
+        baselineWindow=baselineWindow,
+        binsize=binsize
+    )
+
+    rSaccade = list()
+    for saccadeLatency in saccadeLatencies:
+        t_, M = psth2(
+            saccadeTimestamps[saccadeIndices['es']],
+            unit.timestamps,
+            window=np.array(responseWindow) + saccadeLatency,
+            binsize=binsize
+        )
+        fr = M.mean(0) / dt
+        z = (fr - mu) / sigma
+        rSaccade.append(z)
+    rSaccade = np.mean(np.array(rSaccade), axis=0)
+
+    # === Compute baseline activity prior to saccades ===
+
+    rControl = 0
+
+    return t, (rProbe, rMixed, rSaccade, rControl), sigma
+
 def computeModulationIndices(
     unit,
     probeMotion=-1,
@@ -258,7 +319,8 @@ def computeModulationIndices(
     perisaccadicWindow=(-0.05, 0.1),
     perisaccadicTrialIndices=None,
     binsize=None,
-    priorParameterEstimates=None
+    priorParameterEstimates=None,
+    analyzeFictiveSaccades=False
     ):
     """
     """
@@ -319,60 +381,78 @@ def computeModulationIndices(
     if sigma == 0:
         raise Exception(f'Standard deviation could not be estimated')
 
-    # Observed extra-saccadic responses
-    if priorParameterEstimates is not None and 'rProbe' in priorParameterEstimates.keys():
-        rProbe = np.atleast_1d(priorParameterEstimates['rProbe'])
-    else:
-        t_, mProbe, mu, sigma_ = measureVisualOnlyResponse(
-            unit,
-            **kwargs
-        )
-        rProbe = mProbe.mean(0)
-        if standardize:
-            rProbe = np.around((rProbe - mu) / sigma, 3)
-        t = np.copy(t_)
-
-    # Observed peri-saccadic responses
-    if priorParameterEstimates is not None and 'rMixed' in priorParameterEstimates.keys():
-        rMixed = np.atleast_1d(priorParameterEstimates['rMixed'])
-    else:
-        t_, mMixed, mu, sigma_ = measurePerisaccadicVisualResponse(
-            unit,
-            **kwargs
-        )
-        rMixed = mMixed.mean(0)
-        if standardize:
-            rMixed = np.around((rMixed - mu) / sigma, 3)
-
-    # Predicted saccade-related activity
-    if priorParameterEstimates is not None and 'rSaccade' in priorParameterEstimates.keys():
-        rSaccade = np.atleast_1d(priorParameterEstimates['rSaccade'])
-    else:
-        t_, mSaccade, mu, sigma_ = estimateSaccadeRelatedActivity(
-            unit,
-            **kwargs
-        )
-        rSaccade = mSaccade.mean(0)
-        if standardize:
-            rSaccade = np.around((rSaccade - mu) / sigma, 3)
-
-    #
-    if priorParameterEstimates is not None and 'rControl' in priorParameterEstimates.keys():
-        rControl = np.atleast_1d(priorParameterEstimates['rControl'])
-    else:
-        t_, mControl, mu, sigma_ = estimateSaccadeRelatedActivity(
-            unit,
+    # Run analysis on fictive saccades
+    if analyzeFictiveSaccades:
+        t, rs, sigma = computeFictiveSaccadeResponses(
+            unit=unit,
             probeMotion=probeMotion,
-            responseWindow=np.around([
-                baselineWindowEdge - responseWindowSize,
-                baselineWindowEdge
-            ], 2),
+            responseWindow=responseWindow,
+            responseWindowSize=responseWindowSize,
             baselineWindow=baselineWindow,
-            binsize=binsize
+            perisaccadicWindow=perisaccadicWindow,
+            binsize=binsize,
+            priorParameterEstimates=priorParameterEstimates,
+            sigma=sigma
         )
-        rControl = round(mControl.mean(0).mean(), 3)
-        if standardize:
-            rControl = round((rControl - mu) / sigma, 3)
+        rProbe, rMixed, rSaccade, rControl = rs
+
+    # Run analysis on actual saccades
+    else:
+
+        # Observed extra-saccadic responses
+        if priorParameterEstimates is not None and 'rProbe' in priorParameterEstimates.keys():
+            rProbe = np.atleast_1d(priorParameterEstimates['rProbe'])
+        else:
+            t_, mProbe, mu, sigma_ = measureVisualOnlyResponse(
+                unit,
+                **kwargs
+            )
+            rProbe = mProbe.mean(0)
+            if standardize:
+                rProbe = np.around((rProbe - mu) / sigma, 3)
+            t = np.copy(t_)
+
+        # Observed peri-saccadic responses
+        if priorParameterEstimates is not None and 'rMixed' in priorParameterEstimates.keys():
+            rMixed = np.atleast_1d(priorParameterEstimates['rMixed'])
+        else:
+            t_, mMixed, mu, sigma_ = measurePerisaccadicVisualResponse(
+                unit,
+                **kwargs
+            )
+            rMixed = mMixed.mean(0)
+            if standardize:
+                rMixed = np.around((rMixed - mu) / sigma, 3)
+
+        # Predicted saccade-related activity
+        if priorParameterEstimates is not None and 'rSaccade' in priorParameterEstimates.keys():
+            rSaccade = np.atleast_1d(priorParameterEstimates['rSaccade'])
+        else:
+            t_, mSaccade, mu, sigma_ = estimateSaccadeRelatedActivity(
+                unit,
+                **kwargs
+            )
+            rSaccade = mSaccade.mean(0)
+            if standardize:
+                rSaccade = np.around((rSaccade - mu) / sigma, 3)
+
+        #
+        if priorParameterEstimates is not None and 'rControl' in priorParameterEstimates.keys():
+            rControl = np.atleast_1d(priorParameterEstimates['rControl'])
+        else:
+            t_, mControl, mu, sigma_ = estimateSaccadeRelatedActivity(
+                unit,
+                probeMotion=probeMotion,
+                responseWindow=np.around([
+                    baselineWindowEdge - responseWindowSize,
+                    baselineWindowEdge
+                ], 2),
+                baselineWindow=baselineWindow,
+                binsize=binsize
+            )
+            rControl = round(mControl.mean(0).mean(), 3)
+            if standardize:
+                rControl = round((rControl - mu) / sigma, 3)
 
     #
     rExpected = np.around(rProbe + rSaccade, 2)

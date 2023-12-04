@@ -2,7 +2,13 @@ import shutil
 import numpy as np
 import pathlib as pl
 from myphdlib.general.labjack import filterPulsesFromPhotologicDevice
-from myphdlib.interface.session import SessionBase, StimulusProcessingMixinBase
+from myphdlib.interface.session import SessionBase
+from myphdlib.pipeline.stimuli import StimuliProcessingMixin
+from myphdlib.pipeline.events import EventsProcessingMixin
+from myphdlib.pipeline.saccades import SaccadesProcessingMixin
+from myphdlib.pipeline.spikes import SpikesProcessingMixin
+from myphdlib.pipeline.activity import ActivityProcessingMixin
+from myphdlib.pipeline.prediction import PredictionProcessingMixin
 from myphdlib.extensions.matplotlib import placeVerticalLines
 from myphdlib.general.algorithms import detectMissingEvents
 
@@ -111,11 +117,11 @@ def reformat(
 
     return
 
-class StimulusProcessingMixinDreadds(StimulusProcessingMixinBase):
+class StimuliProcessingMixinDreadds(StimuliProcessingMixin):
     """
     """
 
-    def identifyProtocolEpochs(self, xData=None):
+    def _identifyProtocolEpochs(self, xData=None):
         """
         """
 
@@ -150,21 +156,6 @@ class StimulusProcessingMixinDreadds(StimulusProcessingMixinBase):
         for path, (start, stop) in zip(paths, indices):
             self.save(path, np.array([start, stop]))
 
-        return
-
-    def processVisualEvents(
-        self,
-        ):
-        """
-        """
-
-        self._processSparseNoiseProtocol()
-        self._processDriftingGratingProtocol()
-        self._processNoisyGratingProtocol()
-
-        return
-
-    def _processSparseNoiseProtocol(self):
         return
 
     def _detectMissingEventsDuringDriftingGratingProtocol(
@@ -285,7 +276,7 @@ class StimulusProcessingMixinDreadds(StimulusProcessingMixinBase):
         self.log('Processing the drifting grating stimulus data', level='info')
 
         #
-        if self.hasGroup('stimuli/dg'):
+        if self.hasDataset('stimuli/dg'):
             self.remove('stimuli/dg')
 
         # Read the metadata file
@@ -338,14 +329,39 @@ class StimulusProcessingMixinDreadds(StimulusProcessingMixinBase):
             if result == False:
                 return
         probeOnsetTimestamps = self.computeTimestamps(risingEdgeIndices + start)
+        gratingMotionDuringProbes = np.array(trialParameters['motion']).astype(int)
         self.save(f'stimuli/dg/probe/timestamps', probeOnsetTimestamps)
+        self.save(f'stimuli/dg/probe/motion', gratingMotionDuringProbes)
         for eventName in ('grating', 'motion', 'iti'):
             self.save(f'stimuli/dg/{eventName}/timestamps', np.array([]).astype(float))
+
+    # TODO: Code these methods
+    def _processSparseNoiseProtocol(self):
+        return
 
     def _processNoisyGratingProtocol(self):
         return
 
-class DreaddsSession(SessionBase, StimulusProcessingMixinDreadds):
+    def _runStimuliModule(
+        self,
+        ):
+        """
+        """
+
+        self._processSparseNoiseProtocol()
+        self._processDriftingGratingProtocol()
+        self._processNoisyGratingProtocol()
+
+        return
+
+class DreaddsSession(
+    StimuliProcessingMixinDreadds,
+    SaccadesProcessingMixin,
+    EventsProcessingMixin,
+    SpikesProcessingMixin,
+    ActivityProcessingMixin,
+    PredictionProcessingMixin,
+    SessionBase):
     """
     """
 

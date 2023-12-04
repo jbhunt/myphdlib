@@ -25,16 +25,21 @@ pathsToKeep = {
     "epochs/dg",
     "epochs/fs",
     "epochs/mb",
+    "epochs/mb/pre",
+    "epochs/mb/post",
     "epochs/sn",
     "epochs/sn/post",
     "epochs/sn/pre",
+    "epochs/ng",
 
     # Dropped frames mask
     "frames",
     "frames/left",
     "frames/left/dropped",
+    "frames/left/timestamps",
     "frames/right",
     "frames/right/dropped",
+    "frames/right/timestamps",
 
     # Labjack data
     "labjack",
@@ -260,11 +265,12 @@ pathsToKeep = {
 
     # Fictive saccades stimulus
     "stimuli/fs",
-    "stimuli/fs/coincident",
-    "stimuli/fs/probes",
-    "stimuli/fs/probes/timestamps",
-    "stimuli/fs/saccades",
-    "stimuli/fs/saccades/timestamps",
+    "stimuli/fs/probe",
+    "stimuli/fs/probe/timestamps",
+    "stimuli/fs/probe/motion",
+    "stimuli/fs/saccade",
+    "stimuli/fs/saccade/timestamps",
+    "stimuli/fs/saccade/motion",
 
     # Moving bars stimulus
     "stimuli/mb",

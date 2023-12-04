@@ -4,15 +4,21 @@ import pickle
 import numpy as np
 from decimal import Decimal
 from scipy.stats import pearsonr
-from myphdlib.interface.session import SessionBase, StimulusProcessingMixinBase
+from myphdlib.interface.session import SessionBase
+from myphdlib.pipeline.stimuli import StimuliProcessingMixin
+from myphdlib.pipeline.events import EventsProcessingMixin
+from myphdlib.pipeline.saccades import SaccadesProcessingMixin
+from myphdlib.pipeline.spikes import SpikesProcessingMixin
+from myphdlib.pipeline.activity import ActivityProcessingMixin
+from myphdlib.pipeline.prediction import PredictionProcessingMixin
 from myphdlib.extensions.matplotlib import placeVerticalLines
 from myphdlib.general.labjack import loadLabjackData, filterPulsesFromPhotologicDevice
 
-class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
+class StimuliProcessingMixinMlati(StimuliProcessingMixin):
     """
     """
 
-    def identifyProtocolEpochs(self, xData=None):
+    def _identifyProtocolEpochs(self, xData=None):
         """
         """
 
@@ -80,23 +86,6 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
             self.save(path, np.array([start, stop]))
 
         return
-
-    def processVisualEvents(self):
-        """
-        """
-
-        if self.hasDataset('epochs') == False:
-            raise Exception('Protocol epochs have not been defined by the user')
-
-        self._processSparseNoiseProtocol()
-        if self.cohort in (1, 2, 3, 5):
-            self._processBinaryNoiseProtocol()
-        if self.cohort != 5:
-            self._processFictiveSaccadesProtocol()
-            self._processDriftingGratingProtocol()
-        self._processMovingBarsProtocol()
-
-        return
     
     def _interpolateMissingSparseNoiseTrials(
         self,
@@ -148,7 +137,7 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
         """
         """
 
-        print(f'INFO[{self.animal}, {self.date}]: Processing the sparse noise stimulus data')
+        self.log('Processing the sparse noise stimulus data')
 
         if self.cohort in (1, 2):
             blocks = ('pre',)
@@ -183,7 +172,7 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
 
             # Check for data loss
             if np.isnan(signal).sum() > 0:
-                print(f'WARNING[{self.animal}, {self.date}]: Data loss detected during the sparse noise stimulus')
+                self.log('Data loss detected during the sparse noise stimulus', level='warning')
                 # return signal
 
             #
@@ -196,7 +185,7 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
                 nTrialsExpected=nTrialsExpected
             )
             if result == False:
-                print(f'WARNING[{self.animal}, {self.date}]: Failed to process sparse noise stimulus')
+                self.log('Failed to process sparse noise stimulus', level='error')
                 return
 
             #
@@ -214,7 +203,7 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
             elif self.cohort in (2, 3, 4, 5): 
                 result = list(self.folders.stimuli.rglob(f'sparseNoiseMetadata-{iBlock + 1}.pkl'))
             if len(result) != 1:
-                print(f'WARNING[{self.animal}, {self.date}]: Could not locate the sparse noise metadata file for block {iBlock + 1}')
+                self.log(f'Could not locate the sparse noise metadata file for block {iBlock + 1}', level='error')
                 continue
             file = result.pop()
             with open(file, 'rb') as stream:
@@ -324,7 +313,7 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
 
         # Case where no pulses were detected in epoch
         if peakIndices_.size == 0:
-            print(f'WARNING: Unexpected number of pulses detected for binary noise stimulus: 0')
+            self.log(f'Unexpected number of pulses detected for binary noise stimulus: 0', level='warning')
             for iTrial in range(expectedTrialCount):
                 data[blockParams]['missing'].append(True)
                 data[blockParams]['timestamps'].append(np.nan)
@@ -344,7 +333,7 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
         #
         nPulses = peakIndicesInterpolated.size
         if nPulses != expectedTrialCount:
-            print(f'WARNING: Unexpected number of pulses detected for binary noise stimulus: {nPulses}')
+            self.log(f'Unexpected number of pulses detected for binary noise stimulus: {nPulses}', level='warning')
             for iTrial in range(expectedTrialCount):
                 data[blockParams]['missing'].append(True)
                 data[blockParams]['timestamps'].append(np.nan)
@@ -366,7 +355,7 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
         """
         """
 
-        print(f'INFO[{self.animal}, {self.date}]: Processing the binary noise stimulus data')
+        self.log(f'Processing the binary noise stimulus data')
 
         data = {
             ('hr', 'lf'): {
@@ -418,7 +407,7 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
             # Check for data loss
             resolution, frequency = blockParams
             if np.isnan(signal).sum() > 0:
-                print(f'WARNING[{self.animal}, {self.date}]: Data loss detected during the binary noise stimulus (resolution={resolution}, frequency={frequency})')
+                self.log(f'Data loss detected during the binary noise stimulus (resolution={resolution}, frequency={frequency})', level='error')
                 continue
 
             #
@@ -444,13 +433,13 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
 
             #
             if result == False:
-                print(f'WARNING[{self.animal}, {self.date}]: Failed to determine pulse width threshold for the binary noise stimulus (resolution={resolution}, frequency={frequency})')
+                self.log('Failed to determine pulse width threshold for the binary noise stimulus (resolution={resolution}, frequency={frequency})', level='error')
                 for iTrial in range(expectedTrialCount):
                     data[blockParams]['missing'].append(True)
                     data[blockParams]['timestamps'].append(np.nan)
                 continue
             else:
-                print(f'INFO[{self.animal}, {self.date}]: Pulse width threshold for binary noise stimulus determined: {minimumPulseWidth:.2f} seconds')
+                self.log(f'Pulse width threshold for binary noise stimulus determined: {minimumPulseWidth:.2f} seconds')
 
             # Identify missing trials/compute timestamps
             flashIndex = 0
@@ -559,7 +548,18 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
         """
         """
 
-        print(f'INFO[{self.animal}, {self.date}]: Processing the fictive saccades stimulus data')
+        self.log(f'Processing the fictive saccades stimulus data')
+        datasetPaths = (
+            'stimuli/fs/probe/timestamps',
+            'stimuli/fs/probe/motion',
+            'stimuli/fs/saccade/timestamps',
+            'stimuli/fs/saccade/motion'
+        )
+        if self.cohort not in (1, 2, 3, 4):
+            self.log(f'Session from cohort {self.cohort} which did not include the fictive saccades stimulus')
+            for datasetPath in datasetPaths:
+                self.save(datasetPath, np.array([]).astype(float))
+            return
 
         #
         M = self.load('labjack/matrix')
@@ -568,7 +568,7 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
 
         # Check for data loss
         if np.isnan(signal).sum() > 0:
-            print(f'WARNING[{self.animal}, {self.date}]: Data loss detected during the fictive saccades stimulus')
+            self.log(f'Data loss detected during the fictive saccades stimulus', level='warning')
             return
 
         #
@@ -579,70 +579,78 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
         eventTimestamps = self.computeTimestamps(risingEdgeIndices + start)
 
         #
+        result = list(self.folders.stimuli.joinpath('metadata').glob('*fictiveSaccadeMetadata*'))
+        if len(result) != 1:
+            self.log(f'Could not locate the fictive saccades metadata', level='warning')
+            return
+        with open(result.pop(), 'rb') as stream:
+            metadata = pickle.load(stream)
+        if risingEdgeIndices.size != metadata['events'].shape[0]:
+            self.log(f'Unexpected number of events detected during the fictive saccades stimulus', level='warning')
+            return
+
+        # There are no probe-only trials for this cohort
         if self.cohort == 1:
-            probeEventMask = np.full(eventTimestamps.size, False).astype(bool)
-            probeEventMask[1::3] = True
-            probeTimestamps = eventTimestamps[probeEventMask]
-            saccadeTimestamps = eventTimestamps[~probeEventMask]
+
+            #
+            gratingMotionDuringProbes = list()
+            gratingMotionDuringSaccades = list()
+            saccadeTimestamps = list()
+            probeTimestamps = list()
+
+            #
+            trialIndex = 0
+            for eventIndex, eventName in enumerate(metadata['events']):
+
+                #
+                eventTimestamp = eventTimestamps[eventIndex]
+                motionDirection = metadata['motion'][trialIndex].item()
+
+                #
+                if eventName == 'saccade onset':
+                    saccadeTimestamps.append(eventTimestamp)
+                    gratingMotionDuringSaccades.append(motionDirection)
+                elif eventName == 'probe onset':
+                    probeTimestamps.append(eventTimestamp)
+                    gratingMotionDuringProbes.append(motionDirection)
+                    trialIndex += 1
+            probeTimestamps = np.array(probeTimestamps)
+            saccadeTimestamps = np.array(saccadeTimestamps)
 
         #
         elif self.cohort in (2, 3, 4):
-            result = list(self.folders.stimuli.joinpath('metadata').glob('*fictiveSaccadeMetadata*'))
-            if len(result) != 1:
-                print(f'WARNING[{self.animal}, {self.date}]: Could not locate the fictive saccades metadata')
-                return
-            with open(result.pop(), 'rb') as stream:
-                metadata = pickle.load(stream)
-            if risingEdgeIndices.size != metadata['events'].shape[0]:
-                print(f'WARNING[{self.animal}, {self.date}]: Unexpected number of events detected during the fictive saccades stimulus')
-                return
+
+            #
             probeEventMask = metadata['events'].flatten() == 'probe onset'
             saccadeEventMask = metadata['events'].flatten() == 'saccade onset'
-            probeTimestamps = self.computeTimestamps(risingEdgeIndices[probeEventMask] + start)
-            saccadeTimestamps = self.computeTimestamps(risingEdgeIndices[saccadeEventMask] + start)
+            probeTimestamps = eventTimestamps[probeEventMask]
+            saccadeTimestamps = eventTimestamps[saccadeEventMask]
+
+            #
+            gratingMotionDuringProbes = list()
+            gratingMotionDuringSaccades = list()
+            for trialIndex in range(len(metadata['trials'])):
+                blockNumber, motionDirection, trialType = metadata['trials'][trialIndex]
+                if trialType == 'probe':
+                    gratingMotionDuringProbes.append(motionDirection)
+                elif trialType == 'saccade':
+                    gratingMotionDuringSaccades.append(motionDirection)
+                else:
+                    gratingMotionDuringProbes.append(motionDirection)
+                    gratingMotionDuringSaccades.append(motionDirection)
+        
+        #
+
+
+        #
+        gratingMotionDuringProbes = np.array(gratingMotionDuringProbes).astype(int)
+        gratingMotionDuringSaccades = np.array(gratingMotionDuringSaccades).astype(int)
 
         #
         self.save('stimuli/fs/probe/timestamps', probeTimestamps)
-        self.save('stimuli/fs/saccades/timestamps', saccadeTimestamps)
-        gratingMotionDuringEvents = np.array([
-            item[1] for item in metadata['trials']
-        ]).astype(int)
-        for eventName in ('probe', 'saccade'):
-            self.save(f'stimuli/fs/{eventName}/motion', gratingMotionDuringEvents)
-
-        return
-
-        # Re-shape data into trial-based structure
-        trials = list()
-
-        #
-        for saccadeTimestamp in saccadeTimestamps:
-            probeTimestampsRelative = probeTimestamps - saccadeTimestamp
-            closest = np.argsort(np.abs(probeTimestampsRelative))[0]
-            dt = abs(probeTimestampsRelative[closest])
-            if dt < 0.3:
-                probeTimestamp = probeTimestamps[closest]
-            else:
-                probeTimestamp = np.nan
-            entry = [saccadeTimestamp, probeTimestamp]
-            trials.append(entry)
-
-        #
-        for probeTimestamp in probeTimestamps:
-            saccadeTimestampsRelative = saccadeTimestamps - probeTimestamp
-            closest = np.argsort(np.abs(saccadeTimestampsRelative))[0]
-            dt = abs(saccadeTimestampsRelative[closest])
-            if dt < 0.1:
-                saccadeTimestamp = saccadeTimestamps[closest]
-            else:
-                saccadeTimestamp = np.nan
-            entry = [saccadeTimestamp, probeTimestamp]
-            trials.append(entry)
-
-        #
-        trials = np.unique(trials, axis=0)
-        coincident = np.invert(np.isnan(trials).any(axis=1))
-        self.save('stimuli/fs/coincident', coincident)
+        self.save('stimuli/fs/saccade/timestamps', saccadeTimestamps)
+        self.save('stimuli/fs/probe/motion', gratingMotionDuringProbes)
+        self.save('stimuli/fs/saccade/motion', gratingMotionDuringSaccades)
 
         return
 
@@ -954,7 +962,31 @@ class StimulusProcessingMixinMlati(StimulusProcessingMixinBase):
 
         return
 
-class MlatiSession(SessionBase, StimulusProcessingMixinMlati):
+    def _runStimuliModule(self):
+        """
+        """
+
+        if self.hasDataset('epochs') == False:
+            raise Exception('Protocol epochs have not been defined by the user')
+
+        self._processSparseNoiseProtocol()
+        if self.cohort in (1, 2, 3, 5):
+            self._processBinaryNoiseProtocol()
+        if self.cohort != 5:
+            self._processFictiveSaccadesProtocol()
+            self._processDriftingGratingProtocol()
+        self._processMovingBarsProtocol()
+
+        return
+
+class MlatiSession(
+    StimuliProcessingMixinMlati,
+    SaccadesProcessingMixin,
+    EventsProcessingMixin,
+    SpikesProcessingMixin,
+    ActivityProcessingMixin,
+    PredictionProcessingMixin,
+    SessionBase):
     """
     """
 

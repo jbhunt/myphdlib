@@ -1,122 +1,55 @@
-from myphdlib.pipeline.events import (
-    createLabjackDataMatrix,
-    extractBarcodeSignals,
-    decodeBarcodeSignals,
-    estimateTimestampingFunction,
-    findDroppedFrames,
-    timestampCameraTrigger,
+from myphdlib.pipeline.prediction import (
+    predictSaccadeDirection,
+    predictSaccadeEpochs
 )
-from myphdlib.pipeline.saccades import (
-    extractEyePosition,
-    correctEyePosition,
-    interpolateEyePosition,
-    decomposeEyePosition,
-    reorientEyePosition,
-    filterEyePosition,
-    detectPutativeSaccades,
-    classifyPutativeSaccades,
-    determineSaccadeOnset,
-    determineGratingMotionAssociatedWithEachSaccade
-)
-
-from myphdlib.pipeline.cleanup import (
-    removeObsoleteDatasets,
-)
-
 from myphdlib.interface.factory import SessionFactory
 
-class ModuleBase():
-    
-    def __init__(
-        self,
-        ):
-        """
-        """
-        self._sessions = list()
-        return
-
-    def addSession(
-        self,
-        session,
-        ):
-        """
-        """
-        self._sessions.append(session)
-        return
-
-    def run(self):
-        """
-        """
-        return
-
-def processWholeDataset(
+def process(
     sessions,
-    experimentsForSaccadePrediction=('Mlati', 'Dreadds')
+    redo=False,
+    zeta=False,
+    saccadePredictionExperiments=('Mlati', 'Dreadds', 'Muscimol'),
     ):
     """
     """
 
-    # Extract eye position and detect saccades
+    # Process eye position data and detect putative saccades
     for session in sessions:
-        if session.hasDeeplabcutPoseEstimates:
-            extractEyePosition(session)
-            correctEyePosition(session)
-            interpolateEyePosition(session)
-            decomposeEyePosition(session)
-            reorientEyePosition(session)
-            filterEyePosition(session)
-            detectPutativeSaccades(session)
+        if session.hasDataset('saccades/putative') == False or redo:
+            session._runSaccadeModule()
 
-    # Classify putative saccades
-    factory = SessionFactory()
-    sessionsForSaccadePrediction = factory.produce(
-        experiment=experimentsForSaccadePrediction
-    )
-    classifyPutativeSaccades(
-        sessions,
-        sessionsForSaccadePrediction
-    )
-
-    #
+    # Collect sessions missing predicted saccades
+    sessionsToAnalyze = list()
     for session in sessions:
+        if session.hasDataset('saccades/predicted')== False or redo:
+            sessionsToAnalyze.append(session)
 
-        # Extract the labjack data and the timestamps for the barcodes
-        if session.hasDataset('labjack/matrix') == False:
-            createLabjackDataMatrix(session)
-        extractBarcodeSignals(session)
-        decodeBarcodeSignals(session)
-        estimateTimestampingFunction(session)
+    # Predict saccade parameters
+    if len(sessionsToAnalyze) != 0:
 
-        # Continue processing saccades
-        if session.hasDeeplabcutPoseEstimates:
-            determineSaccadeOnset(session)
-            sortProbeStimuli(session)
-            determineGratingMotionAssociatedWithEachSaccade(
-                session
-            )
+        # Collect sessions used to train saccade classifier
+        factory = SessionFactory()
+        sessionsForTraining = factory.produce(
+            experiment=saccadePredictionExperiments
+        )
 
-        # Find the boundaries between stimulus protocols
-        if session.hasGroup('epochs') == False:
-            session.log('Protocol epochs need to be manually extracted', level='error')
-            continue
-        
-        # Execute the session-specific processing of visual events
-        if hasattr(session, 'processVisualEvents'):
-            session.processVisualEvents()
+        # Predict saccade direction
+        predictSaccadeDirection(
+            sessionsToAnalyze,
+            sessionsForTraining
+        )
 
-        # Timestamp video acquisition
-        findDroppedFrames(session)
-        timestampCameraTrigger(session)
+        # Predict saccade onset and offset
+        predictSaccadeEpochs(
+            sessionsToAnalyze,
+            sessionsForTraining,
+        )
 
-        # Process single-unit data
-        if session.isAutosorted:
-            extractSingleUnitData(session)
-            measureSpikeSortingQuality(session)
-            identifyUnitsWithEventRelatedActivity(session)
-            estimateResponseLatency(session)
-            predictUnitClassification(session)
-
-        #
-        # cleanupOutputFile(session)
+    # Main pipeline
+    for session in sessions:
+        session._runEventsModule(redo)
+        session._runStimuliModule()
+        session._runActivityModule(zeta, redo)
+        session._runSpikesModule()
 
     return
