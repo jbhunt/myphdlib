@@ -9,6 +9,7 @@ from myphdlib.pipeline.saccades import SaccadesProcessingMixin
 from myphdlib.pipeline.spikes import SpikesProcessingMixin
 from myphdlib.pipeline.activity import ActivityProcessingMixin
 from myphdlib.pipeline.prediction import PredictionProcessingMixin
+from myphdlib.pipeline.cleanup import CleanupProccessingMixin
 from myphdlib.extensions.matplotlib import placeVerticalLines
 from myphdlib.general.labjack import filterPulsesFromPhotologicDevice
 
@@ -246,6 +247,7 @@ class MuscimolSession(
     SpikesProcessingMixinMuscimol,
     ActivityProcessingMixinMuscimol,
     PredictionProcessingMixin,
+    CleanupProccessingMixin,
     SessionBase
     ):
     """

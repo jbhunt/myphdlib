@@ -36,9 +36,11 @@ pathsToKeep = {
     "frames",
     "frames/left",
     "frames/left/dropped",
+    "frames/left/intervals",
     "frames/left/timestamps",
     "frames/right",
     "frames/right/dropped",
+    "frames/right/intervals",
     "frames/right/timestamps",
 
     # Labjack data
@@ -47,6 +49,7 @@ pathsToKeep = {
     "labjack/cameras/missing",
     "labjack/cameras/timestamps",
     "labjack/matrix",
+    "labjack/timespace",
 
     # Data that maps onto single-/multi-unit data
     "population",
@@ -83,14 +86,45 @@ pathsToKeep = {
     "population/metrics/dr/right/x",
     "population/metrics/dr/right/p",
 
-    # PSTHs
-    # "population/psths",
-    # "population/psths/probe",
-    # "population/psths/probe/left",
-    # "population/psths/probe/right",
-    # "population/psths/saccade",
-    # "population/psths/saccade/nasal",
-    # "population/psths/saccade/temporal",
+    # Saccade prediction related datasets
+    'prediction',
+    'prediction/saccades',
+    'prediction/saccades/direction',
+    'prediction/saccades/direction/X',
+    'prediction/saccades/direction/y',
+    'prediction/saccades/epochs',
+    'prediction/saccades/epochs/X',
+    'prediction/saccades/epochs/y',
+    'prediction/saccades/epochs/z',
+
+    # Saccade-related datasets
+    'saccades',
+    "saccades/putative",
+    "saccades/putative/left",
+    "saccades/putative/left/indices",
+    "saccades/putative/left/waveforms",
+    "saccades/putative/right",
+    "saccades/putative/right/indices",
+    "saccades/putative/right/waveforms",
+    'saccades/predicted',
+    'saccades/predicted/left',
+    'saccades/predicted/left/direction',
+    'saccades/predicted/left/epochs',
+    'saccades/predicted/left/indices',
+    'saccades/predicted/left/labels',
+    'saccades/predicted/left/timestamps',
+    'saccades/predicted/left/waveforms',
+    'saccades/predicted/left/dop',
+    'saccades/predicted/left/ttp',
+    'saccades/predicted/right',
+    'saccades/predicted/right/direction',
+    'saccades/predicted/right/epochs',
+    'saccades/predicted/right/indices',
+    'saccades/predicted/right/labels',
+    'saccades/predicted/right/timestamps',
+    'saccades/predicted/right/waveforms',
+    'saccades/predicted/right/dop',
+    'saccades/predicted/right/ttp',
 
     # ZETA test data
     "population/zeta",
@@ -120,86 +154,6 @@ pathsToKeep = {
     "pose/missing/right",
     "pose/reoriented",
     "pose/uncorrected",
-
-    # Saccade data
-    "saccades",
-
-    # Predicted saccade data
-    "saccades/predicted",
-
-    # Left eye
-    "saccades/predicted/left",
-
-    # Nasal saccades
-    "saccades/predicted/left/nasal",
-    "saccades/predicted/left/nasal/indices",
-    "saccades/predicted/left/nasal/indices/adjusted",
-    "saccades/predicted/left/nasal/indices/uncorrected",
-    "saccades/predicted/left/nasal/motion",
-    "saccades/predicted/left/nasal/timestamps",
-    "saccades/predicted/left/nasal/waveforms",
-
-    # Temporal saccades
-    "saccades/predicted/left/temporal",
-    "saccades/predicted/left/temporal/indices",
-    "saccades/predicted/left/temporal/indices/adjusted",
-    "saccades/predicted/left/temporal/indices/uncorrected",
-    "saccades/predicted/left/temporal/motion",
-    "saccades/predicted/left/temporal/timestamps",
-    "saccades/predicted/left/temporal/waveforms",
-
-    # Right eye
-    "saccades/predicted/right",
-
-    # Nasal saccades
-    "saccades/predicted/right/nasal",
-    "saccades/predicted/right/nasal/indices",
-    "saccades/predicted/right/nasal/indices/adjusted",
-    "saccades/predicted/right/nasal/indices/uncorrected",
-    "saccades/predicted/right/nasal/motion",
-    "saccades/predicted/right/nasal/timestamps",
-    "saccades/predicted/right/nasal/waveforms",
-
-    # Temporal saccades
-    "saccades/predicted/right/temporal",
-    "saccades/predicted/right/temporal/indices",
-    "saccades/predicted/right/temporal/indices/adjusted",
-    "saccades/predicted/right/temporal/indices/uncorrected",
-    "saccades/predicted/right/temporal/motion",
-    "saccades/predicted/right/temporal/timestamps",
-    "saccades/predicted/right/temporal/waveforms",
-
-    # Unsigned saccade datasets
-    "saccades/predicted/left/unsigned",
-    "saccades/predicted/right/unsigned",
-
-    # Unsigned saccade datasets (left eye)
-    "saccades/predicted/left/unsigned/dop",
-    "saccades/predicted/left/unsigned/ttp",
-
-    # Unsigned saccade datasets (right eye)
-    "saccades/predicted/right/unsigned/dop",
-    "saccades/predicted/right/unsigned/ttp",
-
-    # Putative saccade data
-    "saccades/putative",
-    "saccades/putative/left",
-    "saccades/putative/left/amplitudes",
-    "saccades/putative/left/indices",
-    "saccades/putative/left/waveforms",
-    "saccades/putative/right",
-    "saccades/putative/right/amplitudes",
-    "saccades/putative/right/indices",
-    "saccades/putative/right/waveforms",
-    "saccades/training",
-
-    # Saccade classification training data
-    "saccades/training/left",
-    "saccades/training/left/X",
-    "saccades/training/left/y",
-    "saccades/training/right",
-    "saccades/training/right/X",
-    "saccades/training/right/y",
 
     # Extracellular spikes and clusters
     "spikes",
@@ -303,32 +257,6 @@ pathsToKeep = {
     "tfp/xp",
 }
 
-def removeObsoleteDatasets(
-    session,
-    dryrun=True,
-    ):
-    """
-    """
-
-    pathsToRemove = list()
-    pathsInFile = list()
-    with h5py.File(session.hdf, 'r') as file:
-        file.visit(lambda name: pathsInFile.append(name))
-    
-    for path in pathsInFile:
-        if path not in pathsToKeep:
-            pathsToRemove.append(path)
-
-    #
-    for path in pathsToRemove:
-        session.log(f'Removing "{path}" dataset from output file')
-        if dryrun:
-            continue
-        session.remove(path)
-
-    if dryrun:
-        return pathsToRemove
-
 def checkForMissingDatasets(
     session,
     returnMissingPaths=False
@@ -348,3 +276,42 @@ def checkForMissingDatasets(
 
     if returnMissingPaths:
         return pathsNotFound
+
+class CleanupProccessingMixin(object):
+    """
+    """
+
+    def _removeObsoleteDatasets(
+        self,
+        dryrun=True,
+        returnPaths=False
+        ):
+        """
+        """
+
+        pathsToRemove = list()
+        pathsInFile = list()
+        with h5py.File(self.hdf, 'r') as file:
+            file.visit(lambda name: pathsInFile.append(name))
+        
+        for path in pathsInFile:
+            if path not in pathsToKeep:
+                pathsToRemove.append(path)
+
+        #
+        for path in pathsToRemove:
+            self.log(f'Removing dataset: {path}')
+            if dryrun:
+                continue
+            self.remove(path)
+
+        if returnPaths:
+            return pathsToRemove
+
+    def _runCleanupModule(self, dryrun=True):
+        """
+        """
+
+        self._removeObsoleteDatasets(dryrun)
+
+        return
