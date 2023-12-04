@@ -490,6 +490,15 @@ class EventsProcessingMixin(object):
             return
 
         #
+        if np.isnan(self.saccadeTimestamps).all():
+            for k in ('dos', 'tts'):
+                self.save(f'stimuli/dg/probe/{k}', np.array([]))
+            for k in ('dop', 'ttp'):
+                self.save(f'saccades/predicted/{self.eye}/{k}', np.array([]))
+            self.log(f'No saccade timestamps detected', level='warning')
+            return
+
+        #
         nProbes = self.probeTimestamps.size
         nSaccades = self.saccadeTimestamps.size
         data = {
@@ -503,19 +512,19 @@ class EventsProcessingMixin(object):
         for trialIndex, probeTimestamp in enumerate(self.probeTimestamps):
             if np.isnan(probeTimestamp):
                 continue
-            saccadeTimestampsRelative = self.saccadeTimestamps - probeTimestamp
+            saccadeTimestampsRelative = self.saccadeTimestamps[:, 0] - probeTimestamp
             saccadeIndex = np.argmin(np.abs(saccadeTimestampsRelative))
             saccadeLabel = self.saccadeLabels[saccadeIndex]
-            probeLatency = round(probeTimestamp - self.saccadeTimestamps[saccadeIndex], 3)
+            probeLatency = round(probeTimestamp - self.saccadeTimestamps[:, 0][saccadeIndex], 3)
             data['dos'][trialIndex] = saccadeLabel
             data['tts'][trialIndex] = probeLatency
 
         #
         for trialIndex, saccadeTimestamp in enumerate(self.saccadeTimestamps):
-            probeTimestampsRelative = self.probeTimestamps - saccadeTimestamp
+            probeTimestampsRelative = self.probeTimestamps - saccadeTimestamp[0]
             probeIndex = np.nanargmin(np.abs(probeTimestampsRelative))
             probeDirection = self.gratingMotionDuringProbes[probeIndex]
-            saccadeLatency = round(saccadeTimestamp - self.probeTimestamps[probeIndex], 3)
+            saccadeLatency = round(saccadeTimestamp[0] - self.probeTimestamps[probeIndex], 3)
             data['ttp'][trialIndex] = saccadeLatency
             data['dop'][trialIndex] = probeDirection
 
@@ -538,8 +547,16 @@ class EventsProcessingMixin(object):
 
         for eye in ('left', 'right'):
             saccadeEpochs = self.load(f'saccades/predicted/{eye}/epochs')
+            nSaccades = saccadeEpochs.shape[0]
             droppedFrames = self.load(f'frames/{eye}/dropped')
             nFramesRecorded = droppedFrames.size
+
+            #
+            if nFramesRecorded > frameTimestamps.size:
+                self.log(f'Saccade timestamping failed: {nFramesRecorded} frames in the {eye} camera movie but only {frameTimestamps.size} camera trigger pulses recorded', level='error')
+                self.save(f'saccades/predicted/{eye}/timestamps', np.full([nSaccades, 2], np.nan))
+                continue
+
             saccadeOnsetTimestamps = np.interp(
                 saccadeEpochs[:, 0],
                 np.arange(nFramesRecorded), 
