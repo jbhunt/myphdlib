@@ -7,6 +7,7 @@ from sklearn.neural_network import (
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.model_selection import GridSearchCV
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.preprocessing import StandardScaler
 from myphdlib.general.toolkit import resample
 from myphdlib.extensions.matplotlib import (
     SaccadeDirectionLabelingGUI,
@@ -212,18 +213,20 @@ def _trainSaccadeDirectionClassifier(
 
     # Fit
     nSamples = xTrain.shape[0]
+    hiddenLayerSizes = [
+        (int(n),) for n in np.arange(2, nFeatures, 1)
+    ]
     print(f'INFO: Training saccade direction classifier ({nSamples} samples)')
     if classifier == 'mlp':
         grid = {
-            'hidden_layer_sizes': [
-                (10 , 10 , 10 ),
-                (100, 100, 100),
-                (200, 200, 200),
-                (300, 300, 300)
-            ],
+            'hidden_layer_sizes': hiddenLayerSizes,
             'max_iter': [
                 1000000,
-            ]
+            ],
+            'activation': ['tanh', 'relu'],
+            'solver': ['sgd', 'adam'],
+            'alpha': [0.0001, 0.05],
+            'learning_rate': ['constant','adaptive'],
         }
         net = MLPClassifier()
         search = GridSearchCV(net, grid)
@@ -242,9 +245,12 @@ def _trainSaccadeEpochRegressor(
     sessions,
     nFeatures=30,
     saccadeDirection=1,
+    verbose=False
     ):
     """
     """
+
+    saccadeDirection_ = 'nasal' if saccadeDirection == 1 else 'temporal'
 
     #
     xTrain = list()
@@ -273,40 +279,47 @@ def _trainSaccadeEpochRegressor(
         saccadeDirections = session.load(f'prediction/saccades/epochs/z')
         sampleIndices = np.where(saccadeDirections == saccadeDirection)[0]
         nSamples = sampleIndices.size
-        session.log(f'Collected training data for predicting saccade epochs ({nSamples} samples)')
+        session.log(f'Collected training data for predicting {saccadeDirection_} saccade epochs ({nSamples} samples)')
         iterable = zip(saccadeWaveformsLabeled[sampleIndices, :], saccadeEpochLabels[sampleIndices, :])
-        for x, label in iterable:
+        for x, epoch in iterable:
             if np.isnan(x).any():
                 continue
             t, xp = resample(np.diff(x), nFeatures)
             xTrain.append(xp)
-            yTrain.append(label)
+            epoch /= session.fps
+            yTrain.append(epoch)
 
     #
     xTrain = np.array(xTrain)
     xTest = np.array(xTest)
     yTrain = np.array(yTrain)
 
+    # Standardize
+    transformer = StandardScaler().fit(yTrain)
+    yTrainStandardized = transformer.transform(yTrain)
+
     #
     nSamples = xTrain.shape[0]
-    print(f'INFO: Training saccade epoch regressor ({nSamples} samples)')
+    print(f'INFO: Training {saccadeDirection_} saccade epoch regressor ({nSamples} samples)')
+    hiddenLayerSizes = [
+        (int(n),) for n in np.arange(2, nFeatures, 1)
+    ]
     grid = {
-        'estimator__hidden_layer_sizes': [
-            (10 , 10 , 10 ),
-            (100, 100, 100),
-            (200, 200, 200),
-            (300, 300, 300),
-        ],
+        'estimator__hidden_layer_sizes': hiddenLayerSizes,
         'estimator__max_iter': [
             1000000,
-        ]
+        ],
+        'estimator__activation': ['tanh', 'relu'],
+        'estimator__solver': ['sgd', 'adam'],
+        'estimator__alpha': [0.0001, 0.05],
+        'estimator__learning_rate': ['constant','adaptive'],
     }
-    reg = MultiOutputRegressor(MLPRegressor())
+    reg = MultiOutputRegressor(MLPRegressor(verbose=verbose))
     search = GridSearchCV(reg, grid)
-    search.fit(xTrain, yTrain)
+    search.fit(xTrain, yTrainStandardized)
     reg = search.best_estimator_
 
-    return reg, xTrain, yTrain
+    return reg, transformer, xTrain, yTrainStandardized
 
 
 def predictSaccadeDirection(
@@ -368,25 +381,27 @@ def predictSaccadeEpochs(
     sessionsToAnalyze,
     sessionsForTraining,
     nFeatures=30,
+    verbose=False,
     ):
     """
     """
 
     # Train the regressors
-    regressors = {
+    pipelines = {
         'nasal': None,
         'temporal': None,
     }
     for saccadeDirection in (-1, 1):
-        reg, xTrain, yTrain = _trainSaccadeEpochRegressor(
+        regressor, transformer, xTrain, yTrain = _trainSaccadeEpochRegressor(
             sessionsForTraining,
             nFeatures,
-            saccadeDirection
+            saccadeDirection,
+            verbose,
         )
         if saccadeDirection == -1:
-            regressors['nasal'] = reg
+            pipelines['nasal'] = (transformer, regressor)
         else:
-            regressors['temporal'] = reg
+            pipelines['temporal'] = (transformer, regressor)
 
     # Loop through each session
     for session in sessionsToAnalyze:
@@ -412,7 +427,7 @@ def predictSaccadeEpochs(
 
                 #
                 k = 'nasal' if saccadeDirection == -1 else 'temporal'
-                reg = regressors[k]
+                transformer, regressor = pipelines[k]
 
                 #
                 saccadeIndices = np.where(saccadeLabels == saccadeDirection)[0]
@@ -426,9 +441,14 @@ def predictSaccadeEpochs(
                     t, xp = resample(x, nFeatures)
                     xTest[sampleIndex, :] = xp
 
-                #
-                yPredicted = reg.predict(xTest) + frameIndices[saccadeIndices, :]
-                saccadeEpochs[eye][saccadeIndices, :] = yPredicted
+                # NOTE: Multiple by the framerate to convert from seconds to frames
+                yPredictedInSigmas = regressor.predict(xTest)
+                yPredictedInSeconds = transformer.inverse_transform(yPredictedInSigmas)
+                yPredictedInFrames = np.around(
+                    yPredictedInSeconds * session.fps + frameIndices[saccadeIndices, :],
+                    3
+                )
+                saccadeEpochs[eye][saccadeIndices, :] = yPredictedInFrames
 
         #
         for eye in ('left', 'right'):

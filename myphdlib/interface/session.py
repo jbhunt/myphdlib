@@ -668,19 +668,19 @@ class SessionBase():
                 probeDirections = (eventDirection,)
             f1 = np.array([
                 True if probeDirection in probeDirections else False
-                    for probeDirection in self.gratingMotionDruingProbes
+                    for probeDirection in self.gratingMotionDuringProbes
             ])
             eventLatencies = self.probeLatencies
 
         #
-        elif eventName == 'saccades':
+        elif eventName == 'saccade':
             if eventDirection is None:
-                saccadeDirections = ('n', 't')
+                saccadeDirections = (-1, +1)
             else:
                 saccadeDirections = (eventDirection,)
             f1 = np.array([
                 True if saccadeDirection in saccadeDirections else False
-                    for saccadeDirection in self.saccadeDirections
+                    for saccadeDirection in self.saccadeLabels
             ])
             eventLatencies = self.saccadeLatencies
 

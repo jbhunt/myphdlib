@@ -156,7 +156,8 @@ class SingleUnit():
         responseWindow=(-0.3, 0.5),
         baselineWindow=(-5, -2),
         binsize=0.02,
-        standardize=True
+        standardize=True,
+        nRuns=100,
         ):
         """
         """
@@ -180,7 +181,7 @@ class SingleUnit():
             baselineWindowBoundaries=baselineWindow,
             windowSize=0.5,
             binsize=binsize,
-            nRuns=100,
+            nRuns=nRuns,
         )
         if sigma == 0:
             z = np.full(t.size, np.nan)
@@ -480,6 +481,12 @@ class Population():
 
         #
         self._allSpikeClusters = self._session.load('spikes/clusters')
+        if self._allSpikeClusters is None:
+            self._units = list()
+            self._uniqueSpikeClusters = None
+            self._allSpikeTimestamps = None
+            return
+
         self._allSpikeTimestamps = self._session.load('spikes/timestamps')
         self._uniqueSpikeClusters = np.unique(self.allSpikeClusters)
 
@@ -524,11 +531,24 @@ class Population():
         refractoryPeriodViolationRate=0.5,
         amplitudeCutoff=0.1,
         visualResponseProbability=0.99,
-        visualResponseAmplitude=5,
-        visualResponseLatencyRange=(0.05, 0.2),
+        visualResponseAmplitude=None,
+        visualResponseLatencyRange=(0.04, 0.25),
+        reload=True,
+        returnMask=False
         ):
         """
         """
+
+        # Reset the list of units
+        if reload:
+            self.unfilter()
+        filtered = np.full(len(self._units), False)
+
+        #
+        if self.count() == 0:
+            return
+        if self._units[0].session.probeTimestamps is None:
+            return
 
         #
         if probeMotion is not None:
@@ -536,13 +556,9 @@ class Population():
         else:
             probeDirections = ('left', 'right')
 
-        # Reset the list of units
-        if self.count(filtered=False) != self.count(filtered=True):
-            self._loadSingleUnitData()
-
         #
-        filtered = list()
-        for unit in self._units:
+        units = list()
+        for unitIndex, unit in enumerate(self._units):
 
             # Filter out units with poor clustering quality metric scores
             if presenceRatio is not None and unit.presenceRatio < presenceRatio:
@@ -578,12 +594,15 @@ class Population():
                 continue
 
             # All filters passed
-            filtered.append(unit)
+            units.append(unit)
+            filtered[unitIndex] = True
 
         #
-        self._units = filtered
+        self._units = units
 
-        return
+        #
+        if returnMask:
+            return filtered
 
     def unfilter(
         self,
@@ -595,15 +614,12 @@ class Population():
 
         return
 
-    def count(self, filtered=False):
+    def count(self):
         """
         Return a count of the number of units in the population
         """
 
-        if filtered:
-            return len(self._units)
-        else:
-            return len(self.uniqueSpikeClusters)
+        return len(self._units)
 
     @property
     def allSpikeClusters(self):

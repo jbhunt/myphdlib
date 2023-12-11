@@ -352,6 +352,24 @@ class EventsProcessingMixin(object):
 
         return
 
+    def _findDroppedFrames2(self):
+        """
+        """
+
+        for eye in ('left', 'right'):
+
+            #
+            file = self.leftCameraTimestamps if eye == 'left' else self.rightCameraTimestamps
+            if file is None:
+                self.log(f'Could not find the timestamps for the {eye} camera video', level='warning')
+                continue
+            ifi = np.loadtxt(file, dtype=np.int64) / 1000000000 # in ms
+            mfi = np.median(ifi)
+            fpi = np.around(ifi / mfi, 0)
+            nFramesDropped = np.sum(fpi - 1)      
+
+        return
+
     def _findDroppedFrames(self, pad=1000000):
         """
         """
@@ -500,7 +518,7 @@ class EventsProcessingMixin(object):
 
         #
         nProbes = self.probeTimestamps.size
-        nSaccades = self.saccadeTimestamps.size
+        nSaccades = self.saccadeTimestamps.shape[0]
         data = {
             'tts': np.full(nProbes, np.nan).astype(np.float), # Time to saccade
             'dos': np.full(nProbes, np.nan).astype(np.int), # Direction of saccade
@@ -520,11 +538,11 @@ class EventsProcessingMixin(object):
             data['tts'][trialIndex] = probeLatency
 
         #
-        for trialIndex, saccadeTimestamp in enumerate(self.saccadeTimestamps):
-            probeTimestampsRelative = self.probeTimestamps - saccadeTimestamp[0]
+        for trialIndex, saccadeTimestamp in enumerate(self.saccadeTimestamps[:, 0]):
+            probeTimestampsRelative = self.probeTimestamps - saccadeTimestamp
             probeIndex = np.nanargmin(np.abs(probeTimestampsRelative))
             probeDirection = self.gratingMotionDuringProbes[probeIndex]
-            saccadeLatency = round(saccadeTimestamp[0] - self.probeTimestamps[probeIndex], 3)
+            saccadeLatency = round(saccadeTimestamp - self.probeTimestamps[probeIndex], 3)
             data['ttp'][trialIndex] = saccadeLatency
             data['dop'][trialIndex] = probeDirection
 
@@ -538,6 +556,7 @@ class EventsProcessingMixin(object):
 
     def _timestampSaccades(
         self,
+        saccadeEpochBoundaries=(-0.005, 0.005),
         ):
         """
         """
@@ -546,7 +565,10 @@ class EventsProcessingMixin(object):
         frameTimestamps = self.load('labjack/cameras/timestamps')
 
         for eye in ('left', 'right'):
+
+            #
             saccadeEpochs = self.load(f'saccades/predicted/{eye}/epochs')
+            saccadeIndices = self.load(f'saccades/predicted/{eye}/indices')
             nSaccades = saccadeEpochs.shape[0]
             droppedFrames = self.load(f'frames/{eye}/dropped')
             nFramesRecorded = droppedFrames.size
@@ -557,17 +579,40 @@ class EventsProcessingMixin(object):
                 self.save(f'saccades/predicted/{eye}/timestamps', np.full([nSaccades, 2], np.nan))
                 continue
 
+            # Timestamp saccade peak velocity, onset, and offset
+            peakVelocityTimestamps = np.interp(
+                saccadeIndices,
+                np.arange(nFramesRecorded),
+                frameTimestamps[:nFramesRecorded]
+            ).reshape(-1, 1)
             saccadeOnsetTimestamps = np.interp(
                 saccadeEpochs[:, 0],
                 np.arange(nFramesRecorded), 
                 frameTimestamps[:nFramesRecorded]
-            )
+            ).reshape(-1, 1)
             saccadeOffsetTimestamps = np.interp(
                 saccadeEpochs[:, 1],
                 np.arange(nFramesRecorded),
                 frameTimestamps[:nFramesRecorded]
+            ).reshape(-1, 1)
+            saccadeEpochTimestamps = np.hstack([
+                saccadeOnsetTimestamps,
+                saccadeOffsetTimestamps
+            ])
+
+            # Mask saccade timestamps that violate the epoch boundaries
+            iterable = zip(
+                saccadeOnsetTimestamps,
+                peakVelocityTimestamps,
+                saccadeOffsetTimestamps,
             )
-            saccadeEpochTimestamps = np.vstack([saccadeOnsetTimestamps, saccadeOffsetTimestamps]).T
+            for rowIndex, (t1, t2, t3) in enumerate(iterable):
+                if np.around(t1 - t2, 3).item() > saccadeEpochBoundaries[0]:
+                    saccadeEpochTimestamps[rowIndex, :] = np.array([np.nan, np.nan])
+                if np.around(t3 - t2, 3).item() < saccadeEpochBoundaries[1]:
+                    saccadeEpochTimestamps[rowIndex, :] = np.array([np.nan, np.nan])
+
+            #            
             self.save(f'saccades/predicted/{eye}/timestamps', saccadeEpochTimestamps)
 
         return
