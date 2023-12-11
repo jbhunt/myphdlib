@@ -87,6 +87,7 @@ class SingleUnit():
         binsize=None,
         ):
         """
+        Estimate baseline mean and std with bootstrap
         """
 
         if binsize is None:
@@ -149,6 +150,26 @@ class SingleUnit():
         fr = M.mean(0) / dt
 
         return round(fr.mean(), 2), round(fr.std(), 2)
+    
+    def describe4(
+        self,
+        eventTimestamps,
+        baselineWindow=(-30, -5),
+        binsize=0.02,
+        ):
+        """
+        """
+
+        t, M = psth2(
+            eventTimestamps,
+            self.timestamps,
+            window=baselineWindow,
+            binsize=binsize
+        )
+        fr = M.mean(0) / binsize
+        mu, sigma = fr.mean(), fr.std()
+
+        return mu, sigma
 
     def peth(
         self,
@@ -157,7 +178,6 @@ class SingleUnit():
         baselineWindow=(-5, -2),
         binsize=0.02,
         standardize=True,
-        nRuns=100,
         ):
         """
         """
@@ -176,12 +196,10 @@ class SingleUnit():
             return t, fr
 
         #
-        mu, sigma = self.describe2(
+        mu, sigma = self.describe3(
             eventTimestamps,
-            baselineWindowBoundaries=baselineWindow,
-            windowSize=0.5,
+            baselineWindow=baselineWindow,
             binsize=binsize,
-            nRuns=nRuns,
         )
         if sigma == 0:
             z = np.full(t.size, np.nan)

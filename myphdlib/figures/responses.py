@@ -1,3 +1,4 @@
+import numpy as np
 from matplotlib import pyplot as plt
 from myphdlib.general.toolkit import psth2
 from myphdlib.interface.factory import SessionFactory
@@ -24,14 +25,20 @@ class ExampleVisualNeuronsFigure():
 
     def _getExampleUnits(
         self,
-        unitKeys_=None
+        unitKeys_=None,
+        remote=False,
         ):
         """
         """
 
-        factory = SessionFactory(
-            tag='JH-DATA-04'
-        )
+        if remote:
+            factory = SessionFactory(
+                mount='/home/josh/mygdrive/Josh'
+            )
+        else:
+            factory = SessionFactory(
+                tag='JH-DATA-04',
+            )
         examples = list()
 
         for animal, date, cluster in unitKeys_:
@@ -48,7 +55,8 @@ class ExampleVisualNeuronsFigure():
         self,
         window=(-0.3, 0.5),
         figsize=(1.75, 6.3),
-        unitKeys_=None
+        unitKeys_=None,
+        remote=False,
         ):
         """
         """
@@ -57,7 +65,7 @@ class ExampleVisualNeuronsFigure():
             global unitKeys
             unitKeys_ = unitKeys
 
-        examples = self._getExampleUnits(unitKeys_)
+        examples = self._getExampleUnits(unitKeys_, remote=remote)
         nUnits = len(examples)
 
         fig, axs = plt.subplots(nrows=nUnits, sharex=True)
@@ -83,3 +91,55 @@ class ExampleVisualNeuronsFigure():
 class VisualResponseSummaryFigure():
     """
     """
+
+    def __init__(self):
+        """
+        """
+
+        self.data = None
+
+        return
+    
+    def generate(
+        self,
+        sessions,
+        visualResponseAmplitude=20,
+        nColumns=5,
+        vrange=(-3, 3),
+        ):
+        """
+        """
+
+        R = list()
+        for session in sessions:
+            if session.probeTimestamps is None:
+                continue
+            session.population.filter(
+                reload=True,
+                visualResponseAmplitude=None
+            )
+            for unit in session.population:
+                t, z = unit.peth(
+                    session.probeTimestamps,
+                    responseWindow=(-0.3, 0.5),
+                    binsize=0.02,
+                    standardize=True
+                )
+                if np.isnan(z).all():
+                    continue
+                R.append(z)
+
+        #
+        R = np.array(R)
+        self.data = R
+
+        #
+        fig, axs = plt.subplots(ncols=nColumns, sharex=True, sharey=True)
+        nUnitsPerSubplot = int(np.ceil(R.shape[0] / nColumns))
+        splits = np.split(R, np.arange(nUnitsPerSubplot, R.shape[0], nUnitsPerSubplot))
+
+        for r, ax in zip(splits, axs):
+            ax.pcolor(r, vmin=vrange[0], vmax=vrange[1], rasterized=True, cmap='binary_r')
+        fig.tight_layout()
+
+        return fig
