@@ -155,23 +155,44 @@ class ActivityProcessingMixin(object):
 
         return
 
+    def _estimateBaselineParameters(
+        self,
+        baselineWindow=(-20, -10),
+        binsize=0.02,
+        ):
+        """
+        """
+
+        eventTimestamps = (
+            self.probeTimestamps[self.filterProbes(trialType=None, probeDirections=(+1,))],
+            self.probeTimestamps[self.filterProbes(trialType=None, probeDirections=(-1,))]
+        )
+
+        #
+        for evt, probeDirection in zip(eventTimestamps, ('right', 'left')):
+            mu, sigma = list(), list()
+            for unit in self.population:
+                mu_, sigma_ = unit.describe4(
+                    evt,
+                    baselineWindow=baselineWindow,
+                    binsize=binsize,
+                )
+                mu.append(mu_)
+                sigma.append(sigma_)
+            self.save(f'population/baselines/probe/{probeDirection}/mu', np.array(mu))
+            self.save(f'population/baselines/probe/{probeDirection}/sigma', np.array(sigma))
+
+        return
+
     def _measureVisualResponseAmplitude(
         self,
         responseWindowSize=0.05,
-        baselineWindowEdge=-2,
-        baselineWindowSize=3,
-        overwrite=True
         ):
         """
         """
 
         nUnits = len(self.population)
         responseAmplitudes = np.full([nUnits, 2], np.nan)
-
-        #
-        if self.hasDataset('population/metrics/vra/left') and overwrite == False:
-            self.log('Skipping estimation of visual response amplitude', level='info')
-            return
 
         # Skip this self
         if self.probeTimestamps is None:
@@ -185,11 +206,12 @@ class ActivityProcessingMixin(object):
             #
             probeMotion = -1 if probeDirection == 'left' else +1
             probeTimestamps = self.probeTimestamps[
-                self.filterProbes('es', probeDirections=(probeMotion,))
+                self.filterProbes(trialType=None, probeDirections=(probeMotion,))
             ]
 
             #
-            # responseProbabilities = self.load(f'population/zeta/probe/{probeDirection}/p')
+            mu = self.load(f'population/baselines/probe/{probeDirection}/mu')
+            sigma = self.load(f'population/baselines/probe/{probeDirection}/sigma')
             responseLatencies = self.load(f'population/zeta/probe/{probeDirection}/latency')
 
             #
@@ -198,23 +220,20 @@ class ActivityProcessingMixin(object):
             for iUnit, unit in enumerate(self.population):
 
                 self.log(
-                    f'Measuring visual response amlplitude for unit {unit.cluster} ({iUnit + 1} / {nUnits})',
+                    f'Measuring visual response amplitude for unit {unit.cluster} ({iUnit + 1} / {nUnits})',
                     level='info'
                 )
 
                 #
-                # p = responseProbabilities[unit.index]
                 l = responseLatencies[unit.index]
+                mu_ = mu[unit.index]
+                sigma_ = sigma[unit.index]
 
                 # Define the response and baseline windows
                 windowHalfWidth = responseWindowSize / 2
                 responseWindow = np.around(np.array([
                     l - windowHalfWidth,
                     l + windowHalfWidth
-                ]), 2)
-                baselineWindow = np.around(np.array([
-                    baselineWindowEdge - baselineWindowSize,
-                    baselineWindowEdge,
                 ]), 2)
 
                 # Measure the mean FR in the response window
@@ -226,19 +245,12 @@ class ActivityProcessingMixin(object):
                 )
                 fr = M.mean(0) / responseWindowSize
 
-                # Estimate the mean and std of the baseline FR
-                mu, sigma = unit.describe2(
-                    probeTimestamps,
-                    baselineWindowBoundaries=baselineWindow,
-                    binsize=responseWindowSize
-                )
-
                 # Standardization is undefined
-                if sigma == 0:
+                if sigma_ == 0:
                     nFailed += 1
                     continue
                 else:
-                    z = (fr - mu) / sigma
+                    z = (fr - mu_) / sigma_
 
                 # 
                 responseAmplitudes[unit.index, columnIndex] = z
@@ -252,158 +264,81 @@ class ActivityProcessingMixin(object):
 
         return
 
-    def _measureEventRelatedBaselines(
+    def _measureVisualResponseShape(
         self,
-        baselineWindowBoundaries=(-5, -2),
-        slidingWindowSize=0.5,
+        responseWindow=(0, 0.3),
         binsize=0.02,
-        nRuns=30,
-        filterUnits=False,
         ):
         """
         """
 
         #
-        if filterUnits:
-            self.population.filter()
-        nUnits = self.population.count(filtered=False)
-
-        #
-        datasets = {
-            'population/metrics/bl/probe/left/mu': np.full(nUnits, np.nan),
-            'population/metrics/bl/probe/left/sigma': np.full(nUnits, np.nan),
-            'population/metrics/bl/probe/right/mu': np.full(nUnits, np.nan),
-            'population/metrics/bl/probe/right/sigma': np.full(nUnits, np.nan),
-            'population/metrics/bl/saccade/nasal/mu': np.full(nUnits, np.nan),
-            'population/metrics/bl/saccade/nasal/sigma': np.full(nUnits, np.nan),
-            'population/metrics/bl/saccade/temporal/mu': np.full(nUnits, np.nan),
-            'population/metrics/bl/saccade/temporal/sigma': np.full(nUnits, np.nan),
-        }
-
-        #
-        eventTimestamps = (
-            self.filterProbes('es', probeDirections=(-1,)),
-            self.filterProbes('es', probeDirections=(+1,)),
-            self.filterSaccades('es', saccadeDirections=('n',)),
-            self.filterSaccades('es', saccadeDirections=('t',)),
-        )
-
-        #
-        eventKeys = (
-            ('probe', 'left'),
-            ('probe', 'right'),
-            ('saccade', 'nasal'),
-            ('saccade', 'temporal')
-        )
-        
-        #
-        for unit in self.population:
-            for timestamps, (eventType, eventDirection) in zip(eventTimestamps, eventKeys):
-                xb, sd = unit.describe2(
-                    timestamps,
-                    baselineWindowBoundaries=baselineWindowBoundaries,
-                    windowSize=slidingWindowSize,
-                    binsize=binsize
-                )
-                for feature, value in zip(('mu', 'sigma'), (xb, sd)):
-                    if np.isnan(value):
-                        continue
-                    datasetPath = f'population/metrics/bl/{eventType}/{eventDirection}/{feature}'
-                    datasets[datasetPath][unit.index] = round(value, 2)
-
-        #
-        for datasetPath, datasetArray in datasets.items():
-            self.save(datasetPath, datasetArray)
-
-        return
-
-    def _computeStandardizedResponseCurves(
-        self,
-        binsize=0.02,
-        responseWindow=(-0.5, 0.5),
-        baselineWindowEdge=-5,
-        overwrite=False
-        ):
-        """
-        """
-
-        #
-        responseWindowSize = np.diff(responseWindow).item()
-        baselineWindow = np.around(np.array([
-            baselineWindowEdge - responseWindowSize,
-            baselineWindowEdge
-        ]))
-
-        #
-        events = (
-            self.probeTimestamps,
-            self.probeTimestamps,
-            self.saccadeTimestamps,
-            self.saccadeTimestamps,
-        )
-        masks = (
-            self.filterProbes(trialType='es', probeDirections=(-1,)),
-            self.filterProbes(trialType='es', probeDirections=(+1,)),
-            self.filterSaccades(trialType='es', saccadeDirections=('n',)),
-            self.filterSaccades(trialType='es', saccadeDirections=('t',))
-        )
-        keys = (
-            ('probe', 'left'),
-            ('probe', 'right'),
-            ('saccade', 'nasal'),
-            ('saccade', 'temporal'),
-        )
-
-        #
-        nBins = int(round(np.diff(responseWindow).item() / binsize, 0))
-        nUnits = len(self.population)
-
-        #
-        for eventTimestamps, eventMask, (eventType, eventDirection) in zip(events, masks, keys):
+        for probeDirection, columnIndex in zip(('left', 'right'), (0, 1)):
 
             #
-            if self.hasDataset(f'population/psths/{eventType}/{eventDirection}') and overwrite == False:
-                self.log(f'Skipping estimation of standardized psth (event={eventType}, direction={eventDirection})', level='info')
-                continue
-
-            # Initialize the dataset
-            Z = np.full([nUnits, nBins], np.nan)
-
-            # Skip this event
-            if eventTimestamps is None:
-                self.save(f'population/psths/{eventType}/{eventDirection}', Z)
-                continue
+            responseCurves = list()
 
             #
+            probeMotion = -1 if probeDirection == 'left' else +1
+            probeTimestamps = self.probeTimestamps[
+                self.filterProbes(trialType=None, probeDirections=(probeMotion,))
+            ]
+
+            #
+            mu = self.load(f'population/baselines/probe/{probeDirection}/mu')
+            sigma = self.load(f'population/baselines/probe/{probeDirection}/sigma')
+
+            #
+            nFailed = 0
+            nUnits = len(self.population)
             for iUnit, unit in enumerate(self.population):
 
-                self.log(f'Computing standardized psth for unit {iUnit + 1} out of {nUnits} (event={eventType}, direction={eventDirection})', level='info')
+                self.log(
+                    f'Measuring visual response shape for unit {unit.cluster} ({iUnit + 1} / {nUnits})',
+                    level='info'
+                )
 
-                # Compute the event-related response
-                t, R = psth2(
-                    eventTimestamps[eventMask],
+                #
+                mu_ = mu[unit.index]
+                sigma_ = sigma[unit.index]
+
+                # Measure the mean FR in the response window
+                t, M = psth2(
+                    probeTimestamps,
                     unit.timestamps,
                     window=responseWindow,
                     binsize=binsize
                 )
-                fr = R.mean(0) / binsize
+                fr = M.mean(0) / binsize
 
-                # Estimate the mean and std of the baseline FR
-                mu, sigma = unit.describe2(
-                    eventTimestamps[eventMask],
-                    baselineWindowBoundaries=baselineWindow,
-                    binsize=binsize,
-                    nRuns=100,
-                )
-
-                # Standardize (z-score)
-                if sigma == 0:
+                # Standardization is undefined
+                if sigma_ == 0:
+                    nFailed += 1
+                    responseCurves.append(np.full(t.size, np.nan))
                     continue
-                z = (fr - mu) / sigma
-                Z[iUnit, :] = z
-        
+                else:
+                    z = (fr - mu_) / sigma_
+
+                responseCurves.append(z)
+
             #
-            self.save(f'population/psths/{eventType}/{eventDirection}', Z)
+            self.save(f'population/peths/probe/{probeDirection}', np.array(responseCurves))
+
+        return
+
+    def _measureVisualResponsePolarity(
+        self,
+        ):
+        """
+        """
+
+        return
+
+    def _measureDirectionSelectivity(
+        self,
+        ):
+        """
+        """
 
         return
 
