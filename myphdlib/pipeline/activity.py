@@ -328,11 +328,72 @@ class ActivityProcessingMixin(object):
 
     def _measureVisualResponsePolarity(
         self,
+        baselineRatioThresholdOn=1.1,
+        baselineRatioThresholdOff=1.5,
         ):
         """
         """
 
-        return
+        spotTimestamps = list()
+        spotPolarities = list()
+        for phase in ('pre', 'post'):
+            spotTimestamps_ = self.load(f'stimuli/sn/{phase}/timestamps')
+            spotPolarities_ = self.load(f'stimuli/sn/{phase}/signs')
+            if spotTimestamps_ is None:
+                continue
+            for t in spotTimestamps_:
+                spotTimestamps.append(t)
+            for p in spotPolarities_:
+                spotPolarities.append(p)
+        spotTimestamps = np.array(spotTimestamps)
+        spotPolarities = np.array(spotPolarities)
+
+        #
+        responseWindows = (
+            ( 0  , 0.5),
+            ( 0.5, 1)
+        )
+        ratios = {
+            'on': list(),
+            'off': list()
+        }
+        for unit in self.population:
+            t, M = psth2(
+                spotTimestamps[spotPolarities == 1],
+                unit.timestamps,
+                window=(-0.2, 0),
+                binsize=None
+            )
+            bl = M.mean(0) / 0.2
+            for responseWindow, k in zip(responseWindows, ratios.keys()):
+                t, M = psth2(
+                    spotTimestamps[spotPolarities == 1],
+                    unit.timestamps,
+                    window=responseWindow,
+                    binsize=None
+                )
+                fr = M.mean(0) / np.diff(responseWindow).item()
+                ratios[k].append(fr / bl)
+
+        #
+        nUnits = self.population.count()
+        unitTypes = np.full([nUnits, 3], False)
+        for unitIndex in range(nUnits):
+            rOn = ratios['on'][unitIndex]
+            rOff = ratios['off'][unitIndex]
+            if rOn > baselineRatioThresholdOn and rOff > baselineRatioThresholdOff:
+                unitTypes[unitIndex, 2] = True
+            elif rOn > baselineRatioThresholdOn and rOff < baselineRatioThresholdOff:
+                unitTypes[unitIndex, 0] = True
+            elif rOn < baselineRatioThresholdOn and rOff > baselineRatioThresholdOff:
+                unitTypes[unitIndex, 1] = True
+
+        labels = np.full(nUnits, -1)
+        for columnIndex in range(3):
+            mask = unitTypes[:, columnIndex] == True
+            labels[mask] = columnIndex
+
+        return labels
 
     def _measureDirectionSelectivity(
         self,
