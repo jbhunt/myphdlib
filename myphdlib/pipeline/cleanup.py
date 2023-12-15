@@ -67,6 +67,7 @@ pathsToKeep = {
     "population/metrics/nd", # Null direction
     "population/metrics/dsi", # Direction-selectivity index
     "population/metrics/vra", # Visual response amplitude
+    "population/metrics/bsw", # Best spike waveform
     "population/metrics/vra/left",
     "population/metrics/vra/right",
     "population/metrics/mi", # Modulation index

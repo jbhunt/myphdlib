@@ -169,7 +169,7 @@ def psth(target_events, relative_events, binsize=0.01, window=(-0.5, 1), edges=N
     else:
         return edges, M
 
-def psth2(event1, event2, window=(-1, 1), binsize=None):
+def psth2(event1, event2, window=(-1, 1), binsize=None, returnTimestamps=False):
     """
     """
 
@@ -197,6 +197,7 @@ def psth2(event1, event2, window=(-1, 1), binsize=None):
 
     #
     M = np.full([event1.size, nBins], np.nan)
+    relativeTimestamps = list()
     for rowIndex, timestamp in enumerate(event1):
         relative = event2 - timestamp
         withinWindowMask = np.logical_and(
@@ -205,9 +206,14 @@ def psth2(event1, event2, window=(-1, 1), binsize=None):
         )
         binCounts, binEdges = np.histogram(relative[withinWindowMask], bins=binEdges)
         M[rowIndex, :] = binCounts
+        for ts in relative[withinWindowMask]:
+            relativeTimestamps.append(ts)
 
     #
-    return t, M
+    if returnTimestamps:
+        return t, M, np.array(relativeTimestamps)
+    else:
+        return t, M
 
 def detectThresholdCrossing(a, threshold, timeout=None):
     """

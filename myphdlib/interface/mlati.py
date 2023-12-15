@@ -12,6 +12,7 @@ from myphdlib.pipeline.spikes import SpikesProcessingMixin
 from myphdlib.pipeline.activity import ActivityProcessingMixin
 from myphdlib.pipeline.prediction import PredictionProcessingMixin
 from myphdlib.pipeline.cleanup import CleanupProccessingMixin
+from myphdlib.pipeline.metadata import MetadataProcessingMixin
 from myphdlib.extensions.matplotlib import placeVerticalLines
 from myphdlib.general.labjack import loadLabjackData, filterPulsesFromPhotologicDevice
 
@@ -988,6 +989,7 @@ class MlatiSession(
     ActivityProcessingMixin,
     PredictionProcessingMixin,
     CleanupProccessingMixin,
+    MetadataProcessingMixin,
     SessionBase):
     """
     """

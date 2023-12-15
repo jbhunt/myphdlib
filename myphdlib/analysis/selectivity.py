@@ -177,13 +177,3 @@ def measureDirectionSelectivity(
 
     return
 
-class DirectionSelectivityAnalysis():
-    """
-    """
-
-    def run(self):
-        """
-        """
-
-        return
-

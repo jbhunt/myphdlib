@@ -2,6 +2,8 @@ import h5py
 import numpy as np
 from dotmap import DotMap
 from myphdlib.general.toolkit import psth2
+from sklearn.neighbors import KernelDensity
+from scipy.stats import gaussian_kde
 
 # TODO
 # [ ] Load all of the unit property values on instatiation
@@ -36,58 +38,58 @@ class SingleUnit():
         self._visualResponseCurve = None
 
         return
-    
-    def describe(
+
+    def describeAcrossTrials(
         self,
-        event=None,
-        window=(-1, 0),
-        binsize=1,
+        eventTimestamps,
+        responseWindow=(-11, -10),
         ):
+        """
+        Estimate baseline activity mean and std across trials
+        """
 
         #
-        if event is None:
-            t0 = 0
-            t1 = np.ceil(self.timestamps.max())
-            nBins = int((t1 - t0) // binsize) 
-            nSpikes, binEdges = np.histogram(
-                self.timestamps,
-                range=(t0, t1),
-                bins=nBins
-            )
-            dt = binEdges[1] - binEdges[0]
-            mu = round(np.mean(nSpikes) / dt, 2)
-            sigma = round(nSpikes.std() / dt, 2)
+        t, M = psth2(
+            eventTimestamps,
+            self.timestamps,
+            responseWindow,
+            binsize=None
+        )
+        fr = M.flatten() / np.diff(responseWindow).item()
+
+        return round(fr.mean(), 2), round(fr.std(), 2)
     
-        #
-        else:
-            t, M = psth2(
-                event,
-                self.timestamps,
-                window=window,
-                binsize=binsize
-            )
-            if binsize is None:
-                dt = np.diff(window).item()
-                fr = M.flatten() / dt
-                mu = np.mean(fr)
-                sigma = np.std(fr)
-            else:
-                fr = M.flatten() / binsize
-                mu = fr.mean()
-                sigma = fr.std()
+    def describeAcrossBins(
+        self,
+        eventTimestamps,
+        responseWindow=(-30, -10),
+        binsize=0.02,
+        ):
+        """
+        Estimate baseline activity mean and std across time bins
+        """
+
+        t, M = psth2(
+            eventTimestamps,
+            self.timestamps,
+            window=responseWindow,
+            binsize=binsize
+        )
+        fr = M.mean(0) / binsize
+        mu, sigma = round(fr.mean(), 2), round(fr.std(), 2)
 
         return mu, sigma
 
-    def describe2(
+    def describeWithBootstrap(
         self,
         eventTimestamps,
-        baselineWindowBoundaries=(-5, -2),
+        baselineWindowBoundaries=(-11, -10),
         windowSize=0.5,
-        nRuns=100,
+        nRuns=30,
         binsize=None,
         ):
         """
-        Estimate baseline mean and std with bootstrap
+        Estimate baseline activity mean and std with bootstrap
         """
 
         if binsize is None:
@@ -122,91 +124,76 @@ class SingleUnit():
 
         #
         samples = np.around(np.array(samples), 2)
-
-        return round(samples[:, 0].mean(), 2), round(samples[:, 1].mean(), 2)
-
-    def describe3(
-        self,
-        eventTimestamps,
-        baselineWindow=(-5, -2),
-        binsize=None,
-        ):
-        """
-        Get the mean and SD of the mean FR in a baseline window
-        """
-
-        if binsize is None:
-            dt = np.diff(baselineWindow).item()
-        else:
-            dt = binsize
-
-        #
-        t, M = psth2(
-            eventTimestamps,
-            self.timestamps,
-            baselineWindow,
-            binsize=binsize
-        )
-        fr = M.mean(0) / dt
-
-        return round(fr.mean(), 2), round(fr.std(), 2)
-    
-    def describe4(
-        self,
-        eventTimestamps,
-        baselineWindow=(-30, -5),
-        binsize=0.02,
-        ):
-        """
-        """
-
-        t, M = psth2(
-            eventTimestamps,
-            self.timestamps,
-            window=baselineWindow,
-            binsize=binsize
-        )
-        fr = M.mean(0) / binsize
-        mu, sigma = fr.mean(), fr.std()
+        mu = round(samples[:, 0].mean(), 2)
+        sigma = round(samples[:, 1].mean(), 2)
 
         return mu, sigma
+
+    def describeGlobalActivity(
+        self,
+        binsize=None,
+        returnFiringRate=False
+        ):
+        """
+        """
+
+        tStart, tStop = self.session.tRange
+        if binsize is None:
+            fr = None
+            mu = round(self.timestamps.size / tStop, 3)
+            sigma = np.nan
+        else:
+            nBins = int(tStop // binsize)
+            nSpikes, binEdges = np.histogram(self.timestamps, bins=nBins, range=(tStart, tStop))
+            fr = nSpikes / binsize
+            mu, sigma = round(fr.mean(), 3), round(fr.std(), 3)
+
+        if returnFiringRate:
+            return mu, sigma, fr
+        else:
+            return mu, sigma
 
     def peth(
         self,
         eventTimestamps,
-        responseWindow=(-0.3, 0.5),
-        baselineWindow=(-5, -2),
+        responseWindow=(-1, 1),
         binsize=0.02,
-        standardize=True,
+        kde=False,
+        sd=0.02,
+        nt=101,
+        edgeBufferFactor=1.1
         ):
         """
         """
 
         #
-        t, m = psth2(
-            eventTimestamps,
-            self.timestamps,
-            window=responseWindow,
-            binsize=binsize
-        )
-        fr = m.mean(0) / binsize
+        if kde:
+            t_, M, sample = psth2(
+                eventTimestamps,
+                self.timestamps,
+                window=np.array(responseWindow) * edgeBufferFactor,
+                binsize=None,
+                returnTimestamps=True
+            )
+            t = np.linspace(responseWindow[0], responseWindow[1], nt)
+            if sample.size < 2:
+                fr = np.full(t.size, np.nan)
+            else:
+                f = gaussian_kde(sample)
+                f.set_bandwidth(sd / sample.std())
+                y = f(t)
+                fr = y * (sample.size * binsize) / M.shape[0] / binsize
 
-        #
-        if standardize == False:
-            return t, fr
-
-        #
-        mu, sigma = self.describe3(
-            eventTimestamps,
-            baselineWindow=baselineWindow,
-            binsize=binsize,
-        )
-        if sigma == 0:
-            z = np.full(t.size, np.nan)
         else:
-            z = (fr - mu) / sigma
+            t, m = psth2(
+                eventTimestamps,
+                self.timestamps,
+                window=responseWindow,
+                binsize=binsize
+            )
+            fr = m.mean(0) / binsize
 
-        return t, z
+        return t, fr
 
     @property
     def index(self):
@@ -546,11 +533,12 @@ class Population():
         self,
         probeMotion=None,
         presenceRatio=0.9,
-        refractoryPeriodViolationRate=0.5,
+        refractoryPeriodViolationRate=0.7,
         amplitudeCutoff=0.1,
         visualResponseProbability=0.99,
         visualResponseAmplitude=None,
-        visualResponseLatencyRange=(0.04, 0.25),
+        visualResponseLatencyRange=(0.05, 0.5),
+        spikeCountMinimum=3000,
         reload=True,
         returnMask=False
         ):
@@ -611,16 +599,19 @@ class Population():
             if filterPassed == False:
                 continue
 
+            #
+            if unit.timestamps.size < spikeCountMinimum:
+                continue
+
             # All filters passed
             units.append(unit)
             filtered[unitIndex] = True
 
         #
-        self._units = units
-
-        #
         if returnMask:
             return filtered
+        else:
+            self._units = units
 
     def unfilter(
         self,

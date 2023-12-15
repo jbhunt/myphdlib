@@ -155,35 +155,6 @@ class ActivityProcessingMixin(object):
 
         return
 
-    def _estimateBaselineParameters(
-        self,
-        baselineWindow=(-20, -10),
-        binsize=0.02,
-        ):
-        """
-        """
-
-        eventTimestamps = (
-            self.probeTimestamps[self.filterProbes(trialType=None, probeDirections=(+1,))],
-            self.probeTimestamps[self.filterProbes(trialType=None, probeDirections=(-1,))]
-        )
-
-        #
-        for evt, probeDirection in zip(eventTimestamps, ('right', 'left')):
-            mu, sigma = list(), list()
-            for unit in self.population:
-                mu_, sigma_ = unit.describe4(
-                    evt,
-                    baselineWindow=baselineWindow,
-                    binsize=binsize,
-                )
-                mu.append(mu_)
-                sigma.append(sigma_)
-            self.save(f'population/baselines/probe/{probeDirection}/mu', np.array(mu))
-            self.save(f'population/baselines/probe/{probeDirection}/sigma', np.array(sigma))
-
-        return
-
     def _measureVisualResponseAmplitude(
         self,
         responseWindowSize=0.05,
@@ -264,76 +235,113 @@ class ActivityProcessingMixin(object):
 
         return
 
-    def _measureVisualResponseShape(
+    def _extractResponseWaveforms(
+        self,
+        responseWindow=(-1, 1),
+        baselineWindow=(-11, -10),
+        normalizingWindow=(-0.25, 0.25),
+        minimumBaselineActivity=2,
+        binsize=0.02,
+        overwrite=False
+        ):
+        """
+        """
+
+        self.log(f'Extracting event-related response waveforms')
+
+        #
+        nBins = 101
+        nUnits = self.population.count()
+
+        #
+        datasetKeys = (
+            ('probe', 'left'),
+            ('probe', 'right'),
+            ('saccade', 'nasal'),
+            ('saccade', 'temporal')
+        )
+
+        # Check if data is alread processed 
+        flags = np.full(4, False)
+        for i, (eventType, eventDirection) in enumerate(datasetKeys):
+            datasetPath = f'population/peths/{eventType}/{eventDirection}'
+            if self.hasDataset(datasetPath):
+                flags[i] = True
+        if flags.all() and overwrite == False:
+           return
+
+        # Skip sessions without the drifting grating stimulus
+        if self.probeTimestamps is None:
+            for eventType, eventDirection in enumerate(datasetKeys):
+                self.save(datasetPath, np.full([nUnits, nBins], np.nan))
+            return
+
+        # Event type, event direction, event timestamps
+        iterable = (
+            ('probe', 'left', self.probeTimestamps[self.gratingMotionDuringProbes == -1]),
+            ('probe', 'right', self.probeTimestamps[self.gratingMotionDuringProbes == +1]),
+            ('saccade', 'nasal', self.saccadeTimestamps[self.saccadeLabels == +1, 0]),
+            ('saccade', 'temporal', self.saccadeTimestamps[self.saccadeLabels == -1, 1])
+        )
+
+        #
+        for eventType, eventDirection, eventTimestamps in iterable:
+
+            self.log(f'Computing response curves for {eventDirection} {eventType}s')
+
+            #
+            curves = np.full([nUnits, nBins], np.nan)
+
+            #
+            for iUnit, unit in enumerate(self.population):
+
+                # Estimate baseline activity
+                bl, sigma = unit.describeAcrossTrials(
+                    eventTimestamps,
+                    responseWindow=baselineWindow,
+                )
+                if bl < minimumBaselineActivity:
+                    continue
+
+                # Measure the evoked response
+                t, fr1 = unit.peth(
+                    eventTimestamps,
+                    responseWindow=responseWindow,
+                    binsize=binsize,
+                    kde=True,
+                    sd=0.02,
+                )
+
+                # Get the maximum of the evoked response in a smaller response window
+                t, fr2 = unit.peth(
+                    eventTimestamps,
+                    responseWindow=normalizingWindow,
+                    binsize=binsize,
+                    kde=True,
+                    sd=0.02,
+                )
+                factor = np.max(fr2)
+                if factor == 0:
+                    continue
+
+                #
+                r = (fr1 - bl) / factor
+                curves[iUnit, :] = r
+
+            #
+            self.save(f'population/peths/{eventType}/{eventDirection}', np.array(curves))
+
+        return
+
+    def _measureLuminancePolarity(
         self,
         responseWindow=(0, 0.3),
-        binsize=0.02,
+        baselineWindow=(-0.2, 0),
         ):
         """
         """
 
         #
-        for probeDirection, columnIndex in zip(('left', 'right'), (0, 1)):
-
-            #
-            responseCurves = list()
-
-            #
-            probeMotion = -1 if probeDirection == 'left' else +1
-            probeTimestamps = self.probeTimestamps[
-                self.filterProbes(trialType=None, probeDirections=(probeMotion,))
-            ]
-
-            #
-            mu = self.load(f'population/baselines/probe/{probeDirection}/mu')
-            sigma = self.load(f'population/baselines/probe/{probeDirection}/sigma')
-
-            #
-            nFailed = 0
-            nUnits = len(self.population)
-            for iUnit, unit in enumerate(self.population):
-
-                self.log(
-                    f'Measuring visual response shape for unit {unit.cluster} ({iUnit + 1} / {nUnits})',
-                    level='info'
-                )
-
-                #
-                mu_ = mu[unit.index]
-                sigma_ = sigma[unit.index]
-
-                # Measure the mean FR in the response window
-                t, M = psth2(
-                    probeTimestamps,
-                    unit.timestamps,
-                    window=responseWindow,
-                    binsize=binsize
-                )
-                fr = M.mean(0) / binsize
-
-                # Standardization is undefined
-                if sigma_ == 0:
-                    nFailed += 1
-                    responseCurves.append(np.full(t.size, np.nan))
-                    continue
-                else:
-                    z = (fr - mu_) / sigma_
-
-                responseCurves.append(z)
-
-            #
-            self.save(f'population/peths/probe/{probeDirection}', np.array(responseCurves))
-
-        return
-
-    def _measureVisualResponsePolarity(
-        self,
-        baselineRatioThresholdOn=1.1,
-        baselineRatioThresholdOff=1.5,
-        ):
-        """
-        """
-
         spotTimestamps = list()
         spotPolarities = list()
         for phase in ('pre', 'post'):
@@ -349,57 +357,104 @@ class ActivityProcessingMixin(object):
         spotPolarities = np.array(spotPolarities)
 
         #
-        responseWindows = (
-            ( 0  , 0.5),
-            ( 0.5, 1)
-        )
-        ratios = {
-            'on': list(),
-            'off': list()
-        }
-        for unit in self.population:
+        nUnits = self.population.count()
+        polarityIndices = np.full(nUnits, np.nan)
+        for iUnit, unit in enumerate(self.population):
+
+            #
+            trialIndices = np.where(spotPolarities == True)
             t, M = psth2(
-                spotTimestamps[spotPolarities == 1],
+                spotTimestamps[trialIndices],
                 unit.timestamps,
-                window=(-0.2, 0),
+                window=responseWindow,
                 binsize=None
             )
-            bl = M.mean(0) / 0.2
-            for responseWindow, k in zip(responseWindows, ratios.keys()):
-                t, M = psth2(
-                    spotTimestamps[spotPolarities == 1],
-                    unit.timestamps,
-                    window=responseWindow,
-                    binsize=None
-                )
-                fr = M.mean(0) / np.diff(responseWindow).item()
-                ratios[k].append(fr / bl)
+            rOn = M.mean(0).item() / np.diff(responseWindow).item()
+
+            #
+            trialIndices = np.where(spotPolarities == False)
+            t, M = psth2(
+                spotTimestamps[trialIndices],
+                unit.timestamps,
+                window=responseWindow,
+                binsize=None
+            )
+            rOff = M.mean(0).item() / np.diff(responseWindow).item()
+
+            #
+            if rOn + rOff == 0:
+                continue
+            else:
+                polarityIndex = (rOn - rOff) / (rOn + rOff)
+                polarityIndices[iUnit] = round(polarityIndex, 2)
 
         #
-        nUnits = self.population.count()
-        unitTypes = np.full([nUnits, 3], False)
-        for unitIndex in range(nUnits):
-            rOn = ratios['on'][unitIndex]
-            rOff = ratios['off'][unitIndex]
-            if rOn > baselineRatioThresholdOn and rOff > baselineRatioThresholdOff:
-                unitTypes[unitIndex, 2] = True
-            elif rOn > baselineRatioThresholdOn and rOff < baselineRatioThresholdOff:
-                unitTypes[unitIndex, 0] = True
-            elif rOn < baselineRatioThresholdOn and rOff > baselineRatioThresholdOff:
-                unitTypes[unitIndex, 1] = True
+        self.save(f'population/metrics/lpi', polarityIndices)
 
-        labels = np.full(nUnits, -1)
-        for columnIndex in range(3):
-            mask = unitTypes[:, columnIndex] == True
-            labels[mask] = columnIndex
-
-        return labels
+        return
 
     def _measureDirectionSelectivity(
         self,
         ):
         """
         """
+
+        # Load stimulus metadata
+        movingBarOrientations = self.load('stimuli/mb/orientation')
+        barOnsetTimestamps = self.load('stimuli/mb/onset/timestamps')
+        barOffsetTimestamps = self.load('stimuli/mb/offset/timestamps')
+        movingBarTimestamps = np.hstack([
+            barOnsetTimestamps.reshape(-1, 1),
+            barOffsetTimestamps.reshape(-1, 1)
+        ])
+
+        #
+        uniqueOrientations = np.unique(movingBarOrientations)
+        uniqueOrientations.sort()
+
+        #
+        nUnits = self.population.count()
+        directionSelectivityIndices = np.full(nUnits, np.nan).astype(float)
+
+        #
+        for unitIndex, unit in enumerate(self.population):
+
+            #
+            vectors = np.full([uniqueOrientations.size, 2], np.nan)
+            for rowIndex, orientation in enumerate(uniqueOrientations):
+
+                #
+                trialIndices = np.where(movingBarOrientations == orientation)[0]
+                amplitudes = list()
+                for trialIndex in trialIndices:
+                    t1, t2 = movingBarTimestamps[trialIndex, :]
+                    dt = t2 - t1
+                    t, M = psth2(
+                        np.array([t1]),
+                        unit.timestamps,
+                        window=(0, dt),
+                        binsize=None
+                    )
+                    fr = M.item() / dt
+                    amplitudes.append(fr)
+
+                #
+                vectors[rowIndex, 0] = np.mean(amplitudes)
+                vectors[rowIndex, 1] = np.deg2rad(orientation)
+
+            # Compute the coordinates of the polar plot vertices
+            vertices = np.vstack([
+                vectors[:, 0] * np.cos(vectors[:, 1]),
+                vectors[:, 0] * np.sin(vectors[:, 1])
+            ]).T
+
+            # Compute direction selectivity index
+            a, b = vertices.sum(0) / vectors[:, 0].sum()
+            dsi = np.sqrt(np.power(a, 2) + np.power(b, 2))
+            directionSelectivityIndices[unitIndex] = dsi
+
+        #
+        self.save('population/metrics/dsi', directionSelectivityIndices)
 
         return
 

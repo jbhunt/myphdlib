@@ -40,6 +40,8 @@ class SessionBase():
         self._saccadeWaveforms = None
         self._saccadeLatencies = None
         self._gratingMotionDuringSaccades = None
+        self._sampleIndicesRange = None
+        self._tRange = None
 
         #
         self._loadBasicMetadata()
@@ -385,6 +387,27 @@ class SessionBase():
         eventSampleNumbers = np.load(file)
 
         return eventSampleNumbers
+
+    @property
+    def tRange(self):
+        """
+        """
+
+        if self._tRange is None:
+            if self.experiment == 'Mlati':
+                file = self.folders.ephys.joinpath('continuous', 'Neuropix-PXI-100.ProbeA-AP', 'sample_numbers.npy')
+            elif self.experiment == 'Dreadds':
+                file = self.folders.ephys.joinpath('continuous', 'Neuropix-PXI-100.0', 'timestamps.npy')
+            if file.exists() == False:
+                raise Exception('Could not locate the ephys sample numbers file')
+            sampleNumbers = np.load(str(file), mmap_mode='r')
+            sampleNumbersRange = np.around(
+                np.array([sampleNumbers[0], sampleNumbers[-1]]) - self.referenceSampleNumber,
+                3
+            )
+            self._tRange = sampleNumbersRange / 30000
+
+        return self._tRange
     
     @property
     def referenceSampleNumber(self):
