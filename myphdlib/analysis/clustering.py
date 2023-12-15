@@ -8,32 +8,6 @@ from scipy.cluster.hierarchy import linkage, dendrogram
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-def _normalizeResponseCurve(curve):
-    """
-    """
-
-    index = np.argmax(np.abs(curve))
-    if curve[index] < 0:
-        xrange = (curve.min(), abs(curve.min()))
-    elif curve[index] > 0:
-        xrange = (-1 * curve.max(), curve.max())
-    else:
-        pass
-
-    return np.interp(curve, xrange, (-1, 1))
-
-def _stretchCurve(curve):
-    """
-    """
-
-    return np.interp(curve, (curve.min(), curve.max()), (0, 1))
-
-def _normalizeCurve2(w):
-    bl = w[:20].mean()
-    w -= bl
-    pv = np.max([w.max(), abs(w.min())])
-    return w / pv
-
 class ClusteringAnalysis():
     """
     """
@@ -42,32 +16,26 @@ class ClusteringAnalysis():
         """
         """
 
-        self.X = None
+        self._X = None
+        self._model = None
+        self._k = None
+        self._fig = None
 
         return
 
-    def plot(
+    def _plotResults(
         self,
-        k=4,
         figsize=(12, 4)
         ):
         """
         """
 
-        if self.X is None:
-            raise Exception('Analysis incomplete')
 
         #
         pca = PCA(n_components=2)
         xDecomposed = pca.fit_transform(self.X)
         x, y = xDecomposed[:, 0], xDecomposed[:, 1]
-        colors = [f'C{i}' for i in range(k)]
-
-        #
-        model = AgglomerativeClustering(n_clusters=k)
-        model.fit(self.X)
-        labels = model.labels_
-        c = [f'C{l}' for l in labels]
+        c = [f'C{l}' for l in self.model.labels]
 
         #
         fig = plt.figure()
@@ -85,12 +53,11 @@ class ClusteringAnalysis():
 
         #
         axs = list()
-        for clusterIndex, clusterLabel in enumerate(np.unique(model.labels_)):
+        for clusterIndex, clusterLabel in enumerate(np.unique(self.model.labels_)):
             ax = fig.add_subplot(gs[clusterIndex, 2])
             axs.append(ax)
-            mask = model.labels_ == clusterLabel
+            mask = self.model.labels_ == clusterLabel
             samples = self.X[mask]
-            a = np.clip(mask.sum() / mask.size + 0.1, 0, 1)
             ax.pcolor(samples, vmin=-0.6, vmax=0.6, cmap='coolwarm')
             ymin, ymax = ax.get_ylim()
             curve = samples.mean(0)
@@ -102,15 +69,20 @@ class ClusteringAnalysis():
         ax1.set_xticks([])
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
+        self._fig = fig
 
-        return fig, model
+        return
 
-    def run(
+    def _fitModel(
         self,
         sessions,
+        k=7
         ):
         """
         """
+
+        #
+        self._k = k
 
         #
         for session in sessions:
@@ -135,6 +107,37 @@ class ClusteringAnalysis():
                 if np.sum(sample) == 0:
                     continue
                 samples.append(sample)
-        self.X = np.array(samples)
+        self._X = np.array(samples)
+
+        #
+        self._model = AgglomerativeClustering(n_clusters=k).fit(self._X)
         
         return
+    
+    def run(
+        self,
+        sessions,
+        ):
+        """
+        """
+
+        self._fitModel(sessions)
+        self._plotResults()
+
+        return
+    
+    @property
+    def X(self):
+        return self._X
+    
+    @property
+    def k(self):
+        return self._k
+    
+    @property
+    def model(self):
+        return self._model
+    
+    @property
+    def fig(self):
+        return self._fig
