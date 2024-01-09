@@ -21,7 +21,7 @@ class StimuliProcessingMixin():
 
         # Check for data loss
         if np.isnan(signal).sum() > 0:
-            session.log(f'Data loss detected during the moving bars stimulus', level='warning')
+            self.log(f'Data loss detected during the moving bars stimulus', level='warning')
             return
         
         #
@@ -83,95 +83,6 @@ class StimuliProcessingMixin():
                 corrected[start: stop] = 0
 
         return corrected
-
-    def _determineGratingMotionAssociatedWithEachSaccade(
-            self,
-            interBlockIntervalRange=(1, 10),
-            interBlockIntervalStep=0.1
-            ):
-            """
-            """
-
-            #
-            gratingMotionByBlock = self.load('stimuli/dg/grating/motion')
-            if gratingMotionByBlock is None:
-                self.log(f'Session missing processed data for the drifting grating stimulus', level='warning')
-                return
-            nBlocks = gratingMotionByBlock.size
-
-            #
-            for eye in ('left', 'right'):
-                saccadeOnsetTimestamps = self.load(f'saccades/predicted/{eye}/timestamps')
-                gratingMotionBySaccade = list()
-
-                if self.cohort in (1, 2, 3):
-
-                    #
-                    probeOnsetTimestamps = self.load('stimuli/dg/probe/timestamps')
-                    gratingEpochs = list()
-                    interProbeIntervals = np.diff(probeOnsetTimestamps)
-
-                    #
-                    thresholdDetermined = False
-                    for interBlockIntervalThreshold in np.arange(interBlockIntervalRange[0], interBlockIntervalRange[1], interBlockIntervalStep):
-                        lastProbeIndices = np.concatenate([
-                            np.where(interProbeIntervals > interBlockIntervalThreshold)[0],
-                            np.array([probeOnsetTimestamps.size - 1])
-                        ])
-                        if lastProbeIndices.size == nBlocks:
-                            thresholdDetermined = True
-                            break
-
-                    if thresholdDetermined == False:
-                        self.log(f'Failed to determine the inter-block interval threshold for the drifting grating protocol', level='warning')
-                        return
-
-                    firstProbeIndices = np.concatenate([
-                        np.array([0]),
-                        lastProbeIndices[:-1] + 1
-                    ])
-                    gratingEpochs = np.hstack([
-                        probeOnsetTimestamps[firstProbeIndices].reshape(-1, 1),
-                        probeOnsetTimestamps[lastProbeIndices].reshape(-1, 1)
-                    ])
-
-                #
-                elif self.cohort in (4,):
-
-                    #
-                    motionOnsetTimestamps = self.load('stimuli/dg/grating/timestamps')
-                    motionOffsetTimestamps = self.load('stimuli/dg/iti/timestamps')
-                    gratingEpochs = np.hstack([
-                        motionOnsetTimestamps.reshape(-1, 1),
-                        motionOffsetTimestamps.reshape(-1, 1)
-                    ])
-
-                #
-                else:
-                    self.log('Could not extract grating motion during {saccadeDirection} saccades in the {eye} for self in cohort {self.cohort}')
-                    self.save(f'saccades/predicted/{eye}/gmds', np.array([]).astype(int))
-                    return
-
-                #
-                nBlocks = gratingEpochs.shape[0]
-                for saccadeOnsetTimestamp in saccadeOnsetTimestamps:
-                    searchResult = False
-                    for blockIndex in range(nBlocks):
-                        gratingOnsetTimestamp, gratingOffsetTimestamp = gratingEpochs[blockIndex]
-                        gratingMotion = gratingMotionByBlock[blockIndex]
-                        if gratingOnsetTimestamp <= saccadeOnsetTimestamp <= gratingOffsetTimestamp:
-                            searchResult = True
-                            break
-                    if searchResult:
-                        gratingMotionBySaccade.append(gratingMotion)
-                    else:
-                        gratingMotionBySaccade.append(0)
-
-                #
-                gratingMotionBySaccade = np.array(gratingMotionBySaccade)
-                self.save(f'saccades/predicted/{eye}/gmds', gratingMotionBySaccade)
-
-            return
 
     def _runStimuliModule(self):
         return

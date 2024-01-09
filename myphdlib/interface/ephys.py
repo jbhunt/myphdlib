@@ -23,7 +23,6 @@ class SingleUnit():
         self._session = session
         self._cluster = cluster
         self._timestamps = None
-        self._utype = None
         self._quality = None
         self._index = None
         self._kilosortLabel = None
@@ -36,13 +35,19 @@ class SingleUnit():
         self._deltaResponseValue = None
         self._deltaResponseProbability = None
         self._visualResponseCurve = None
+        self._label = None
+        self._directionSelectivityIndex = None
+        self._luminancePolarityIndex = None
+        self._visualResponseSign = None
+        self._motionPreferenceIndex = None
+        self._preferredProbeDirection = None
 
         return
 
     def describeAcrossTrials(
         self,
         eventTimestamps,
-        responseWindow=(-11, -10),
+        responseWindow=(-0.2, 0),
         ):
         """
         Estimate baseline activity mean and std across trials
@@ -52,7 +57,7 @@ class SingleUnit():
         t, M = psth2(
             eventTimestamps,
             self.timestamps,
-            responseWindow,
+            window=responseWindow,
             binsize=None
         )
         fr = M.flatten() / np.diff(responseWindow).item()
@@ -83,19 +88,13 @@ class SingleUnit():
     def describeWithBootstrap(
         self,
         eventTimestamps,
-        baselineWindowBoundaries=(-11, -10),
-        windowSize=0.5,
+        baselineWindowBoundaries=(-0.2, 0),
+        windowSize=0.02,
         nRuns=30,
-        binsize=None,
         ):
         """
         Estimate baseline activity mean and std with bootstrap
         """
-
-        if binsize is None:
-            dt = windowSize
-        else:
-            dt = binsize
 
         #
         samples = list()
@@ -117,15 +116,13 @@ class SingleUnit():
                 eventTimestamps,
                 self.timestamps,
                 window=baselineWindow,
-                binsize=binsize,
+                binsize=None,
             )
-            fr = M.mean(0) / dt
+            fr = M.flatten() / windowSize
             samples.append([fr.mean(), fr.std()])
 
         #
-        samples = np.around(np.array(samples), 2)
-        mu = round(samples[:, 0].mean(), 2)
-        sigma = round(samples[:, 1].mean(), 2)
+        mu, sigma = np.around(np.array(samples).mean(0), 2)
 
         return mu, sigma
 
@@ -159,24 +156,29 @@ class SingleUnit():
         responseWindow=(-1, 1),
         binsize=0.02,
         kde=False,
-        sd=0.02,
-        nt=101,
-        edgeBufferFactor=1.1
+        sd=0.005,
+        buffer=0.5
         ):
         """
         """
 
         #
         if kde:
+            responseWindowBuffered = (
+                responseWindow[0] - buffer,
+                responseWindow[1] + buffer
+            )
             t_, M, sample = psth2(
                 eventTimestamps,
                 self.timestamps,
-                window=np.array(responseWindow) * edgeBufferFactor,
+                window=responseWindowBuffered,
                 binsize=None,
                 returnTimestamps=True
             )
-            t = np.linspace(responseWindow[0], responseWindow[1], nt)
-            if sample.size < 2:
+            # t = np.linspace(responseWindow[0], responseWindow[1], nt)
+            leftEdges = np.arange(responseWindow[0], responseWindow[1], binsize)
+            t = np.around(leftEdges + (binsize / 2), 3)
+            if sample.size < 3:
                 fr = np.full(t.size, np.nan)
             else:
                 f = gaussian_kde(sample)
@@ -194,6 +196,86 @@ class SingleUnit():
             fr = m.mean(0) / binsize
 
         return t, fr
+
+    def kde(
+        self,
+        eventTimestamps,
+        responseWindow=(-1, 1),
+        binsize=0.02,
+        sigma=0.005,
+        buffer=0.5,
+        t=None,
+        ):
+        """
+        Estimate FR using kernel density estimation
+        """
+
+        responseWindowBuffered = (
+            responseWindow[0] - buffer,
+            responseWindow[1] + buffer
+        )
+        t_, M, sample = psth2(
+            eventTimestamps,
+            self.timestamps,
+            window=responseWindowBuffered,
+            binsize=None,
+            returnTimestamps=True
+        )
+
+        #
+        if sample.size < 3:
+            raise Exception('Not enough events to perform KDE')
+        else:
+            f = gaussian_kde(sample)
+            f.set_bandwidth(sigma / sample.std())
+
+        #
+        if t is None:
+            leftEdges = np.arange(responseWindow[0], responseWindow[1], binsize)
+            t = np.around(leftEdges + (binsize / 2), 3)
+
+        y = f(t)
+        fr = y * (sample.size * binsize) / M.shape[0] / binsize
+
+        return t, fr
+
+    def determineResponseWindow(
+        self,
+        probeMotion=-1,
+        windowSize=0.1,
+        ):
+        """
+        """
+
+        probeDirection = 'left' if probeMotion == -1 else 'right'
+        responsePolarityIndices = np.array([
+            self.session.population.datasets[('population', 'metrics', 'rsi', 'left')][self.index],
+            self.session.population.datasets[('population', 'metrics', 'rsi', 'right')][self.index]
+        ])
+        responseLatencyIndex = 0 if responsePolarityIndices.mean() >= 0 else 1
+        windowCenter = self.visualResponseLatency[probeDirection][responseLatencyIndex]
+        windowEdges = np.around(np.array([
+            windowCenter - (windowSize / 2),
+            windowCenter + (windowSize / 2)
+        ]), 3)
+
+        return windowEdges
+
+    @property
+    def visualResponseSign(
+        self,
+        ):
+        """
+        """
+
+        if self._visualResponseSign is None:
+            responsePolarityIndices = np.array([
+                self.session.population.datasets[('population', 'metrics', 'rsi', 'left')][self.index],
+                self.session.population.datasets[('population', 'metrics', 'rsi', 'right')][self.index]
+            ])
+            self._visualResponseSign = -1 if responsePolarityIndices.mean() < 0 else +1
+
+        return self._visualResponseSign
 
     @property
     def index(self):
@@ -252,14 +334,14 @@ class SingleUnit():
                 'right': None
             }
             keys = (
-                ('zeta', 'probe', 'left', 'latency'),
-                ('zeta', 'probe', 'right', 'latency')
+                ('population', 'metrics', 'rl', 'probe', 'left'),
+                ('population', 'metrics', 'rl', 'probe', 'right')
             )
             for key in keys:
                 if self.session.population.datasets[key] is None:
                     continue
-                probeDirection = key[2]
-                vrl[probeDirection] = round(self.session.population.datasets[key][self.index], 3)
+                probeDirection = key[-1]
+                vrl[probeDirection] = np.around(self.session.population.datasets[key][self.index], 3)
             self._visualResponseLatency = DotMap(vrl)
 
         return self._visualResponseLatency
@@ -276,14 +358,15 @@ class SingleUnit():
                 'right': None
             }
             keys = (
-                ('metrics', 'vra', 'left'),
-                ('metrics', 'vra', 'right')
+                ('population', 'metrics', 'vra', 'left'),
+                ('population', 'metrics', 'vra', 'right')
             )
             for key in keys:
                 if self.session.population.datasets[key] is None:
                     continue
                 probeDirection = key[-1]
-                vra[probeDirection] = round(self.session.population.datasets[key][self.index], 3)
+                ri = 1 if self.visualResponseSign == -1 else 0 # Choose the amplitude of the positive or negative peak
+                vra[probeDirection] = np.around(self.session.population.datasets[key][self.index][ri], 3)
             self._visualResponseAmplitude = DotMap(vra)
 
         return self._visualResponseAmplitude
@@ -300,13 +383,13 @@ class SingleUnit():
                 'right': None
             }
             keys = (
-                ('zeta', 'probe', 'left', 'p'),
-                ('zeta', 'probe', 'right', 'p')
+                ('population', 'zeta', 'probe', 'left', 'p'),
+                ('population', 'zeta', 'probe', 'right', 'p')
             )
             for key in keys:
                 if self.session.population.datasets[key] is None:
                     continue
-                probeDirection = key[2]
+                probeDirection = key[3]
                 vrp[probeDirection] = round(1 - self.session.population.datasets[key][self.index], 3)
             self._visualResponseProbability = DotMap(vrp)
 
@@ -324,13 +407,13 @@ class SingleUnit():
                 'right': None
             }
             keys = (
-                ('psths', 'probe', 'left'),
-                ('psths', 'probe', 'right')
+                ('population', 'psths', 'probe', 'left'),
+                ('population', 'psths', 'probe', 'right')
             )
             for key in keys:
                 if self.session.population.datasets[key] is None:
                     continue
-                probeDirection = key[2]
+                probeDirection = key[3]
                 vrc[probeDirection] = self.session.population.datasets[key][self.index]
             self._visualResponseCurve = DotMap(vrc)
 
@@ -348,13 +431,13 @@ class SingleUnit():
                 'right': None,
             }
             keys = (
-                ('metrics', 'dr', 'left', 'x'),
-                ('metrics', 'dr', 'right', 'x')
+                ('population', 'metrics', 'dr', 'left', 'x'),
+                ('population', 'metrics', 'dr', 'right', 'x')
             )
             for key in keys:
                 if self.session.population.datasets[key] is None:
                     continue
-                probeDirection = key[2]
+                probeDirection = key[3]
                 dr[probeDirection] = round(self.session.population.datasets[key][self.index], 3)
             self._deltaResponseValue = DotMap(dr)
 
@@ -372,13 +455,13 @@ class SingleUnit():
                 'right': None,
             }
             keys = (
-                ('metrics', 'dr', 'left', 'p'),
-                ('metrics', 'dr', 'right', 'p')
+                ('population', 'metrics', 'dr', 'left', 'p'),
+                ('population', 'metrics', 'dr', 'right', 'p')
             )
             for key in keys:
                 if self.session.population.datasets[key] is None:
                     continue
-                probeDirection = key[2]
+                probeDirection = key[3]
                 ps[probeDirection] = round(1 - self.session.population.datasets[key][self.index], 3)
             self._deltaResponseProbability = DotMap(ps)
 
@@ -392,7 +475,7 @@ class SingleUnit():
 
         if self._presenceRatio is None:
             keys = (
-                ('metrics', 'pr'),
+                ('population', 'metrics', 'pr'),
             )
             for key in keys:
                 if self.session.population.datasets[key] is None:
@@ -409,7 +492,7 @@ class SingleUnit():
 
         if self._refractoryPeriodViolationRate is None:
             keys = (
-                ('metrics', 'rpvr'),
+                ('population', 'metrics', 'rpvr'),
             )
             for key in keys:
                 if self.session.population.datasets[key] is None:
@@ -426,7 +509,7 @@ class SingleUnit():
 
         if self._amplitudeCutoff is None:
             keys = (
-                ('metrics', 'ac'),
+                ('population', 'metrics', 'ac'),
             )
             for key in keys:
                 if self.session.population.datasets[key] is None:
@@ -434,6 +517,76 @@ class SingleUnit():
                 self._amplitudeCutoff = self.session.population.datasets[key][self.index]
 
         return self._amplitudeCutoff
+
+    @property
+    def label(self):
+        """
+        """
+
+        if self._label is None:
+            keys = (
+                ('clustering', 'probe', 'labels'),
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                label = self.session.population.datasets[key][self.index]         
+                if np.isnan(label) == True:
+                    self._label = np.nan
+                else:
+                    self._label = int(label)
+
+        return self._label
+
+    @property
+    def directionSelectivityIndex(self):
+        if self._directionSelectivityIndex is None:
+            keys = (
+                ('population', 'metrics', 'dsi'),
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                self._directionSelectivityIndex = self.session.population.datasets[key][self.index]
+
+        return self._directionSelectivityIndex
+
+    @property
+    def luminancePolarityIndex(self):
+        if self._luminancePolarityIndex is None:
+            keys = (
+                ('population', 'metrics', 'lpi'),
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                self._luminancePolarityIndex = self.session.population.datasets[key][self.index]
+
+        return self._luminancePolarityIndex
+
+    @property
+    def motionPreferenceIndex(self):
+        if self._motionPreferenceIndex is None:
+            keys = (
+                ('population', 'metrics', 'rpi'),
+            )
+            for key in keys:
+                if self.session.population.datasets[key] is None:
+                    continue
+                self._motionPreferenceIndex = self.session.population.datasets[key][self.index]
+
+        return self._motionPreferenceIndex
+
+    @property
+    def preferredProbeDirection(self):
+        """
+        """
+
+        if self._preferredProbeDirection is None:
+            self._preferredProbeDirection = 'left' if self.motionPreferenceIndex < 0 else 'right'
+
+        return self._preferredProbeDirection
+
 
 class Population():
     """
@@ -447,26 +600,32 @@ class Population():
         self._units = None
         self._index = 0
         self._datasets = {
-            ('metrics', 'pr'): None,
-            ('metrics', 'rpvr'): None,
-            ('metrics', 'ac'): None,
-            ('metrics', 'ksl'): None,
-            ('metrics', 'vra', 'left'): None,
-            ('metrics', 'vra', 'right'): None,
-            ('zeta', 'probe', 'left', 'p'): None,
-            ('zeta', 'probe', 'left', 'latency'): None,
-            ('zeta', 'probe', 'right', 'p'): None,
-            ('zeta', 'probe', 'right', 'latency'): None,
-            ('zeta', 'saccade', 'nasal', 'p'): None,
-            ('zeta', 'saccade', 'nasal', 'latency'): None,
-            ('zeta', 'saccade', 'temporal', 'p'): None,
-            ('zeta', 'saccade', 'temporal', 'latency'): None,
-            ('metrics', 'dr', 'left', 'x'): None,
-            ('metrics', 'dr', 'left', 'p'): None,
-            ('metrics', 'dr', 'right', 'x'): None,
-            ('metrics', 'dr', 'right', 'p'): None,
-            ('psths', 'probe', 'left'): None,
-            ('psths', 'probe', 'right'): None,
+            ('population', 'metrics', 'pr'): None,
+            ('population', 'metrics', 'rpvr'): None,
+            ('population', 'metrics', 'ac'): None,
+            ('population', 'metrics', 'ksl'): None,
+            ('population', 'metrics', 'vra', 'left'): None,
+            ('population', 'metrics', 'vra', 'right'): None,
+            ('population', 'zeta', 'probe', 'left', 'p'): None,
+            ('population', 'zeta', 'probe', 'left', 'latency'): None,
+            ('population', 'zeta', 'probe', 'right', 'p'): None,
+            ('population', 'zeta', 'probe', 'right', 'latency'): None,
+            ('population', 'zeta', 'saccade', 'nasal', 'p'): None,
+            ('population', 'zeta', 'saccade', 'nasal', 'latency'): None,
+            ('population', 'zeta', 'saccade', 'temporal', 'p'): None,
+            ('population', 'zeta', 'saccade', 'temporal', 'latency'): None,
+            ('population', 'metrics', 'dr', 'left', 'x'): None,
+            ('population', 'metrics', 'dr', 'left', 'p'): None,
+            ('population', 'metrics', 'dr', 'right', 'x'): None,
+            ('population', 'metrics', 'dr', 'right', 'p'): None,
+            ('clustering', 'probe', 'labels'): None,
+            ('population', 'metrics', 'rl', 'probe', 'left'): None,
+            ('population', 'metrics', 'rl', 'probe', 'right'): None,
+            ('population', 'metrics', 'dsi'): None,
+            ('population', 'metrics', 'lpi'): None,
+            ('population', 'metrics', 'rsi', 'left'): None,
+            ('population', 'metrics', 'rsi', 'right'): None,
+            ('population', 'metrics', 'rpi'): None,
         }
 
         if autoload:
@@ -511,7 +670,6 @@ class Population():
         for k in self._datasets.keys():
             if self._datasets[k] is None:
                 parts = list(k)
-                parts.insert(0, 'population')
                 datasetPath = '/'.join(parts)
                 if self._session.hasDataset(datasetPath):
                     self._datasets[k] = self._session.load(datasetPath)
@@ -528,6 +686,33 @@ class Population():
                 return unit
 
         return
+
+    def filter2(
+        self,
+        minimumFiringRate=None,
+        minimumResponseAmplitude=None,
+        probeDirection='left',
+        applyFilter=True,
+        ):
+        """
+        """
+
+        # Reset the list of units
+        self.unfilter()
+
+        #
+        unitFilter = np.full(len(self._units), True)
+        for unitIndex, unit in enumerate(self._units):
+            if minimumFiringRate is not None and unit.timestamps.size / unit.session.tRange[-1] < minimumFiringRate:
+                unitFilter[unitIndex] = False
+            if minimumResponseAmplitude is not None and unit.visualResponseAmplitude[probeDirection] < minimumResponseAmplitude:
+                unitFilter[unitIndex] = False
+
+        #
+        if applyFilter:
+            self._units = self[unitFilter]
+
+        return unitFilter
 
     def filter(
         self,

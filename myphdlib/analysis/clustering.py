@@ -4,7 +4,9 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.cluster import AgglomerativeClustering
+from sklearn.metrics import silhouette_samples, silhouette_score
 from scipy.cluster.hierarchy import linkage, dendrogram
+from scipy.signal import find_peaks
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
 
@@ -19,13 +21,14 @@ class ClusteringAnalysis():
         self._X = None
         self._model = None
         self._k = None
-        self._fig = None
+        self._figs = None
 
         return
 
-    def _plotResults(
+    def plotResults(
         self,
-        figsize=(12, 4)
+        figsize=(4, 4),
+        t=None
         ):
         """
         """
@@ -35,12 +38,13 @@ class ClusteringAnalysis():
         pca = PCA(n_components=2)
         xDecomposed = pca.fit_transform(self.X)
         x, y = xDecomposed[:, 0], xDecomposed[:, 1]
-        c = [f'C{l}' for l in self.model.labels]
+        c = [f'C{l}' for l in self.model.labels_]
+        coefs = silhouette_samples(self.X, self.model.labels_)
+        a = np.interp(coefs, (coefs.min(), coefs.max()), (0.1, 0.9))
 
         #
-        fig = plt.figure()
-        gs = GridSpec(nrows=k, ncols=3)
-        ax1 = fig.add_subplot(gs[:, 0])
+        fig1 = plt.figure()
+        ax1 = fig1.add_subplot()
         matrix = linkage(self.X, 'ward')
         R = dendrogram(
             matrix,
@@ -48,35 +52,53 @@ class ClusteringAnalysis():
             above_threshold_color='k',
             ax=ax1
         )
-        ax2 = fig.add_subplot(gs[:, 1])
-        ax2.scatter(x, y, c=c, s=3, alpha=0.7)
+        ax1.set_xticks([])
+
+        fig2 = plt.figure()
+        ax2 = fig2.add_subplot()
+        ax2.scatter(x, y, c=c, s=3)
 
         #
+        for clusterLabel in np.unique(self.model.labels_):
+            xc, yc = xDecomposed[self.model.labels_ == clusterLabel, :].mean(0)
+            ax2.scatter(xc, yc, marker='+', color='k')
+
+        #
+        fig3 = plt.figure()
+        gs = GridSpec(nrows=self.k, ncols=1)
         axs = list()
+        if t is None:
+            t_ = np.arange(self.X.shape[1])
+        else:
+            t_ = t
         for clusterIndex, clusterLabel in enumerate(np.unique(self.model.labels_)):
-            ax = fig.add_subplot(gs[clusterIndex, 2])
+            ax = fig3.add_subplot(gs[clusterIndex])
             axs.append(ax)
             mask = self.model.labels_ == clusterLabel
             samples = self.X[mask]
-            ax.pcolor(samples, vmin=-0.6, vmax=0.6, cmap='coolwarm')
+            # peaks = np.array([find_peaks(np.abs(x), height=0.5)[0].min() for x in samples])
+            # index = np.argsort(peaks)
+            ax.pcolor(t_, np.arange(samples.shape[0]), samples, vmin=-1, vmax=1, cmap='coolwarm')
             ymin, ymax = ax.get_ylim()
             curve = samples.mean(0)
-            stretched = np.interp(curve, (curve.min(), curve.max()), (ymin * 0.9, ymax * 0.9))
-            ax.plot(stretched, color='k')
+            stretched = np.interp(curve, (curve.min(), curve.max()), (ymax * 0.1, ymax * 0.9))
+            ax.plot(t_, stretched, color='k')
             ax.set_ylim([ymin, ymax])
 
         #
-        ax1.set_xticks([])
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        self._fig = fig
+        self._figs = [fig1, fig2, fig3]
+        for fig in self.figs:
+            fig.set_figwidth(figsize[0])
+            fig.set_figheight(figsize[1])
 
         return
 
-    def _fitModel(
+    def fitModel(
         self,
         sessions,
-        k=7
+        preference='preferred',
+        event='probe',
+        k=None
         ):
         """
         """
@@ -92,39 +114,47 @@ class ClusteringAnalysis():
         for session in sessions:
             if session.probeTimestamps is None:
                 continue
-            peths = {
-                'left': session.load(f'population/peths/probe/left'),
-                'right': session.load(f'population/peths/probe/right')
-            }
+            peths = session.load(f'peths/{event}/{preference}')
             for unit in session.population:
-                sample = np.zeros(peths['left'].shape[1])
-                for probeDirection in ('left', 'right'):
-                    peth = peths[probeDirection][unit.index]
-                    if np.isnan(sample).all():
-                        continue
-                    if peth.max() > sample.max():
-                        sample = peth
-                if np.sum(sample) == 0:
+                sample = peths[unit.index]
+                if np.isnan(sample).all():
                     continue
-                samples.append(sample)
+                else:
+                    samples.append(sample)
         self._X = np.array(samples)
 
         #
-        self._model = AgglomerativeClustering(n_clusters=k).fit(self._X)
+        if k is None:
+            models = list()
+            scores = list()
+            ks = np.arange(2, 16, 1)
+            for k in ks:
+                model = AgglomerativeClustering(n_clusters=k).fit(self.X)
+                score = silhouette_score(self.X, model.labels_)
+                models.append(model)
+                scores.append(score)
+            self._k = ks[np.argmin(scores)]
+            self._model = models[np.argmin(scores)]
+        else:
+            ks = None
+            scores = None
+            self._k = k
+            self._model = AgglomerativeClustering(n_clusters=self.k).fit(self.X)
         
-        return
+        return ks, np.array(scores)
     
     def run(
         self,
         sessions,
+        k=None,
         ):
         """
         """
 
-        self._fitModel(sessions)
-        self._plotResults()
+        ks, scores = self.fitModel(sessions, k=k)
+        self.plotResults()
 
-        return
+        return ks, scores
     
     @property
     def X(self):
@@ -139,5 +169,5 @@ class ClusteringAnalysis():
         return self._model
     
     @property
-    def fig(self):
-        return self._fig
+    def figs(self):
+        return self._figs

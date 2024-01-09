@@ -84,17 +84,25 @@ class SaccadesProcessingMixin(object):
         eyePositionCorrected = np.full([nSamples, 4], np.nan)
 
         #
+        if self.primaryCamera == 'left':
+            frameIntervals = np.loadtxt(self.leftCameraTimestamps, dtype=np.int64)
+        elif self.primaryCamera == 'right':
+            frameIntervals = np.loadtxt(self.rightCameraTimestamps, dtype=np.int64)
+        else:
+            raise Exception('Could not determine the primary camera')
+        factor = np.median(frameIntervals)
+
+        #
         terminationIndex = 0
         for camera in ('left', 'right'):
 
             #
             if camera == 'left':
                 columnIndices = 0, 1
-                frameIntervals = np.loadtxt(self.leftCameraTimestamps, dtype=np.int64) / 1000000 # In ms
+                frameIntervals = np.loadtxt(self.leftCameraTimestamps, dtype=np.int64)
             else:
                 columnIndices = 2, 3
-                frameIntervals = np.loadtxt(self.rightCameraTimestamps, dtype=np.int64) / 1000000 # In ms
-            medianFrameInterval = np.median(frameIntervals)
+                frameIntervals = np.loadtxt(self.rightCameraTimestamps, dtype=np.int64)
 
             #
             frameIndex = 0
@@ -102,7 +110,7 @@ class SaccadesProcessingMixin(object):
             missingFrames = 0
             eyePositionUncorrected[0, columnIndices] = eyePositionUncorrected[0, columnIndices]
             for frameInterval in frameIntervals:
-                frameOffset += round(frameInterval / medianFrameInterval) - 1
+                frameOffset += round(frameInterval / factor) - 1
                 if frameIndex >= eyePositionUncorrected.shape[0]:
                     missingFrames += 1
                 else:
@@ -112,10 +120,6 @@ class SaccadesProcessingMixin(object):
             #
             if frameIndex + frameOffset > terminationIndex:
                 terminationIndex = frameIndex + frameOffset
-
-            #
-            # self.log(f'{frameOffset} dropped frames detected in the {camera} camera recording')
-            # self.log(f'{missingFrames} missing frames detected in the {camera} camera recording')
 
         #
         eyePositionCorrected = eyePositionCorrected[:terminationIndex, :]
@@ -467,6 +471,145 @@ class SaccadesProcessingMixin(object):
                 self.save(path, dataset)
         
         return
+
+    def _determineGratingMotionAssociatedWithEachSaccade(
+        self,
+        interBlockIntervalRange=(2, 9),
+        interBlockIntervalStep=0.1,
+        bufferPhaseDuration=1,
+        ):
+        """
+        """
+
+        #
+        gratingMotionByBlock = self.load('stimuli/dg/grating/motion')
+        if gratingMotionByBlock is None:
+            self.log(f'Session missing processed data for the drifting grating stimulus', level='warning')
+            return
+        nBlocks = gratingMotionByBlock.size
+
+        #
+        for eye in ('left', 'right'):
+            saccadeOnsetTimestamps = self.load(f'saccades/predicted/{eye}/timestamps')[:, 0]
+            gratingMotionBySaccade = list()
+
+            if self.cohort in (1, 2, 3):
+
+                #
+                probeOnsetTimestamps = self.load('stimuli/dg/probe/timestamps')
+                gratingEpochs = list()
+                interProbeIntervals = np.diff(probeOnsetTimestamps)
+
+                #
+                interBlockIntervalThresholds = np.arange(interBlockIntervalRange[0], interBlockIntervalRange[1], interBlockIntervalStep)
+                nBlocksDetected = np.full(interBlockIntervalThresholds.size, np.nan)
+
+                # Attempt #1: Find the indices of the last probe in each block
+                thresholdDetermined = False
+                for iRun, interBlockIntervalThreshold in enumerate(interBlockIntervalThresholds):
+                    lastProbeIndices = np.concatenate([
+                        np.where(interProbeIntervals > interBlockIntervalThreshold)[0],
+                        np.array([probeOnsetTimestamps.size - 1])
+                    ])
+                    nBlocksDetected[iRun] = lastProbeIndices.size
+                    if lastProbeIndices.size == nBlocks:
+                        thresholdDetermined = True
+                        break
+
+                if thresholdDetermined:
+                    firstProbeIndices = np.concatenate([
+                        np.array([0]),
+                        lastProbeIndices[:-1] + 1
+                    ])
+                    gratingEpochs = np.hstack([
+                        probeOnsetTimestamps[firstProbeIndices].reshape(-1, 1),
+                        probeOnsetTimestamps[lastProbeIndices].reshape(-1, 1)
+                    ])
+
+                # Attempt #2: Interpolate the indices of the last probe in each block
+                else:
+                    nBlocksDetectedZeroed = nBlocksDetected - nBlocks
+                    nBlocksDetectedZeroed[nBlocksDetectedZeroed >= 0] = np.nan
+                    index = np.nanargmax(nBlocksDetectedZeroed)
+                    interBlockIntervalThreshold = interBlockIntervalThresholds[index]
+                    lastProbeIndicesDetected = np.concatenate([
+                        np.where(interProbeIntervals > interBlockIntervalThreshold)[0],
+                        np.array([probeOnsetTimestamps.size - 1])
+                    ])
+                    medianProbeInterval = np.median(np.diff(lastProbeIndicesDetected))
+                    blocksPerInterval = np.around(
+                        np.diff(lastProbeIndicesDetected) / medianProbeInterval,
+                        0
+                    ).astype(int)
+                    lastProbeIndices = list()
+                    for iProbe, blocksInInterval in enumerate(blocksPerInterval):
+                        lastProbeIndices.append(lastProbeIndicesDetected[iProbe])
+                        if blocksInInterval > 1:
+                            for iProbeMissing in range(blocksInInterval - 1):
+                                lastProbeIndices.append(np.nan)
+                    lastProbeIndices.append(lastProbeIndicesDetected[-1])
+                    lastProbeIndices = np.array(lastProbeIndices)
+                    firstProbeIndices = np.concatenate([
+                        np.array([0]),
+                        lastProbeIndices[:-1] + 1
+                    ])
+                    gratingEpochs = list()
+                    for a in (firstProbeIndices, lastProbeIndices):
+                        mask = np.isnan(a)
+                        timestamps = np.full(lastProbeIndices.size, np.nan)
+                        timestamps[~mask] = probeOnsetTimestamps[a[~mask].astype(int)]
+                        timestamps[mask] = np.interp(
+                            np.where(mask)[0],
+                            np.arange(timestamps.size)[~mask],
+                            timestamps[~mask]
+                        )
+                        gratingEpochs.append(timestamps)
+                    gratingEpochs = np.array(gratingEpochs).T
+                    if gratingEpochs.shape[0] == nBlocks:
+                        thresholdDetermined = True
+
+                if thresholdDetermined == False:
+                    self.log(f'Failed to determine the inter-block interval threshold for the drifting grating protocol', level='warning')
+                    return
+
+                gratingEpochs[:, 0] -= bufferPhaseDuration
+                gratingEpochs[:, 1] += bufferPhaseDuration
+
+            #
+            elif self.cohort in (4,):
+
+                #
+                motionOnsetTimestamps = self.load('stimuli/dg/grating/timestamps')
+                motionOffsetTimestamps = self.load('stimuli/dg/iti/timestamps')
+                gratingEpochs = np.hstack([
+                    motionOnsetTimestamps.reshape(-1, 1),
+                    motionOffsetTimestamps.reshape(-1, 1)
+                ])
+
+            #
+            else:
+                self.log('Could not extract grating motion during {saccadeDirection} saccades in the {eye} for self in cohort {self.cohort}')
+                self.save(f'saccades/predicted/{eye}/gmds', np.array([]).astype(int))
+                return
+
+            #
+            nBlocks = gratingEpochs.shape[0]
+            for saccadeOnsetTimestamp in saccadeOnsetTimestamps:
+                searchResult = False
+                for blockIndex in range(nBlocks):
+                    gratingOnsetTimestamp, gratingOffsetTimestamp = gratingEpochs[blockIndex]
+                    gratingMotion = gratingMotionByBlock[blockIndex]
+                    if gratingOnsetTimestamp <= saccadeOnsetTimestamp <= gratingOffsetTimestamp:
+                        searchResult = True
+                        break
+                if searchResult:
+                    gratingMotionBySaccade.append(gratingMotion)
+                else:
+                    gratingMotionBySaccade.append(0)
+
+            #
+            gratingMotionBySaccade = np.array(gratingMotionBySaccade)
+            self.save(f'saccades/predicted/{eye}/gmds', gratingMotionBySaccade)
 
     def _runSaccadesModule(self):
         """

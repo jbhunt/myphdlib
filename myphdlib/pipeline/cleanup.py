@@ -66,6 +66,7 @@ pathsToKeep = {
     "population/metrics/pd", # Preferred direction
     "population/metrics/nd", # Null direction
     "population/metrics/dsi", # Direction-selectivity index
+    "population/metrics/lpi", # Luminance polarity index
     "population/metrics/vra", # Visual response amplitude
     "population/metrics/bsw", # Best spike waveform
     "population/metrics/vra/left",
@@ -256,6 +257,31 @@ pathsToKeep = {
     "tfp/fp",
     "tfp/m",
     "tfp/xp",
+
+    # Normalized PETHs for clustering
+    "peths",
+    "peths/probe",
+    "peths/probe/preferred",
+    "peths/probe/nonpreferred",
+    "peths/saccade",
+    "peths/saccade/preferred",
+    "peths/saccade/nonpreferred",
+
+    #
+    "curves",
+    "curves/rProbe",
+    "curves/rProbe/left",
+    "curves/rProbe/right",
+    "curves/rMixed",
+    "curves/rMixed/left",
+    "curves/rMixed/right",
+    "curves/rSaccade",
+    "curves/rSaccade/left",
+    "curves/rSaccade/right",
+    "curves/rSaccadeUnshifted",
+    "curves/rSaccadeUnshifted/nasal",
+    "curves/rSaccadeUnshifted/temporal",
+
 }
 
 def checkForMissingDatasets(

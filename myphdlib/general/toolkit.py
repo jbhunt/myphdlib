@@ -169,7 +169,7 @@ def psth(target_events, relative_events, binsize=0.01, window=(-0.5, 1), edges=N
     else:
         return edges, M
 
-def psth2(event1, event2, window=(-1, 1), binsize=None, returnTimestamps=False):
+def psth2(event1, event2, window=(-1, 1), binsize=None, returnTimestamps=False, returnShape=False):
     """
     """
 
@@ -194,6 +194,10 @@ def psth2(event1, event2, window=(-1, 1), binsize=None, returnTimestamps=False):
         nBins = int(round(windowLength / binsize))
         binEdges = np.linspace(start, stop, nBins + 1)
         t = binEdges[:-1] + binsize / 2
+
+    #
+    if returnShape:
+        return t, event1.size, nBins
 
     #
     M = np.full([event1.size, nBins], np.nan)

@@ -3,6 +3,7 @@ from scipy.signal import find_peaks
 from joblib import Parallel, delayed
 from myphdlib.general.toolkit import psth2, smooth
 from decimal import Decimal
+import h5py
 
 # TODO
 # [X] If standardizing the response, use a common estimate of mu and sigma
@@ -18,862 +19,770 @@ from decimal import Decimal
 #     - Use the peak latency determined with the ZETA test to identify which bin to look in
 # [ ] Come up with a different way to estimate the baseline saccade-related activity to add to the observed response
 
-def measureVisualOnlyResponse(
-    unit,
-    probeMotion=-1,
-    responseWindow=(0, 0.3),
-    baselineWindow=(-3, -1),
-    perisaccadicWindow=(-0.05, 0.1),
-    perisaccadicTrialIndices=None,
-    excludePerisaccadicTrials=True,
-    binsize=0.01,
-    fictiveSaccadesProtocol=False
-    ):
+
+
+class ModulationAnalysisMixin():
     """
-    Measure the visual-only response
     """
 
-    # Determine the extra-saccadic trial indices
-    if perisaccadicTrialIndices is None:
-        trialIndices = np.where(unit.session.filterProbes(
-            trialType='es',
-            perisaccadicWindow=perisaccadicWindow,
-            probeDirections=(probeMotion,),
-        ))[0]
+    def _measureVisualOnlyResponse(
+        self,
+        unit,
+        probeMotion=-1,
+        responseWindow=(0, 0.3),
+        baselineWindow=(-0.25, 0),
+        perisaccadicWindow=(-0.05, 0.1),
+        binsize=0.01,
+        trialIndicesPerisaccadic=None,
+        trialIndicesExtrasaccadic=None,
+        ):
+        """
+        Measure the visual-only response
+        """
 
-    # Determine the extra-saccadic trial indices (based on the peri-saccadic trial indices)
-    else:
+        # Determine the extra-saccadic trial indices
+        if trialIndicesExtrasaccadic is None:
+            trialIndices = np.where(self.parseEvents(
+                eventName='probe',
+                coincident=False,
+                eventDirection=probeMotion,
+                coincidenceWindow=perisaccadicWindow,
+            ))[0]
+        else:
+            trialIndices = trialIndicesExtrasaccadic
 
-        # Gather all trial indices, unsorted
-        trialIndicesUnsorted = np.where(unit.session.filterProbes(
-            trialType=None,
-            probeDirections=(probeMotion,),
-            perisaccadicWindow=perisaccadicWindow
-        ))[0]
-
-        # Filter out the peri-saccadic trials
-        trialIndices = list()
-        for iTrial in trialIndicesUnsorted:
-
-            # User-defined peri-saccadic trial indices
-            if iTrial in perisaccadicTrialIndices:
-                continue
-
-            # Ground truth peri-saccadic trial indices (optional)
-            if excludePerisaccadicTrials:
-                probeLatency = unit.session.probeLatencies[iTrial]
-                if probeLatency >= perisaccadicWindow[0] and probeLatency <= perisaccadicWindow[1]:
-                    continue
-
-            #
-            trialIndices.append(iTrial)
         #
-        trialIndices = np.array(trialIndices)
-
-    #
-    if binsize is None:
-        dt = np.diff(responseWindow).item()
-    else:
-        dt = binsize
-    t, M = psth2(
-        unit.session.probeTimestamps[trialIndices],
-        unit.timestamps,
-        window=responseWindow,
-        binsize=binsize
-    )  
-    fr = M / dt
-
-    #
-    mu, sigma = unit.describe3(
-        unit.session.probeTimestamps[trialIndices],
-        baselineWindow=baselineWindow,
-        binsize=binsize
-    )
-
-    return t, fr, mu, sigma
-
-def measurePerisaccadicVisualResponse(
-    unit,
-    probeMotion=-1,
-    responseWindow=(0, 0.3),
-    baselineWindow=(-3, -1),
-    perisaccadicWindow=(-0.05, 0.1),
-    perisaccadicTrialIndices=None,
-    binsize=0.01,
-    ):
-    """
-    Measure the observed peri-saccadic response
-    """
-
-    #
-    if perisaccadicTrialIndices is None:
-        trialIndices = np.where(unit.session.filterProbes(
-            trialType='ps',
-            probeDirections=(probeMotion,),
-            perisaccadicWindow=perisaccadicWindow
-        ))[0]
-    else:
-        trialIndices = perisaccadicTrialIndices
-
-    #
-    if binsize is None:
-        dt = np.diff(responseWindow).item()
-    else:
-        dt = binsize
-
-    #
-    t, M = psth2(
-        unit.session.probeTimestamps[trialIndices],
-        unit.timestamps,
-        window=responseWindow,
-        binsize=binsize
-    )
-    fr = M / dt
-
-    #
-    mu, sigma = unit.describe3(
-        unit.session.probeTimestamps[trialIndices],
-        baselineWindow=baselineWindow,
-        binsize=binsize
-    )
-
-    return t, fr, mu, sigma
-
-def estimateSaccadeRelatedActivity(
-    unit,
-    probeMotion=-1,
-    responseWindow=(0, 0.3),
-    baselineWindow=(-3, -1),
-    perisaccadicWindow=(-0.05, 0.1),
-    perisaccadicTrialIndices=None,
-    binsize=0.01,
-    ):
-    """
-    Estimate the activity attributable to saccades in the peri-saccadic window
-    """
-
-    #
-    if perisaccadicTrialIndices is None:
-        trialIndices = np.where(unit.session.filterProbes(
-            trialType='ps',
-            probeDirections=(probeMotion,),
-        ))[0]
-    else:
-        trialIndices = perisaccadicTrialIndices
-
-    # Estimate the baseline level of activity prior to saccades
-    saccadeIndices = np.where(unit.session.gratingMotionDuringSaccades == probeMotion)[0]
-
-    #
-    fr = list()
-    if binsize is None:
-        dt = np.diff(responseWindow).item()
-    else:
-        dt = binsize
-    for probeLatency in unit.session.probeLatencies[trialIndices]:
-
-        # Shift the saccade psth by the latency from the saccade to the probe
+        if binsize is None:
+            dt = np.diff(responseWindow).item()
+        else:
+            dt = binsize
         t, M = psth2(
-            unit.session.saccadeTimestamps[saccadeIndices] + probeLatency,
+            self.probeTimestamps[trialIndices],
+            unit.timestamps,
+            window=responseWindow,
+            binsize=binsize
+        )  
+        fr = M / dt
+
+        t_, M = psth2(
+            self.probeTimestamps[trialIndices],
+            unit.timestamps,
+            window=baselineWindow,
+            binsize=None
+        )
+        bl = np.mean(M.flatten()) / np.diff(baselineWindow).item()
+
+        return t, fr, bl
+
+    def _measurePerisaccadicVisualResponse(
+        self,
+        unit,
+        probeMotion=-1,
+        responseWindow=(0, 0.3),
+        baselineWindow=(-0.025, 0),
+        perisaccadicWindow=(-0.05, 0.1),
+        binsize=0.01,
+        trialIndicesPerisaccadic=None,
+        trialIndicesExtrasaccadic=None,
+        ):
+        """
+        Measure the observed peri-saccadic response
+        """
+
+        tBins, nTrials, nBins = psth2(
+            np.array([0]),
+            np.array([0]),
+            window=responseWindow,
+            binsize=binsize,
+            returnShape=True
+        )
+
+        #
+        if trialIndicesPerisaccadic is None:
+            trialIndices = np.where(self.parseEvents(
+                eventName='probe',
+                coincident=True,
+                eventDirection=probeMotion,
+                coincidenceWindow=perisaccadicWindow,
+            ))[0]
+        else:
+            trialIndices = trialIndicesPerisaccadic
+
+        # Return NaN if trial count is 0
+        if trialIndices.size == 0:
+            return tBins, np.full([1, nBins], np.nan), np.nan
+
+        #
+        if binsize is None:
+            dt = np.diff(responseWindow).item()
+        else:
+            dt = binsize
+
+        #
+        t, M = psth2(
+            self.probeTimestamps[trialIndices],
             unit.timestamps,
             window=responseWindow,
             binsize=binsize
         )
-        fr_ = M.mean(0) / dt
-        fr.append(fr_)
-
-    #
-    fr = np.array(fr)
-
-    #
-    mu, sigma = unit.describe3(
-        unit.session.saccadeTimestamps[saccadeIndices],
-        baselineWindow=baselineWindow,
-        binsize=binsize
-    )
-
-    return t, fr, mu, sigma
-
-def computeFictiveSaccadeResponses(
-    unit,
-    probeMotion=-1,
-    responseWindow=(0, 0.3),
-    responseWindowSize=0.3,
-    baselineWindow=(-3, -1),
-    perisaccadicWindow=(-0.05, 0.1),
-    binsize=0.01,
-    priorParameterEstimates=None,
-    sigma=1
-    ):
-    """
-    """
-
-    # TODO: Implement a property that loads and stores these data
-    probeTimestamps = unit.session.load('stimuli/fs/probe/timestamps')
-    gratingMotionDuringProbes = unit.session.load('stimuli/fs/probe/motion')
-    saccadeTimestamps = unit.session.load('stimuli/fs/saccade/timestamps')
-    gratingMotionDuringSaccades = unit.session.load('stimuli/fs/saccade/motion')
-
-    #
-    if binsize is None:
-        dt = np.diff(responseWindow).item()
-    else:
-        dt = binsize
-
-    # Parse probes
-    probeIndices, probeLatencies = dict(ps=list(), es=list()), list()
-    for trialIndex, probeTimestamp in enumerate(probeTimestamps):
-        if gratingMotionDuringProbes[trialIndex] != probeMotion:
-            continue
-        saccadeTimestampsRelative = probeTimestamp - saccadeTimestamps
-        closestSaccadeIndex = np.argmin(np.abs(saccadeTimestampsRelative))
-        probeLatency = probeTimestamp - saccadeTimestamps[closestSaccadeIndex]
-        probeLatencies.append(probeLatency)
-        if probeLatency >= perisaccadicWindow[0] and probeLatency <= perisaccadicWindow[1]:
-            probeIndices['ps'].append(trialIndex)
-        else:
-            probeIndices['es'].append(trialIndex)
-
-    # Parse saccades
-    saccadeIndices, saccadeLatencies = dict(ps=list(), es=list()), list()
-    for trialIndex, saccadeTimestamp in enumerate(saccadeTimestamps):
-        if gratingMotionDuringSaccades[trialIndex] != probeMotion:
-            continue
-        probeTimestampsRelative = saccadeTimestamp - probeTimestamps
-        closestProbeIndex = np.argmin(np.abs(probeTimestampsRelative))
-        saccadeLatency = saccadeTimestamp - probeTimestamps[closestProbeIndex]
-        saccadeLatencies.append(saccadeLatency)
-        if saccadeLatency >= perisaccadicWindow[0] and saccadeLatency <= perisaccadicWindow[1]:
-            saccadeIndices['ps'].append(trialIndex)
-        else:
-            saccadeIndices['es'].append(trialIndex)
-
-    # === Measure visual-only response ===
-
-    mu, sigma_ = unit.describe3(
-        probeTimestamps[probeIndices['es']],
-        baselineWindow=baselineWindow,
-        binsize=binsize
-    )
-
-    t, M = psth2(
-        probeTimestamps[probeIndices['es']],
-        unit.timestamps,
-        window=responseWindow,
-        binsize=binsize
-    )  
-    fr = M / dt
-    rProbe = np.mean((fr - mu) / sigma, axis=0)
-
-    # === Measure peri-saccadic response ===
-
-    mu, sigma_ = unit.describe3(
-        probeTimestamps[probeIndices['ps']],
-        baselineWindow=baselineWindow,
-        binsize=binsize
-    )
-
-    t_, M = psth2(
-        probeTimestamps[probeIndices['ps']],
-        unit.timestamps,
-        window=responseWindow,
-        binsize=binsize
-    )
-    fr = M / dt
-    rMixed = np.mean((fr - mu) / sigma, axis=0)
-
-    # === Compute saccade-related activity ===
-    mu, sigma_ = unit.describe3(
-        saccadeTimestamps[saccadeIndices['es']],
-        baselineWindow=baselineWindow,
-        binsize=binsize
-    )
-
-    rSaccade = list()
-    for saccadeLatency in saccadeLatencies:
-        t_, M = psth2(
-            saccadeTimestamps[saccadeIndices['es']],
-            unit.timestamps,
-            window=np.array(responseWindow) + saccadeLatency,
-            binsize=binsize
-        )
-        fr = M.mean(0) / dt
-        z = (fr - mu) / sigma
-        rSaccade.append(z)
-    rSaccade = np.mean(np.array(rSaccade), axis=0)
-
-    # === Compute baseline activity prior to saccades ===
-
-    rControl = 0
-
-    return t, (rProbe, rMixed, rSaccade, rControl), sigma
-
-def computeModulationIndices(
-    unit,
-    probeMotion=-1,
-    responseWindowSize=0.05,
-    baselineWindowEdge=-5,
-    baselineWindowSize=3,
-    responseLatencyOffset=0.0,
-    standardize=True,
-    perisaccadicWindow=(-0.05, 0.1),
-    perisaccadicTrialIndices=None,
-    binsize=None,
-    priorParameterEstimates=None,
-    analyzeFictiveSaccades=False
-    ):
-    """
-    """
-
-    # Define the center of the visual response window
-    if probeMotion == -1:
-        peakResponseLatency = unit.visualResponseLatency.left + responseLatencyOffset
-    else:
-        peakResponseLatency = unit.visualResponseLatency.right + responseLatencyOffset
-    
-    # Define the edges of the visual response window
-    windowHalfWidth = round(responseWindowSize / 2, 2)
-    responseWindow = np.around(np.array([
-        peakResponseLatency - windowHalfWidth,
-        peakResponseLatency + windowHalfWidth
-    ]), 2)
-
-    # Define the baseline response window
-    baselineWindow = np.around(np.array([
-        baselineWindowEdge,
-        baselineWindowEdge + baselineWindowSize,
-    ]), 2)
-
-    # Keywords arguments for the response functions
-    kwargs = {
-        'probeMotion': probeMotion,
-        'responseWindow': responseWindow,
-        'baselineWindow': baselineWindow,
-        'perisaccadicWindow': perisaccadicWindow,
-        'perisaccadicTrialIndices': perisaccadicTrialIndices,
-        'binsize': binsize
-    }
-
-    # Estimate variability of FR prior to the stimulus
-    trialIndices = np.where(unit.session.filterProbes(
-        trialType='es',
-        probeDirections=(probeMotion,)
-    ))[0]
-
-    # Use the response window size as the binsize for estimating baseline variability
-    if binsize is None:
-        binsize_ = responseWindowSize
-    else:
-        binsize_ = binsize
-
-    #
-    t = None
-
-    #
-    if priorParameterEstimates is not None and 'sigma' in priorParameterEstimates.keys():
-        sigma = priorParameterEstimates['sigma']
-    else:
-        mu, sigma = unit.describe2(
-            unit.session.probeTimestamps[trialIndices],
-            baselineWindowBoundaries=baselineWindow,
-            binsize=binsize_
-        )
-    if sigma == 0:
-        raise Exception(f'Standard deviation could not be estimated')
-
-    # Run analysis on fictive saccades
-    if analyzeFictiveSaccades:
-        t, rs, sigma = computeFictiveSaccadeResponses(
-            unit=unit,
-            probeMotion=probeMotion,
-            responseWindow=responseWindow,
-            responseWindowSize=responseWindowSize,
-            baselineWindow=baselineWindow,
-            perisaccadicWindow=perisaccadicWindow,
-            binsize=binsize,
-            priorParameterEstimates=priorParameterEstimates,
-            sigma=sigma
-        )
-        rProbe, rMixed, rSaccade, rControl = rs
-
-    # Run analysis on actual saccades
-    else:
-
-        # Observed extra-saccadic responses
-        if priorParameterEstimates is not None and 'rProbe' in priorParameterEstimates.keys():
-            rProbe = np.atleast_1d(priorParameterEstimates['rProbe'])
-        else:
-            t_, mProbe, mu, sigma_ = measureVisualOnlyResponse(
-                unit,
-                **kwargs
-            )
-            rProbe = mProbe.mean(0)
-            if standardize:
-                rProbe = np.around((rProbe - mu) / sigma, 3)
-            t = np.copy(t_)
-
-        # Observed peri-saccadic responses
-        if priorParameterEstimates is not None and 'rMixed' in priorParameterEstimates.keys():
-            rMixed = np.atleast_1d(priorParameterEstimates['rMixed'])
-        else:
-            t_, mMixed, mu, sigma_ = measurePerisaccadicVisualResponse(
-                unit,
-                **kwargs
-            )
-            rMixed = mMixed.mean(0)
-            if standardize:
-                rMixed = np.around((rMixed - mu) / sigma, 3)
-
-        # Predicted saccade-related activity
-        if priorParameterEstimates is not None and 'rSaccade' in priorParameterEstimates.keys():
-            rSaccade = np.atleast_1d(priorParameterEstimates['rSaccade'])
-        else:
-            t_, mSaccade, mu, sigma_ = estimateSaccadeRelatedActivity(
-                unit,
-                **kwargs
-            )
-            rSaccade = mSaccade.mean(0)
-            if standardize:
-                rSaccade = np.around((rSaccade - mu) / sigma, 3)
+        fr = M / dt
 
         #
-        if priorParameterEstimates is not None and 'rControl' in priorParameterEstimates.keys():
-            rControl = np.atleast_1d(priorParameterEstimates['rControl'])
+        t_, M = psth2(
+            self.probeTimestamps[trialIndices],
+            unit.timestamps,
+            window=baselineWindow,
+            binsize=None
+        )
+        bl = np.mean(M.flatten()) / np.diff(baselineWindow).item()
+
+        return t, fr, bl
+
+    def _estimateSaccadeRelatedActivityWithInterpolation(
+        self,
+        unit,
+        probeMotion=-1,
+        responseWindow=(0, 0.3),
+        baselineWindow=(-1, -0.8),
+        perisaccadicWindow=(-0.05, 0.1),
+        binsize=0.01,
+        trialIndicesPerisaccadic=None,
+        trialIndicesExtrasaccadic=None,
+        ):
+        """
+        """
+
+        #
+        if trialIndicesPerisaccadic is None:
+            trialIndices = np.where(self.parseEvents(
+                eventName='probe',
+                coincident=True,
+                eventDirection=probeMotion,
+                coincidenceWindow=perisaccadicWindow,
+            ))[0]
         else:
-            t_, mControl, mu, sigma_ = estimateSaccadeRelatedActivity(
-                unit,
-                probeMotion=probeMotion,
-                responseWindow=np.around([
-                    baselineWindowEdge - responseWindowSize,
-                    baselineWindowEdge
-                ], 2),
-                baselineWindow=baselineWindow,
+            trialIndices = trialIndicesPerisaccadic
+
+        #
+        fr = list()
+        bl = list()
+        if binsize is None:
+            dt = np.diff(responseWindow).item()
+        else:
+            dt = binsize
+
+        # Mask that filers out saccades with a coincident probe
+        extrastimulusMask = self.parseEvents(
+            eventName='saccade',
+            coincident=False,
+            eventDirection=None,
+            coincidenceWindow=-1 * np.array(perisaccadicWindow),
+        )
+
+        # Compute PETH templates
+        templates = {
+            (-1, -1): None,
+            (-1, +1): None,
+            (+1, -1): None,
+            (+1, +1): None,
+        }
+        for saccadeLabel, probeMotion_ in templates.keys():
+            saccadeIndices = np.where(
+                np.vstack([
+                    extrastimulusMask,
+                    self.saccadeLabels == saccadeLabel,
+                    self.gratingMotionDuringSaccades == probeMotion_
+                ]).all(0)
+            )[0]
+            t, M = psth2(
+                self.saccadeTimestamps[saccadeIndices, 0],
+                unit.timestamps,
+                window=responseWindow,
                 binsize=binsize
             )
-            rControl = round(mControl.mean(0).mean(), 3)
-            if standardize:
-                rControl = round((rControl - mu) / sigma, 3)
+            fr_ = M.mean(0) / dt
+            templates[(saccadeLabel, probeMotion_)] = fr_
 
-    #
-    rExpected = np.around(rProbe + rSaccade, 2)
-    rObserved = np.around(rMixed + rControl, 2)
-
-    #
-    if rObserved.sum() < 0 and rExpected.sum() < 0:
-        rOffset = 0
-        rSign = -1
-    elif rObserved.sum() < 0 and rExpected.sum() > 0: 
-        rOffset = abs(rObserved.sum())
-        rSign = +1
-    elif rObserved.sum() > 0 and rExpected.sum() < 0:
-        rSign = +1
-        rOffset = abs(rExpected.sum())
-    else:
-        rSign = +1
-        rOffset = 0
-    
-    #
-    rDifference = (rObserved.sum() + rOffset) - (rExpected.sum() + rOffset)
-    rSum = (rObserved.sum() + rOffset) + (rExpected.sum() + rOffset) 
-    mi = np.around(rDifference / rSum * rSign, 3)
-    
-    #
-    dr = np.around(rObserved - rExpected, 3)
-
-    # Flatten all of the metrics and responses
-    if binsize == None:
-        if t is not None: t = round(t.item(), 2)
-        dr = dr.item()
-        rExpected = rExpected.item()
-        rObserved = rObserved.item()
-        rProbe = rProbe.item()
-        rMixed = rMixed.item()
-        rSaccade = rSaccade.item()
-
-    return t, (rObserved, rExpected, rProbe, rMixed, rSaccade, rControl), mi, dr, sigma
-
-def estimateNullDistributions(
-    unit,
-    probeMotion=-1,
-    nRuns=100,
-    priorParameterEstimates=None,
-    **kwargs
-    ):
-    """
-    Estimate the spread of the modulation indices by re-sampling extra-saccadic trials,
-    recomputing the visual-only response, and plugging that back into the MI formula
-    """
-
-    # Get the indices for extra-saccadic trials
-    trialIndicesExtrasaccadic = np.where(unit.session.filterProbes(
-        trialType='es',
-        probeDirections=(probeMotion,)
-    ))[0]
-
-    # Get the indices for peri-saccadic trials
-    trialIndicesPerisaccadic = np.where(unit.session.filterProbes(
-        trialType='ps',
-        probeDirections=(probeMotion,)
-    ))[0]
-
-    # All trial indices
-    trialIndicesUnsorted = np.where(unit.session.filterProbes(
-        trialType=None,
-        probeDirections=(probeMotion,)
-    ))[0]
-
-    # Number of trials to resample
-    nTrialsPerisaccadic = trialIndicesPerisaccadic.size
-
-    # Remove the visual-only response estimate so that it will be re-computed
-    if 'rProbe' in priorParameterEstimates.keys():
-        rProbe = priorParameterEstimates.pop('rProbe')
-
-    # For each run select a set of random extra-saccadic trials and compute the MI
-    samples = list()
-    for iRun in range(nRuns):
-
-        # Resample extra-saccadic trials
-        trialIndicesExtrasaccadicResampled = np.random.choice(
-            trialIndicesExtrasaccadic,
-            size=nTrialsPerisaccadic,
-            replace=False
+        #
+        tBins, nTrials, nBins = psth2(
+            np.array([0]),
+            np.array([0]),
+            window=responseWindow,
+            binsize=binsize,
+            returnShape=True
         )
 
-        # Classify all other trials as peri-saccadic (for computing resampled visual-only response)
-        trialIndicesPerisaccadicResampled = list()
-        for iTrial in trialIndicesUnsorted:
-            if iTrial in trialIndicesExtrasaccadicResampled:
-                continue
-            trialIndicesPerisaccadicResampled.append(iTrial)
-        trialIndicesPerisaccadicResampled = np.array(trialIndicesPerisaccadicResampled)
-    
-        # Estimate saccadic modulation
-        t, rs, mi, dv, sd = computeModulationIndices(
-            unit,
-            probeMotion,
-            perisaccadicTrialIndices=trialIndicesPerisaccadicResampled,
-            priorParameterEstimates=priorParameterEstimates,
-            **kwargs
+       # Iterate over the peri-saccadic trials
+        saccadeLabelsProximate = self.load('stimuli/dg/probe/dos')
+        for probeLatency, saccadeLabel in zip(self.probeLatencies[trialIndices], saccadeLabelsProximate[trialIndices]):
+
+            # PETH must satisfy all criteria
+            # - No coincident probe detected
+            # - Same label as the closest (proximate) saccade
+            # - Same motion of the grating during the closest (proximate) saccade
+
+            if binsize is not None:
+                fp = templates[(saccadeLabel, probeMotion)]
+                xp = tBins
+                x = tBins + probeLatency
+                y = np.interp(x, xp, fp)
+                fr.append(y)
+                bl.append(np.nan)
+
+        #
+        fr = np.array(fr)
+        bl = np.array(bl).reshape(-1, 1)
+
+        return t, fr, bl
+
+    def _estimateSaccadeRelatedActivity(
+        self,
+        unit,
+        probeMotion=-1,
+        responseWindow=(0, 0.3),
+        baselineWindow=(-1, -0.8),
+        perisaccadicWindow=(-0.05, 0.1),
+        binsize=0.01,
+        trialIndicesPerisaccadic=None,
+        trialIndicesExtrasaccadic=None,
+        ):
+
+        """
+        Estimate the activity attributable to saccades in the peri-saccadic window
+        """
+
+        #
+        if trialIndicesPerisaccadic is None:
+            trialIndices = np.where(self.parseEvents(
+                eventName='probe',
+                coincident=True,
+                eventDirection=probeMotion,
+                coincidenceWindow=perisaccadicWindow,
+            ))[0]
+        else:
+            trialIndices = trialIndicesPerisaccadic
+
+        #
+        fr = list()
+        bl = list()
+        if binsize is None:
+            dt = np.diff(responseWindow).item()
+        else:
+            dt = binsize
+
+        # Mask that filers out saccades with a coincident probe
+        extrastimulusMask = self.parseEvents(
+            eventName='saccade',
+            coincident=False,
+            eventDirection=None,
+            coincidenceWindow=-1 * np.array(perisaccadicWindow),
         )
 
+        # Iterate over the peri-saccadic trials
+        saccadeLabelsProximate = self.load('stimuli/dg/probe/dos')
+        for probeLatency, saccadeLabel in zip(self.probeLatencies[trialIndices], saccadeLabelsProximate[trialIndices]):
+
+            # PETH must satisfy all criteria
+            # - No coincident probe detected
+            # - Same label as the closest (proximate) saccade
+            # - Same motion of the grating during the closest (proximate) saccade
+
+            saccadeIndices = np.where(
+                np.vstack([
+                    extrastimulusMask,
+                    self.saccadeLabels == saccadeLabel,
+                    self.gratingMotionDuringSaccades == probeMotion
+                ]).all(0)
+            )[0]
+
+            t, M = psth2(
+                self.saccadeTimestamps[saccadeIndices, 0] + probeLatency,
+                unit.timestamps,
+                window=responseWindow,
+                binsize=binsize
+            )
+            fr_ = M.mean(0) / dt
+            fr.append(fr_)
+
+            #
+            t_, M = psth2(
+                self.saccadeTimestamps[saccadeIndices, 0] + probeLatency,
+                unit.timestamps,
+                window=baselineWindow,
+                binsize=None
+            )
+            bl_ = np.mean(M.flatten()) / np.diff(baselineWindow).item()
+            bl.append(bl_)
+
         #
-        samples.append([mi, dv])
+        fr = np.array(fr)
+        bl = np.array(bl).reshape(-1, 1)
 
-    return np.array(samples)
+        return t, fr, bl
 
-def measureSaccadicModulationForSingleUnit(
-    unit,
-    nRuns=100,
-    testNullHypothesis=True,
-    **kwargs,
-    ):
-    """
-    """
-
-    result = {
-        ('left', 'mi', 'x'): None,
-        ('left', 'mi', 'p'): None,
-        ('left', 'dr', 'x'): None,
-        ('left', 'dr', 'p'): None,
-        ('right', 'mi', 'x'): None,
-        ('right', 'mi', 'p'): None,
-        ('right', 'dr', 'x'): None,
-        ('right', 'dr', 'p'): None,
-    }
-    for probeMotion in (-1, 1):
+    def _computeResponseSetForActualSaccades(
+        self,
+        unit,
+        probeMotion=-1,
+        responseWindow=(0, 0.3),
+        baselineWindow=(-0.02, 0),
+        perisaccadicWindow=(-0.05, 0.1),
+        binsize=0.01,
+        priorEstimates=None,
+        trialIndicesPerisaccadic=None,
+        trialIndicesExtrasaccadic=None
+        ):
+        """
+        """
 
         #
-        probeDirection = 'left' if probeMotion == -1 else 'right'
+        if priorEstimates is None:
+            priorEstimates = dict()
+        currentEstimates = dict()
+        currentEstimates.update(priorEstimates)
 
         #
-        t, rs, mi, dr, sd = computeModulationIndices(
-            unit,
-            probeMotion,
-            **kwargs
-        )
-
-        #
-        priorParameterEstimates = {
-            'rProbe': rs[2],
-            'rMixed': rs[3],
-            'rSaccade': rs[4],
-            'rControl': rs[5],
-            'sigma': sd,
+        kwargs = {
+            'unit': unit,
+            'probeMotion': probeMotion,
+            'responseWindow': responseWindow,
+            'baselineWindow': baselineWindow,
+            'perisaccadicWindow': perisaccadicWindow,
+            'binsize': binsize,
+            'trialIndicesPerisaccadic': trialIndicesPerisaccadic,
+            'trialIndicesExtrasaccadic': trialIndicesExtrasaccadic
         }
 
         #
-        result[(probeDirection, 'mi', 'x')] = mi
-        result[(probeDirection, 'dr', 'x')] = dr
+        if 'rProbe' not in currentEstimates.keys():
+            t, fr, bl = self._measureVisualOnlyResponse(**kwargs)
+            currentEstimates['rProbe'] = fr.mean(0) - bl
 
         #
-        if testNullHypothesis:
+        if 'rMixed' not in currentEstimates.keys():
+            t, fr, bl = self._measurePerisaccadicVisualResponse(**kwargs)
+            currentEstimates['rMixed'] = fr.mean(0)
 
-            #
-            samples = estimateNullDistributions(
+        #
+        if 'rSaccade' not in currentEstimates.keys():
+            t, fr, bl = self._estimateSaccadeRelatedActivity(**kwargs)
+            currentEstimates['rSaccade'] = fr.mean(0)
+
+        #
+        if 'rControl' not in currentEstimates.keys():
+            currentEstimates['rControl'] = 0
+
+        #
+        if 'sigma' not in currentEstimates.keys():
+            trialIndices = np.where(self.parseEvents(
+                eventName='probe',
+                coincident=False,
+                eventDirection=probeMotion,
+                coincidenceWindow=perisaccadicWindow,
+            ))[0]
+            mu, sigma = unit.describeWithBootstrap(
+                self.probeTimestamps[trialIndices],
+                baselineWindowBoundaries=baselineWindow,
+                windowSize=np.diff(responseWindow).item()
+            )
+            currentEstimates['sigma'] = sigma
+
+        return (
+            currentEstimates['rProbe'],
+            currentEstimates['rMixed'],
+            currentEstimates['rSaccade'],
+            currentEstimates['rControl'],
+            currentEstimates['sigma']
+        )
+
+    def _computeResponseSetForFictiveSaccades(
+        self,
+        unit,
+        probeMotion=-1,
+        responseWindow=(0, 0.3),
+        baselineWindow=(-0.02, 0),
+        perisaccadicWindow=(-0.05, 0.1),
+        binsize=0.01,
+        priorEstimates=None,
+        trialIndicesPerisaccadic=None,
+        trialIndicesExtrasaccadic=None,
+        ):
+        """
+        """
+
+        # TODO: Implement a property that loads and stores these data
+        probeTimestamps = self.load('stimuli/fs/probe/timestamps')
+        gratingMotionDuringProbes = self.load('stimuli/fs/probe/motion')
+        saccadeTimestamps = self.load('stimuli/fs/saccade/timestamps')
+        gratingMotionDuringSaccades = self.load('stimuli/fs/saccade/motion')
+
+        #
+        if binsize is None:
+            dt = np.diff(responseWindow).item()
+        else:
+            dt = binsize
+
+        # Parse probes
+        probeIndices, probeLatencies = dict(ps=list(), es=list()), list()
+        for trialIndex, probeTimestamp in enumerate(probeTimestamps):
+            if gratingMotionDuringProbes[trialIndex] != probeMotion:
+                continue
+            saccadeTimestampsRelative = probeTimestamp - saccadeTimestamps
+            closestSaccadeIndex = np.argmin(np.abs(saccadeTimestampsRelative))
+            probeLatency = probeTimestamp - saccadeTimestamps[closestSaccadeIndex]
+            probeLatencies.append(probeLatency)
+            if probeLatency >= perisaccadicWindow[0] and probeLatency <= perisaccadicWindow[1]:
+                probeIndices['ps'].append(trialIndex)
+            else:
+                probeIndices['es'].append(trialIndex)
+
+        # Parse saccades
+        saccadeIndices, saccadeLatencies = dict(ps=list(), es=list()), list()
+        for trialIndex, saccadeTimestamp in enumerate(saccadeTimestamps):
+            if gratingMotionDuringSaccades[trialIndex] != probeMotion:
+                continue
+            probeTimestampsRelative = saccadeTimestamp - probeTimestamps
+            closestProbeIndex = np.argmin(np.abs(probeTimestampsRelative))
+            saccadeLatency = saccadeTimestamp - probeTimestamps[closestProbeIndex]
+            saccadeLatencies.append(saccadeLatency)
+            if saccadeLatency >= perisaccadicWindow[0] and saccadeLatency <= perisaccadicWindow[1]:
+                saccadeIndices['ps'].append(trialIndex)
+            else:
+                saccadeIndices['es'].append(trialIndex)
+
+        #
+        if priorEstimates is None:
+            priorEstimates = dict()
+        currentEstimates = dict()
+        currentEstimates.update(priorEstimates)
+
+        # Measure visual-only response
+        if 'rProbe' not in currentEstimates.keys():
+            t, M = psth2(
+                probeTimestamps[probeIndices['es']],
+                unit.timestamps,
+                window=responseWindow,
+                binsize=binsize
+            )  
+            fr = M.mean(0) / dt
+            currentEstimates['rProbe'] = fr
+
+        # Measure peri-saccadic response
+        if 'rMixed' not in currentEstimates.keys():
+            t_, M = psth2(
+                probeTimestamps[probeIndices['ps']],
+                unit.timestamps,
+                window=responseWindow,
+                binsize=binsize
+            )
+            fr = M.mean(0) / dt
+            currentEstimates['rMixed'] = fr
+
+        # Compute saccade-related activity
+        if 'rSaccade' not in currentEstimates.keys():
+            M = list()
+            for saccadeLatency in saccadeLatencies:
+                t_, mi = psth2(
+                    saccadeTimestamps[saccadeIndices['es']],
+                    unit.timestamps,
+                    window=np.array(responseWindow) + saccadeLatency,
+                    binsize=binsize
+                )
+                fr = mi.mean(0) / dt
+                M.append(fr)
+            M = np.array(M)
+            currentEstimates['rSaccade'] = M.mean(0)
+
+        # Compute baseline activity prior to saccades
+        if 'rControl' not in currentEstimates.keys():
+            currentEstimates['rControl'] = 0
+
+        # TODO: Estimate sigma here and add it to the dict
+        # TODO: Unpack the dictionary so that the terms are in the expected order
+
+        return tuple(currentEstimates.values())
+
+    def _measureSaccadicModulationValue(
+        self,
+        unit,
+        probeMotion=-1,
+        responseWindowSize=0.05,
+        baselineWindow=(-0.2, 0),
+        perisaccadicWindow=(-0.05, 0.1),
+        analyzeFictiveSaccades=False,
+        trialIndicesPerisaccadic=None,
+        trialIndicesExtrasaccadic=None,
+        priorEstimates=None,
+        ):
+        """
+        """
+
+        # Define the response window
+        responseWindow = unit.determineResponseWindow(
+            probeMotion=probeMotion,
+            windowSize=responseWindowSize
+        )
+        if np.isnan(responseWindow).all():
+            return np.nan, dict()
+
+        # Collect the response sets
+        if analyzeFictiveSaccades:
+            rProbe, rMixed, rSaccade, rControl = self._computeResponseSetForFictiveSaccades(
+                unit,
+                priorEstimates=priorEstimates
+            )
+        else:
+            rProbe, rMixed, rSaccade, rControl, sigma = self._computeResponseSetForActualSaccades(
+                unit,
+                probeMotion=probeMotion,
+                responseWindow=responseWindow,
+                baselineWindow=baselineWindow,
+                perisaccadicWindow=perisaccadicWindow,
+                binsize=None,
+                priorEstimates=priorEstimates,
+                trialIndicesPerisaccadic=trialIndicesPerisaccadic,
+                trialIndicesExtrasaccadic=trialIndicesExtrasaccadic
+            )
+
+        # Compute the difference between the observed and expected responses and scale
+        rObserved = rMixed
+        rExpected = rProbe + rSaccade
+        rDiff = (rObserved - rExpected) / sigma
+
+        #
+        currentEstimates = {
+            'rProbe': rProbe,
+            'rMixed': rMixed,
+            'rSaccade': rSaccade,
+            'rControl': rControl,
+            'sigma': sigma
+        }
+
+        return round(rDiff.item(), 3), currentEstimates
+
+    def _measureSaccadicModulationLikelihood(
+        self,
+        unit,
+        probeMotion=-1,
+        perisaccadicWindow=(-0.05, 0.1),
+        nRuns=500,
+        priorEstimates=None,
+        ):
+        """
+        """
+
+        #
+        if priorEstimates is None:
+            _, priorEstimates = self._measureSaccadicModulationValue(
+                unit,
+                probeMotion=probeMotion,
+            )
+        if 'rProbe' in priorEstimates.keys():
+            rProbe = priorEstimates.pop('rProbe') # Remove this entry so that it will get re-computed
+
+        #
+        trialIndicesPerisaccadic = np.where(self.parseEvents(
+            eventName='probe',
+            coincident=True,
+            eventDirection=probeMotion,
+            coincidenceWindow=perisaccadicWindow
+        ))[0]
+        trialIndicesExtrasaccadic = np.where(self.parseEvents(
+            eventName='probe',
+            coincident=False,
+            eventDirection=probeMotion,
+            coincidenceWindow=perisaccadicWindow
+        ))[0]
+        nTrialsForResampling = trialIndicesPerisaccadic.size
+
+        #
+        sample = np.full(nRuns, np.nan)
+        for iRun in range(nRuns):
+            trialIndicesExtrasaccadic_ = np.random.choice(
+                trialIndicesExtrasaccadic,
+                replace=False,
+                size=nTrialsForResampling
+            )
+            tv, currentEstimates = self._measureSaccadicModulationValue(
                 unit,
                 probeMotion,
-                nRuns,
-                priorParameterEstimates,
-                **kwargs,
+                trialIndicesExtrasaccadic=trialIndicesExtrasaccadic_,
+                priorEstimates=priorEstimates
             )
+            sample[iRun] = tv
+
+        #
+        if sample.mean() < 0:
+            mask = sample > 0
+        elif sample.mean() >= 0:
+            mask = sample < 0
+        p = mask.sum() / mask.size * 2
+
+        return p, sample
+
+
+    def _measureSaccadicModulation(
+        self,
+        bootstrap=False,
+        nRuns=500,
+        minimumFiringRate=0.5,
+        minimumResponseAmplitude=1,
+        ):
+        """
+        """
+
+        #
+        nUnits = self.population.count()
+        if self.probeTimestamps is None:
+            for probeDirection in ('left', 'right'):
+                for datasetName in ('smv', 'smp'):
+                    self.save(f'population/metrics/{datasetName}/{probeDirection}', np.full(nUnits, np.nan))
+            return
+
+        #
+        for probeMotion, probeDirection in zip([-1, 1], ['left', 'right']):
 
             #
-            for iColumn, (metricKey, x) in enumerate(zip(['mi', 'dr'], [mi, dr])):
-                sample = samples[:, iColumn]
-                if np.isnan(x):
-                    p = np.nan
-                elif x <= 0:
-                    p = np.sum(sample >= 0) / sample.size
-                elif x > 0:
-                    p = np.sum(sample <= 0) / sample.size
-                result[(probeDirection, metricKey, 'p')] = p
+            mvalues = np.full(nUnits, np.nan)
+            pvalues = np.full(nUnits, np.nan)
 
-    return result
+            #
+            for iUnit in range(nUnits):
 
-def measureSaccadicModulation(
-    session,
-    responseWindowSize=0.05,
-    baselineWindowEdge=-5, # This fucked me up so bad ):
-    baselineWindowSize=3,
-    perisaccadicWindow=(-0.05, 0.1),
-    binsize=None,
-    nRunsForBootstrap=1000,
-    testNullHypothesis=True,
-    parallel=False,
-    returnData=False
-    ):
-    """
-    """
+                if iUnit == nUnits - 1:
+                    end = None
+                else:
+                    end = '\r'
+                self.log(f'Measuring saccadic modulation for unit {iUnit + 1} out of {nUnits} (motion={probeMotion})', end=end)
 
-    #
-    kwargs = {
-        'responseWindowSize': responseWindowSize,
-        'baselineWindowEdge': baselineWindowEdge,
-        'baselineWindowSize': baselineWindowSize,
-        'perisaccadicWindow': perisaccadicWindow,
-        'binsize': binsize
-    }
+                unit = self.population[iUnit]
 
-    #
-    session.population.filter(probeMotion=None)
-    nUnitsFiltered = session.population.count(filtered=True)
-    nUnitsUnfiltered = session.population.count(filtered=False)
+                #
+                if unit.timestamps.size / self.tRange[-1] < minimumFiringRate:
+                    continue
 
-    #
-    data = {
-        ('left', 'mi', 'x'): np.full(nUnitsUnfiltered, np.nan),
-        ('left', 'mi', 'p'): np.full(nUnitsUnfiltered, np.nan),
-        ('left', 'dr', 'x'): np.full(nUnitsUnfiltered, np.nan),
-        ('left', 'dr', 'p'): np.full(nUnitsUnfiltered, np.nan),
-        ('right', 'mi', 'x'): np.full(nUnitsUnfiltered, np.nan),
-        ('right', 'mi', 'p'): np.full(nUnitsUnfiltered, np.nan),
-        ('right', 'dr', 'x'): np.full(nUnitsUnfiltered, np.nan),
-        ('right', 'dr', 'p'): np.full(nUnitsUnfiltered, np.nan),
-    }
+                #
+                if unit.visualResponseAmplitude[probeDirection] < minimumResponseAmplitude:
+                    continue
 
-    # Run MI estimation in parallel
-    if parallel:
-        raise Exception('Parallel processing not implemented yet')
+                #
+                m, currentEstimates = self._measureSaccadicModulationValue(
+                    unit,
+                    probeMotion=probeMotion
+                )
+                if np.isnan(m):
+                    continue
+                mvalues[iUnit] = m
 
-    # Run MI estimation in serial
-    else:
-        for iUnit, unit in enumerate(session.population):
-            message = f'Working on unit {iUnit + 1} out of {nUnitsFiltered}'
-            session.log(message, 'info')
-            result = measureSaccadicModulationForSingleUnit(
-                unit,
-                nRuns=nRunsForBootstrap,
-                testNullHypothesis=testNullHypothesis,
-                **kwargs
-            )
-            for k in data.keys():
-                data[k][unit.index] = result[k]
+                #
+                if bootstrap:
+                    p, sample = self._measureSaccadicModulationLikelihood(
+                        unit,
+                        probeMotion=probeMotion,
+                        nRuns=nRuns,
+                        priorEstimates=currentEstimates
+                    )
+                    pvalues[iUnit] = p
 
-    # Save the estimates
-    for (probeDirection, metricName, featureName) in data.keys():
-        session.save(f'population/metrics/{metricName}/{probeDirection}/{featureName}', np.array(data[(probeDirection, metricName, featureName)]))
-    
-    #
-    if returnData:
-        return data
+            #
+            self.save(f'population/metrics/smv/{probeDirection}', mvalues)
+            self.save(f'population/metrics/smp/{probeDirection}', pvalues)
 
-from matplotlib import pylab as plt
+        return
 
 class SaccadicModulationAnalysis():
     """
     """
 
-    def analyzeSaccadicModulationOverTimeForSingleUnit(
+    def measureSaccadicModulation(
         self,
-        unit,
-        plot=True,
-        figsize=(4, 7),
-        **kwargs_
+        table,
+        probeDirection='left',
+        responseWindow=(0, 0.3),
+        baselineWindow=(-0.2, 0),
+        standardize=False,
+        pMax=None,
+        rMin=None,
         ):
         """
         """
 
-        #
-        kwargs = {
-            'responseWindowSizes': (0.05, 1),
-            'centerBinLeftEdge': -0.05,
-            'binWidths': np.full(7, 0.15),
-            'probeMotion': -1,
-        }
-        kwargs.update(kwargs_)
+        # Read the table
+        file = h5py.File(table, 'r')
+
+        # Load datasets
+        rProbe = np.array(file[f'rProbe/{probeDirection}'])
+        rMixed = np.array(file[f'rMixed/{probeDirection}'])
+        rSaccade = np.array(file[f'rSaccade/{probeDirection}'])
+        sigmas = np.array(file[f'sigma/{probeDirection}'])
+        pvalues = np.array(file[f'pZeta/{probeDirection}'])
+        # dates = np.array(file['date'])
+        # clusters = np.array(file['unitNumber'])
 
         #
-        probeDirection = 'left' if kwargs['probeMotion'] == -1 else 'right'
+        tPoints = file[f'rProbe/{probeDirection}'].attrs['t']
+        binEdges = file[f'rMixed/{probeDirection}'].attrs['edges']
+        binCenters = binEdges.mean(1)
 
         #
-        self.data = {
-            't': None,
-            'mi': list(),
-            'dr': list(),
-            'ro': list(),
-            're': list(),
-            'ep': None
-        }
-
-        # Determine the bin edges
-        nBins = len(kwargs['binWidths'])
-        leftEdges = np.cumsum(kwargs['binWidths']) - kwargs['binWidths'][0]
-        centerBinIndex = int((nBins - 1) / 2)
-        leftEdges -= (leftEdges[centerBinIndex] - kwargs['centerBinLeftEdge'])
-        rightEdges = leftEdges + kwargs['binWidths']
-        epochs = np.transpose(np.vstack([leftEdges, rightEdges]))[::-1]
-        self.data['ep'] = epochs
-        self.data['t'] = np.mean(epochs, 1)
+        nBins = rMixed.shape[1]
+        nUnits = rProbe.shape[0]
+        data = np.full([nUnits, nBins], np.nan)
 
         #
-        if plot:
-            fig, axs = plt.subplots(nrows=nBins + 1, sharex=True, sharey=True)
-            fig.set_figwidth(figsize[0])
-            fig.set_figheight(figsize[1])
-
-        #
-        for iBin, epoch in enumerate(epochs):
+        for iUnit in range(nUnits):
 
             #
-            trialIndices = np.where(np.vstack([
-                unit.session.probeLatencies > epoch[0],
-                unit.session.probeLatencies <= epoch[1],
-                unit.session.gratingMotionDuringProbes == kwargs['probeMotion']
-            ]).all(0))[0]
+            if pMax is not None and pvalues[iUnit] > pMax:
+                continue
 
-            #
-            t, rs, mi, dr, sd = computeModulationIndices(
-                unit,
-                kwargs['probeMotion'],
-                kwargs['responseWindowSizes'][1],
-                perisaccadicTrialIndices=trialIndices,
-                binsize=0.02,
+            # Find the maximum of the PETH
+            rProbe_ = rProbe[iUnit]
+            tMask = np.logical_and(
+                tPoints >= responseWindow[0],
+                tPoints <= responseWindow[1]
             )
-            self.data['ro'].append(rs[0])
-            self.data['re'].append(rs[1])
+            tOffset = np.sum(tPoints < responseWindow[0])
+            tMax = tPoints[np.argmax(rProbe_[tMask]) + tOffset]
 
-            #
-            if plot:
-                axs[iBin].plot(t, rs[0], color='k', alpha=0.5)
-                axs[iBin].plot(t, rs[1], color='r', alpha=0.5)
-
-            #
-            t, rs, mi, dr, sd = computeModulationIndices(
-                unit,
-                kwargs['probeMotion'],
-                kwargs['responseWindowSizes'][0],
-                perisaccadicTrialIndices=trialIndices,
-                binsize=None
+            # Get the baseline FR for the visual-only PETH
+            tMask = np.logical_and(
+                tPoints >= baselineWindow[0],
+                tPoints <= baselineWindow[1]
             )
-            self.data['mi'].append(mi)
-            self.data['dr'].append(dr)
+            rBaseline = rProbe_[tMask].mean()
 
             #
-            if plot:
-                xl = axs[iBin].get_xlim()
-                y1, y2 = axs[iBin].get_ylim()
-                axs[iBin].text(np.mean(xl), y2 * 0.8, f'dr={dr:.2f}')
+            if rMin is not None and np.interp(tMax, tPoints, rProbe_ - rBaseline) < rMin:
+                continue
+
+            #
+            for iBin in range(nBins):
+
+                # Compute the difference between the expected and observed responses
+                rObserved = np.interp(tMax, tPoints, rMixed[iUnit][iBin])
+                rExpected = np.interp(
+                    tMax,
+                    tPoints,
+                    rSaccade[iUnit][iBin] + (rProbe_ - rBaseline)
+                )
+                if standardize:
+                    factor = sigmas[iUnit]
+                    if factor == 0:
+                        continue
+                    dR = (rObserved - rExpected) / factor
+                else:
+                    dR = (rObserved - rExpected)
+                data[iUnit, iBin] = dR
+
+        # Close the opened file
+        file.close()
 
         #
-        trialIndices = np.where(np.vstack([
-            np.logical_or(
-                unit.session.probeLatencies > epochs.max(),
-                unit.session.probeLatencies <= epochs.min(),
-            ),
-            unit.session.gratingMotionDuringProbes == kwargs['probeMotion']
-        ]).all(0))[0]
-
-        #
-        t, rs, mi, dr, sd = computeModulationIndices(
-            unit,
-            kwargs['probeMotion'],
-            kwargs['responseWindowSizes'][1],
-            perisaccadicTrialIndices=trialIndices,
-            binsize=0.02,
+        data = np.delete(
+            data,
+            np.isnan(data).all(axis=1),
+            axis=0
         )
-        self.data['ro'].append(rs[0])
-        self.data['re'].append(rs[1])
 
-        #
-        if plot:
-            axs[-1].plot(t, rs[0], color='k', alpha=0.5)
-            axs[-1].plot(t, rs[1], color='b', alpha=0.5)
-
-        #
-        if plot:
-
-            #
-            axs[-1].set_xlabel('Time from probe (sec)')
-            axs[-1].set_ylabel('FR (standardized)')
-            fig.tight_layout()
-
-            #
-            yl = axs[-1].get_ylim()
-            x1 = unit.visualResponseLatency[probeDirection] - (kwargs['responseWindowSizes'][0] / 2)
-            x2 = unit.visualResponseLatency[probeDirection] + (kwargs['responseWindowSizes'][0] / 2)
-            for iBin in np.arange(nBins):
-
-                #
-                axs[iBin].fill_between([x1, x2], *yl, color='y', alpha=0.1)
-                x3 = -1 * epochs[iBin][0]
-                x4 = -1 * epochs[iBin][1]
-                axs[iBin].fill_between([x3, x4], *yl, color='k', alpha=0.1)
-                axs[iBin].vlines(0, *yl, color='k')
-
-            #
-            axs[-1].vlines(0, *yl, color='k')
-
-        #
-        self.data['ro'] = np.array(self.data['ro'])
-        self.data['re'] = np.array(self.data['re'])
-
-        if plot:
-            fig.tight_layout()
-            return fig
-
-    def analyzeSaccadicModulationOverTimeAcrossUnits(
-        self,
-        session,
-        ):
-        """
-        """
-
-        curves = {
-            'observed': list(),
-            'expected': list()
-        }
-        session.population.filter()
-        for unit in session.population:
-            self.analyzeSaccadicModulationOverTimeForSingleUnit(
-                unit,
-                plot=False
-            )
-            curves['observed'].append(self.data['ro'])
-            curves['expected'].append(self.data['re'])
-
-        #
-        curves['observed'] = np.array(curves['observed'])
-        curves['expected'] = np.array(curves['expected'])
-
-        return curves
+        return binCenters, data

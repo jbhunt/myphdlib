@@ -352,29 +352,20 @@ class EventsProcessingMixin(object):
 
         return
 
-    def _findDroppedFrames2(self):
-        """
-        """
-
-        for eye in ('left', 'right'):
-
-            #
-            file = self.leftCameraTimestamps if eye == 'left' else self.rightCameraTimestamps
-            if file is None:
-                self.log(f'Could not find the timestamps for the {eye} camera video', level='warning')
-                continue
-            ifi = np.loadtxt(file, dtype=np.int64) / 1000000000 # in ms
-            mfi = np.median(ifi)
-            fpi = np.around(ifi / mfi, 0)
-            nFramesDropped = np.sum(fpi - 1)      
-
-        return
-
     def _findDroppedFrames(self, pad=1000000):
         """
         """
 
         self.log('Finding dropped frames')
+
+        #
+        if self.primaryCamera == 'left':
+            frameIntervals = np.loadtxt(self.leftCameraTimestamps, dtype=np.int64)
+        elif self.primaryCamera == 'right':
+            frameIntervals = np.loadtxt(self.rightCameraTimestamps, dtype=np.int64)
+        else:
+            raise Exception('Could not determine the primary camera')
+        factor = np.median(frameIntervals)
 
         #
         for eye in ('left', 'right'):
@@ -384,8 +375,7 @@ class EventsProcessingMixin(object):
             if file is None:
                 self.log(f'Could not find the timestamps for the {eye} camera video', level='warning')
                 continue
-            observedFrameIntervals = np.loadtxt(file, dtype=np.int64) / 1000000 # in ms
-            medianFrameInterval = np.median(observedFrameIntervals)
+            observedFrameIntervals = np.loadtxt(file, dtype=np.int64) # in ms
             droppedFrames = np.full(observedFrameIntervals.size + 1 + pad, -1.0).astype(float)
             frameIntervals = np.full(observedFrameIntervals.size + 1 + pad, -1.0).astype(float)
 
@@ -395,12 +385,12 @@ class EventsProcessingMixin(object):
 
             #
             for frameInterval in observedFrameIntervals:
-                nFrames = int(round(frameInterval / medianFrameInterval, 0))
+                nFrames = int(round(frameInterval / factor, 0))
                 if nFrames > 1:
                     nDropped += nFrames - 1
                     for iFrame in range(nFrames - 1):
                         droppedFrames[frameIndex] = 1
-                        frameIntervals[frameIndex] = medianFrameInterval
+                        frameIntervals[frameIndex] = factor
                         frameIndex += 1
                 droppedFrames[frameIndex] = 0
                 frameIntervals[frameIndex] = frameInterval
@@ -521,9 +511,9 @@ class EventsProcessingMixin(object):
         nSaccades = self.saccadeTimestamps.shape[0]
         data = {
             'tts': np.full(nProbes, np.nan).astype(np.float), # Time to saccade
-            'dos': np.full(nProbes, np.nan).astype(np.int), # Direction of saccade
+            'dos': np.full(nProbes, np.nan).astype(np.float), # Direction of saccade
             'ttp': np.full(nSaccades, np.nan).astype(np.float), # Time to probe
-            'dop': np.full(nSaccades, np.nan).astype(np.int), # direction of probe
+            'dop': np.full(nSaccades, np.nan).astype(np.float), # direction of probe
         }
 
         #
@@ -531,7 +521,7 @@ class EventsProcessingMixin(object):
             if np.isnan(probeTimestamp):
                 continue
             saccadeTimestampsRelative = self.saccadeTimestamps[:, 0] - probeTimestamp
-            saccadeIndex = np.argmin(np.abs(saccadeTimestampsRelative))
+            saccadeIndex = np.nanargmin(np.abs(saccadeTimestampsRelative))
             saccadeLabel = self.saccadeLabels[saccadeIndex]
             probeLatency = round(probeTimestamp - self.saccadeTimestamps[:, 0][saccadeIndex], 3)
             data['dos'][trialIndex] = saccadeLabel
@@ -539,10 +529,14 @@ class EventsProcessingMixin(object):
 
         #
         for trialIndex, saccadeTimestamp in enumerate(self.saccadeTimestamps[:, 0]):
-            probeTimestampsRelative = self.probeTimestamps - saccadeTimestamp
-            probeIndex = np.nanargmin(np.abs(probeTimestampsRelative))
-            probeDirection = self.gratingMotionDuringProbes[probeIndex]
-            saccadeLatency = round(saccadeTimestamp - self.probeTimestamps[probeIndex], 3)
+            if np.isnan(saccadeTimestamp):
+                saccadeLatency = np.nan
+                probeDirection = np.nan
+            else:
+                probeTimestampsRelative = self.probeTimestamps - saccadeTimestamp
+                probeIndex = np.nanargmin(np.abs(probeTimestampsRelative))
+                probeDirection = self.gratingMotionDuringProbes[probeIndex]
+                saccadeLatency = round(saccadeTimestamp - self.probeTimestamps[probeIndex], 3)
             data['ttp'][trialIndex] = saccadeLatency
             data['dop'][trialIndex] = probeDirection
 

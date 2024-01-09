@@ -171,7 +171,7 @@ class SessionBase():
                 line = f'{key_}: {value_}\n'
                 stream.write(line)
     
-    def load(self, path):
+    def load(self, path, returnMetadata=False):
         """
         """
 
@@ -183,15 +183,21 @@ class SessionBase():
             try:
                 obj = file[path]
                 if type(obj) == h5py.Dataset:
-                    return np.array(obj)
+                    if returnMetadata:
+                        return np.array(obj), dict(obj.attrs)
+                    else:
+                        return np.array(obj)
                 elif type(obj) == h5py.Group:
                     return obj
             except KeyError:
                 pass
 
-        return None
+        if returnMetadata:
+            return None, {}
+        else:
+            return None
     
-    def save(self, path, value, overwrite=True):
+    def save(self, path, value, overwrite=True, metadata={}):
         """
         """
 
@@ -209,6 +215,9 @@ class SessionBase():
         
         #
         dataset = file.create_dataset(path, value.shape, value.dtype, data=value)
+        if len(metadata) != 0 and type(metadata) == dict:
+            for k in metadata.keys():
+                dataset.attrs[k] = metadata[k]
 
         #
         file.close()        
@@ -399,13 +408,14 @@ class SessionBase():
             elif self.experiment == 'Dreadds':
                 file = self.folders.ephys.joinpath('continuous', 'Neuropix-PXI-100.0', 'timestamps.npy')
             if file.exists() == False:
-                raise Exception('Could not locate the ephys sample numbers file')
-            sampleNumbers = np.load(str(file), mmap_mode='r')
-            sampleNumbersRange = np.around(
-                np.array([sampleNumbers[0], sampleNumbers[-1]]) - self.referenceSampleNumber,
-                3
-            )
-            self._tRange = sampleNumbersRange / 30000
+                self._tRange = 0, np.inf
+            else:
+                sampleNumbers = np.load(str(file), mmap_mode='r')
+                sampleNumbersRange = np.around(
+                    np.array([sampleNumbers[0], sampleNumbers[-1]]) - self.referenceSampleNumber,
+                    3
+                )
+                self._tRange = sampleNumbersRange / 30000
 
         return self._tRange
     
@@ -667,15 +677,15 @@ class SessionBase():
     @property
     def gratingMotionDuringSaccades(self):
         if self._gratingMotionDuringSaccades is None:
-            if self.hasDataset(f'saccades/predicted/{self.eye}/motion'):
+            if self.hasDataset(f'saccades/predicted/{self.eye}/gmds'):
                 self._gratingMotionDuringSaccades = self.load(f'saccades/predicted/{self.eye}/gmds')
 
         return self._gratingMotionDuringSaccades
 
     def parseEvents(
         self,
-        coincident=False,
         eventName='probe',
+        coincident=False,
         eventDirection=None,
         coincidenceWindow=(-0.05, 0.05),
         ):
@@ -807,3 +817,31 @@ class SessionBase():
             trialMask = np.invert(trialMask)
 
         return trialMask
+
+    @property
+    def primaryCamera(self):
+        """
+        """
+
+        file = None
+        result = list(self.folders.videos.glob('*metadata.yaml'))
+        if len(result) == 1:
+            file = result.pop()
+        if file is None:
+            raise Exception()
+        
+        #
+        with open(file, 'r') as stream:
+            metadata = yaml.full_load(stream)
+        primaryCamera = None
+        for key in metadata.keys():
+            if key.startswith('cam'):
+                if metadata[key]['ismaster'] == True:
+                    nickname = metadata[key]['nickname']
+                    if 'left' in nickname:
+                        primaryCamera = 'left'
+                    elif 'right' in nickname:
+                        primaryCamera = 'right'
+                    break
+
+        return primaryCamera

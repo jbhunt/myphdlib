@@ -76,7 +76,6 @@ class PredictionProcessingMixin(object):
     """
     """
 
-
     def _labelSaccadeWaveforms(self, nSamples=1, overwrite=False):
         """
         Manually score the direction of a subset of putative saccades (nasal/temporal/noise)
@@ -197,7 +196,7 @@ def _trainSaccadeDirectionClassifier(
             continue
         labels = session.load(f'prediction/saccades/direction/y')
         nSamples = labels.shape[0]
-        session.log(f'Collected training data for predicting saccade epochs ({nSamples} samples)')
+        session.log(f'Collected training data for predicting saccade direction ({nSamples} samples)')
         iterable = zip(saccadeWaveformsLabeled, labels)
         for x, label in iterable:
             if np.isnan(x).any():
