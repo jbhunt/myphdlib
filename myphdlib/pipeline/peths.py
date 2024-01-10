@@ -1,7 +1,7 @@
 import numpy as np
 from myphdlib.general.toolkit import psth2
 
-def _getTimeBins(
+def _getPerisaccadicEpochs(
     leftEdge=-0.5,
     rightEdge=0.5,
     binsize=0.1,
@@ -14,56 +14,160 @@ def _getTimeBins(
     binEdges = np.vstack([leftEdges, rightEdges]).T
     return binEdges
 
-def _loadFictiveSaccadesEventData(
+def _loadEventData(
     session,
-    probeMotion=-1,
+    protocol='dg'
     ):
     """
     """
 
-    # Load datasets
-    probeTimestamps = session.load('stimuli/fs/probe/timestamps')
-    gratingMotionDuringProbes = session.load('stimuli/fs/probe/motion')
-    saccadeTimestamps = session.load('stimuli/fs/saccade/timestamps')
-    gratingMotionDuringSaccades = session.load('stimuli/fs/saccade/motion')
-
-    # Parse probes
-    probeLatencies = list()
-    for trialIndex, probeTimestamp in enumerate(probeTimestamps):
-        if gratingMotionDuringProbes[trialIndex] != probeMotion:
-            continue
-        saccadeTimestampsRelative = probeTimestamp - saccadeTimestamps
-        closestSaccadeIndex = np.argmin(np.abs(saccadeTimestampsRelative))
-        probeLatency = probeTimestamp - saccadeTimestamps[closestSaccadeIndex]
-        probeLatencies.append(probeLatency)
-
-    # Parse saccades
-    saccadeLatencies = list()
-    for trialIndex, saccadeTimestamp in enumerate(saccadeTimestamps):
-        if gratingMotionDuringSaccades[trialIndex] != probeMotion:
-            continue
-        probeTimestampsRelative = saccadeTimestamp - probeTimestamps
-        closestProbeIndex = np.argmin(np.abs(probeTimestampsRelative))
-        saccadeLatency = saccadeTimestamp - probeTimestamps[closestProbeIndex]
-        saccadeLatencies.append(saccadeLatency)
+    #
+    if protocol == 'dg':
+        probeData = (
+            session.probeTimestamps,
+            session.probeLatencies,
+            session.gratingMotionDuringProbes,
+            session.load('stimuli/dg/probe/dos')
+        )
+        saccadeData = (
+            session.saccadeTimestamps[:, 0],
+            session.saccadeLatencies,
+            session.saccadeLabels,
+            session.gratingMotionDuringSaccades
+        )
 
     #
-    if session.eye == 'left':
-        saccadeDirections = gratingMotionDuringSaccades * -1
-    else:
-        saccadeDirections = gratingMotionDuringSaccades
+    elif protocol == 'fs':
 
-    return probeTimestamps, np.array(probeLatencies), gratingMotionDuringProbes, saccadeTimestamps, np.array(saccadeLatencies), saccadeDirections
+        # Load datasets
+        probeTimestamps = session.load('stimuli/fs/probe/timestamps')
+        gratingMotionDuringProbes = session.load('stimuli/fs/probe/motion')
+        saccadeTimestamps = session.load('stimuli/fs/saccade/timestamps')
+        gratingMotionDuringSaccades = session.load('stimuli/fs/saccade/motion')
+
+        #
+        if session.eye == 'left':
+            saccadeLabels = gratingMotionDuringSaccades * -1
+        else:
+            saccadeLabels = gratingMotionDuringSaccades
+
+        # Parse probes
+        probeLatencies = list()
+        saccadeLabelsProximate = list()
+        for trialIndex, probeTimestamp in enumerate(probeTimestamps):
+            # if gratingMotionDuringProbes[trialIndex] != probeMotion:
+            #     continue
+            saccadeTimestampsRelative = probeTimestamp - saccadeTimestamps
+            closestSaccadeIndex = np.argmin(np.abs(saccadeTimestampsRelative))
+            saccadeLabelsProximate.append(saccadeLabels[closestSaccadeIndex])
+            probeLatency = probeTimestamp - saccadeTimestamps[closestSaccadeIndex]
+            probeLatencies.append(probeLatency)
+
+        # Parse saccades
+        saccadeLatencies = list()
+        for trialIndex, saccadeTimestamp in enumerate(saccadeTimestamps):
+            # if gratingMotionDuringSaccades[trialIndex] != probeMotion:
+            #     continue
+            probeTimestampsRelative = saccadeTimestamp - probeTimestamps
+            closestProbeIndex = np.argmin(np.abs(probeTimestampsRelative))
+            saccadeLatency = saccadeTimestamp - probeTimestamps[closestProbeIndex]
+            saccadeLatencies.append(saccadeLatency)
+
+        #
+        probeData = (
+            probeTimestamp,
+            np.array(probeLatencies),
+            gratingMotionDuringProbes,
+            np.array(saccadeLabelsProximate),
+        )
+        saccadeData = (
+            saccadeTimestamps,
+            np.array(saccadeLatencies),
+            saccadeLabels,
+            gratingMotionDuringSaccades
+        )
+
+    return probeData, saccadeData
+
+def _getResponseTemplatesForSaccades(
+    unit,
+    probeData=None,
+    saccadeData=None,
+    responseWindow=(-0.2, 0.5),
+    perisaccadicWindow=(-0.05, 0.1),
+    binsize=0.02,
+    protocol='dg'
+    ):
+    """
+    """
+
+    # Load event data (if necessary)
+    if any(probeData is None, saccadeData is None):
+        probeData, saccadeData = _loadEventData(unit.session, protocol=protocol)
+    
+    # Unpack event data
+    probeTimestamps, probeLatencies, gratingMotionDuringProbes, saccadelabelsProximate = probeData
+    saccadeTimestamps, saccadeLatencies, saccadelabels, gratingMotionDuringSacccades = saccadeData
+
+    #
+    tBins, nTrials, nBins = psth2(
+        np.array([0]),
+        np.array([0]),
+        window=responseWindow,
+        binsize=binsize,
+        returnShape=True,
+    )
+
+    #
+    templates = {
+        ('left', 'nasal'): np.full(nBins, np.nan),
+        ('left', 'temporal'): np.full(nBins, np.nan),
+        ('right', 'nasal'): np.full(nBins, np.nan),
+        ('right', 'temporal'): np.full(nBins, np.nan),
+    }
+
+    #
+    peristimulusWindow = (
+        perisaccadicWindow[1] * -1,
+        perisaccadicWindow[0] * -1
+    )
+    extrastimulusMask = np.logical_or(
+        saccadeLatencies < peristimulusWindow[0],
+        saccadeLatencies > perisaccadicWindow[1]
+    )
+
+    #
+    for gratingDirection, saccadeDirection in templates.keys():
+        gratingMotion = -1 if gratingDirection == 'left' else +1
+        saccadeLabel = -1 if saccadeDirection == 'temporal' else +1
+        trialIndices = np.where(
+            np.vstack([
+                extrastimulusMask,
+                gratingMotionDuringSacccades == gratingMotion,
+                saccadelabelsProximate == saccadeLabel
+            ]).all(0)
+        )[0]
+        if trialIndices.size == 0:
+            continue
+        t, fr = unit.peth(
+            saccadeTimestamps[trialIndices],
+            responseWindow=responseWindow,
+            binsize=binsize
+        )
+        templates[(gratingDirection, saccadeDirection)] = fr
+
+    return templates
 
 class TimeHistogramProcessingMixin():
     """
     """
 
-    def _extractVisualOnlyPethsDuringDriftingGrating(
+    def _extractVisualOnlyPeths(
         self,
         responseWindow=(-0.2, 0.5),
         perisaccadicWindow=(-0.05, 0.1),
         binsize=0.02,
+        protocol='dg',
         ):
         """
         """
@@ -84,11 +188,19 @@ class TimeHistogramProcessingMixin():
             'binsize': binsize,
         }
 
+        # Select event data
+        probeData, saccadeData = _loadEventData(
+            self,
+            protocol=protocol
+        )
+        probeTimestamps, probeLatencies, gratingMotionDuringProbes, saccadelabelsProximate = probeData
+        saccadeTimestamps, saccadeLatencies, saccadelabels, gratingMotionDuringSacccades = saccadeData
+
         #
         for probeMotion, probeDirection in zip([-1, 1], ['left', 'right']):
 
             #
-            datasetPath = f'curves/rProbe/actual/{probeDirection}'
+            datasetPath = f'curves/rProbe/{protocol}/{probeDirection}'
             peths = np.full([nUnits, nBins], np.nan)
 
             #
@@ -97,11 +209,12 @@ class TimeHistogramProcessingMixin():
                 continue
 
             # Identify extra-saccadic trials
-            trialIndices = np.where(self.parseEvents(
-                eventName='probe',
-                coincident=False,
-                eventDirection=probeMotion,
-                coincidenceWindow=perisaccadicWindow,
+            trialIndices = np.where(np.logical_and(
+                np.logical_or(
+                    probeLatencies < perisaccadicWindow[0],
+                    probeLatencies > perisaccadicWindow[1]
+                ),
+                gratingMotionDuringProbes == probeMotion
             ))[0]
 
             #
@@ -114,23 +227,22 @@ class TimeHistogramProcessingMixin():
                     end = '\r'
                 self.log(f'Extracting visual-only PSTHs for unit {iUnit + 1} out of {nUnits} (motion={probeMotion})', end=end)    
 
-                t, fr, bl = self._measureVisualOnlyResponse(
-                    unit,
-                    probeMotion=probeMotion,
-                    responseWindow=responseWindow,
-                    trialIndicesExtrasaccadic=trialIndices,
-                    binsize=binsize,
+                t, fr = unit.peth(
+                    probeTimestamps[trialIndices],
+                    window=responseWindow,
+                    binsize=binsize
                 )
-                peths[iUnit] = fr.mean(0)
+                peths[iUnit] = fr
             self.save(datasetPath, peths, metadata=metadata)
 
         return
 
-    def _extractSaccadeOnlyPethsDuringDriftingGrating(
+    def _extractSaccadeOnlyPeths(
         self,
         responseWindow=(-0.2, 0.5),
         perisaccadicWindow=(-0.05, 0.1),
         binsize=0.02,
+        protocol='dg',
         ):
         """
         """
@@ -151,10 +263,19 @@ class TimeHistogramProcessingMixin():
             'binsize': binsize,
         }
 
-        for saccadeDirectionCoded, saccadeDirection in zip([-1, 1], ['temporal', 'nasal']):
+        # Select event data
+        probeData, saccadeData = _loadEventData(
+            self,
+            protocol=protocol
+        )
+        probeTimestamps, probeLatencies, gratingMotionDuringProbes, saccadelabelsProximate = probeData
+        saccadeTimestamps, saccadeLatencies, saccadelabels, gratingMotionDuringSacccades = saccadeData
+
+        #
+        for saccadeLabel, saccadeDirection in zip([-1, 1], ['temporal', 'nasal']):
 
             #
-            datasetPath = f'curves/rSaccadeUnshifted/actual/{saccadeDirection}'
+            datasetPath = f'curves/rSaccade/{protocol}/{saccadeDirection}'
             peths = np.full([nUnits, nBins], np.nan)
 
             #
@@ -163,11 +284,12 @@ class TimeHistogramProcessingMixin():
                 continue
 
             # Identify extra-saccadic trials
-            trialIndices = np.where(self.parseEvents(
-                eventName='saccade',
-                coincident=False,
-                eventDirection=saccadeDirectionCoded,
-                coincidenceWindow=-1 * np.array(perisaccadicWindow),
+            trialIndices = np.where(np.logical_and(
+                np.logical_or(
+                    saccadeLatencies < perisaccadicWindow[0],
+                    saccadeLatencies > perisaccadicWindow[1]
+                ),
+                saccadelabels == saccadeLabel
             ))[0]
 
             #
@@ -181,7 +303,7 @@ class TimeHistogramProcessingMixin():
                 self.log(f'Extracting saccade-only PSTHs for unit {iUnit + 1} out of {nUnits} (direction={saccadeDirection})', end=end)   
 
                 t, fr = unit.peth(
-                    self.saccadeTimestamps[trialIndices, 0],
+                    saccadeTimestamps[trialIndices],
                     responseWindow=responseWindow,
                     binsize=binsize
                 )
@@ -192,19 +314,20 @@ class TimeHistogramProcessingMixin():
 
         return
 
-    def _extractPerisaccadicPethsDuringDriftingGrating(
+    def _extractPerisaccadicPeths(
         self,
         responseWindow=(-0.2, 0.5),
         perisaccadicWindow=(-0.05, 0.1),
         binsize=0.02,
         binEdges=None,
+        protocol='dg',
         ):
         """
         """
 
         #
         if binEdges is None:
-            binEdges = _getTimeBins()
+            binEdges = _getPerisaccadicEpochs()
 
         #
         tBins, nTrials, nBins = psth2(
@@ -223,12 +346,20 @@ class TimeHistogramProcessingMixin():
             'edges': binEdges,
         }
 
+        # Select event data
+        probeData, saccadeData = _loadEventData(
+            self,
+            protocol=protocol
+        )
+        probeTimestamps, probeLatencies, gratingMotionDuringProbes, saccadelabelsProximate = probeData
+        saccadeTimestamps, saccadeLatencies, saccadelabels, gratingMotionDuringSacccades = saccadeData
+
         #
         for probeMotion, probeDirection in zip([-1, 1], ['left', 'right']):
 
             #
-            peths = np.full([binEdges.shape[0], nUnits, nBins], np.nan)
-            datasetPath = f'curves/rMixed/actual/{probeDirection}'
+            peths = np.full([nUnits, nBins, binEdges.shape[0]], np.nan)
+            datasetPath = f'curves/rMixed/{protocol}/{probeDirection}'
 
             #
             if self.probeTimestamps is None:
@@ -249,33 +380,41 @@ class TimeHistogramProcessingMixin():
 
                     #
                     perisaccadicWindow = (leftEdge, rightEdge)
-                
-                    t, fr, bl = self._measurePerisaccadicVisualResponse(
-                        unit,
-                        probeMotion=probeMotion,
+                    trialIndices = np.where(np.logical_and(
+                        np.logical_and(
+                            probeLatencies >= perisaccadicWindow[0],
+                            probeLatencies <= perisaccadicWindow[1]
+                        ),
+                        gratingMotionDuringProbes == probeMotion
+                    ))[0]
+
+                    #
+                    t, fr = unit.peth(
+                        probeTimestamps[trialIndices],
                         responseWindow=responseWindow,
-                        binsize=binsize,
-                        perisaccadicWindow=perisaccadicWindow
+                        binsize=binsize
                     )
-                    peths[iBin, iUnit, :] = fr.mean(0)
+                    peths[iUnit, :, iBin] = fr
             
             #
             self.save(datasetPath, peths, metadata=metadata)
 
         return
 
-    def _extractLatencyShiftedSaccadePethsDuringDriftingGrating(
+    def _extractLatencyShiftedSaccadePeths(
         self,
         binEdges=None,
         responseWindow=(-0.2, 0.5),
         perisaccadicWindow=(-0.05, 0.1),
-        binsize=0.02,):
+        binsize=0.02,
+        protocol='dg',
+        ):
         """
         """
 
         #
         if binEdges is None:
-            binEdges = _getTimeBins()
+            binEdges = _getPerisaccadicEpochs()
 
         #
         tBins, nTrials, nBins = psth2(
@@ -294,12 +433,20 @@ class TimeHistogramProcessingMixin():
             'edges': binEdges,
         }
 
+        # Select event data
+        probeData, saccadeData = _loadEventData(
+            self,
+            protocol=protocol
+        )
+        probeTimestamps, probeLatencies, gratingMotionDuringProbes, saccadelabelsProximate = probeData
+        saccadeTimestamps, saccadeLatencies, saccadelabels, gratingMotionDuringSacccades = saccadeData
+
         #
         for probeMotion, probeDirection in zip([-1, 1], ['left', 'right']):
 
             #
-            peths = np.full([binEdges.shape[0], nUnits, nBins], np.nan)
-            datasetPath = f'curves/rSaccade/actual/{probeDirection}'
+            peths = np.full([nUnits, nBins, binEdges.shape[0]], np.nan)
+            datasetPath = f'curves/rSaccade/{protocol}/{probeDirection}'
 
             #
             if self.probeTimestamps is None:
@@ -315,195 +462,49 @@ class TimeHistogramProcessingMixin():
                 else:
                     end = '\r'
                 self.log(f'Extracting latency-shifted saccade PSTHs for unit {iUnit + 1} out of {nUnits} (motion={probeMotion})', end=end)   
+
+                #
+                templates = _getResponseTemplatesForSaccades(
+                    unit,
+                    probeData,
+                    saccadeData,
+                    responseWindow=responseWindow,
+                    perisaccadicWindow=perisaccadicWindow,
+                    binsize=binsize
+                )
                 
                 for iBin, (leftEdge, rightEdge) in enumerate(binEdges):
 
                     #
                     perisaccadicWindow = (leftEdge, rightEdge)
+                    trialIndices = np.where(np.logical_and(
+                        np.logical_and(
+                            probeLatencies >= perisaccadicWindow[0],
+                            probeLatencies <= perisaccadicWindow[1]
+                        ),
+                        gratingMotionDuringProbes == probeMotion
+                    ))[0]
                 
-                    t, fr, bl = self._estimateSaccadeRelatedActivityWithInterpolation(
-                        unit,
-                        probeMotion=probeMotion,
-                        responseWindow=responseWindow,
-                        binsize=binsize,
-                        perisaccadicWindow=perisaccadicWindow
+                    #
+                    curves = list()
+                    iterable = zip(
+                        gratingMotionDuringProbes[trialIndices],
+                        probeLatencies[trialIndices],
+                        saccadelabelsProximate[trialIndices]
                     )
-                    peths[iBin, iUnit, :] = fr.mean(0)
+                    for probeMotion_, probeLatency, saccadeLabel in iterable:
+                        probeDirection = 'left' if probeMotion_ == -1 else 'right'
+                        saccadeDirection = 'temporal' if saccadeLabel == -1 else 'nasal'
+                        fp = templates[(probeDirection, saccadeDirection)]
+                        xp = tBins
+                        x = tBins + probeLatency
+                        curve = np.interp(x, xp, fp)
+                        curves.append(curve)
+                    curves = np.array(curves)
+                    peths[iUnit, :, iBin] = np.nanmean(curves, axis=0)
             
             #
             self.save(datasetPath, peths, metadata=metadata)
-
-        return
-    
-    def _extractVisualOnlyPethsDuringFictiveSaccades(
-        self,
-        responseWindow=(-0.2, 0.5),
-        perisaccadicWindow=(-0.05, 0.1),
-        binsize=0.02,
-        ):
-        """
-        """
-
-        #
-        tBins, nTrials, nBins = psth2(
-            np.array([0]),
-            np.array([0]),
-            window=responseWindow,
-            binsize=binsize,
-            returnShape=True,
-        )
-        nUnits = self.population.count()
-
-        #
-        metadata = {
-            't': tBins,
-            'binsize': binsize,
-        }
-
-        #
-        probeTimestamps, probeLatencies, gratingMotionDuringProbes, saccadeTimestamps, saccadeLatencies, saccadeDirections = _loadFictiveSaccadesEventData(
-            self,
-        )
-
-        #
-        for probeMotion, probeDirection in zip([-1, 1], ['left', 'right']):
-
-            #
-            datasetPath = f'curves/rProbe/fictive/{probeDirection}'
-            peths = np.full([nUnits, nBins], np.nan)
-
-            #
-            if self.probeTimestamps is None:
-                self.save(datasetPath, peths, metadata=metadata)
-                continue
-
-            #
-            probeIndices = np.where(np.logical_and(
-                np.logical_or(
-                    probeLatencies < perisaccadicWindow[0],
-                    probeLatencies > perisaccadicWindow[1]
-                ),
-                gratingMotionDuringProbes == probeMotion
-            ))[0]
-
-            #
-            for iUnit, unit in enumerate(self.population):
-
-                #
-                if iUnit + 1 == nUnits:
-                    end = None
-                else:
-                    end = '\r'
-                self.log(f'Extracting visual-only PSTHs for unit {iUnit + 1} out of {nUnits} (motion={probeMotion})', end=end)    
-
-                t, fr = unit.peth(
-                    probeTimestamps[probeIndices],
-                    responseWindow=responseWindow,
-                    binsize=binsize
-                )
-                peths[iUnit] = fr
-            self.save(datasetPath, peths, metadata=metadata)
-
-        return
-    
-    def _extractSaccadeOnlyPethsDuringFictiveSaccades(
-        self,
-        responseWindow=(-0.2, 0.5),
-        perisaccadicWindow=(-0.05, 0.1),
-        binsize=0.02,
-        ):
-        """
-        """
-
-        #
-        (probeTimestamps,
-            probeLatencies,
-            gratingMotionDuringProbes,
-            saccadeTimestamps,
-            saccadeLatencies,
-            saccadeDirections
-        ) = _loadFictiveSaccadesEventData(self)
-
-        #
-        tBins, nTrials, nBins = psth2(
-            np.array([0]),
-            np.array([0]),
-            window=responseWindow,
-            binsize=binsize,
-            returnShape=True,
-        )
-        nUnits = self.population.count()
-
-        #
-        metadata = {
-            't': tBins,
-            'binsize': binsize,
-        }
-
-        for saccadeDirectionCoded, saccadeDirection in zip([-1, 1], ['temporal', 'nasal']):
-
-            #
-            datasetPath = f'curves/rSaccadeUnshifted/fictive/{saccadeDirection}'
-            peths = np.full([nUnits, nBins], np.nan)
-
-            #
-            if self.probeTimestamps is None:
-                self.save(datasetPath, peths, metadata=metadata)
-                continue
-
-            #
-            saccadeIndices = np.where(np.logical_and(
-                np.logical_or(
-                    probeLatencies < -1 * perisaccadicWindow[0],
-                    probeLatencies > -1 * perisaccadicWindow[1]
-                ),
-                saccadeDirections == saccadeDirectionCoded
-            ))[0]
-
-            #
-            for iUnit, unit in enumerate(self.population):
-
-                #
-                if iUnit + 1 == nUnits:
-                    end = None
-                else:
-                    end = '\r'
-                self.log(f'Extracting saccade-only PSTHs for unit {iUnit + 1} out of {nUnits} (direction={saccadeDirection})', end=end)   
-
-                t, fr = unit.peth(
-                    self.saccadeTimestamps[trialIndices, 0],
-                    responseWindow=responseWindow,
-                    binsize=binsize
-                )
-                peths[iUnit] = fr
-            
-            #
-            self.save(datasetPath, peths, metadata=metadata)
-
-        return
-
-        return
-    
-    def _extractPerisaccadicPethsDuringFictiveSaccades(
-        self,
-        responseWindow=(-0.2, 0.5),
-        perisaccadicWindow=(-0.05, 0.1),
-        binsize=0.02,
-        binEdges=None,
-        ):
-        """
-        """
-
-        return
-    
-    def _extractLatencyShiftedSaccadePethsDuringFictiveSaccades(
-        self,
-        binEdges=None,
-        responseWindow=(-0.2, 0.5),
-        perisaccadicWindow=(-0.05, 0.1),
-        binsize=0.02,):
-        """
-        """
 
         return
 
@@ -512,10 +513,5 @@ class TimeHistogramProcessingMixin():
         ):
         """
         """
-
-        self._extractVisualOnlyPethsDuringDriftingGrating()
-        self._extractSaccadeOnlyPethsDuringDriftingGrating()
-        self._extractPerisaccadicPethsDuringDriftingGrating()
-        self._extractLatencyShiftedSaccadePethsDuringDriftingGrating()
 
         return
