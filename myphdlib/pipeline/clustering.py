@@ -11,38 +11,44 @@ class ClusterProcessingMixin():
     """
     """
 
-    def _extractResponseWaveforms(
+    def _extractNormalizedVisulOnlyResponses(
         self,
         responseWindow=(-0.2, 0.5),
         baselineWindow=(-0.2, 0),
-        normalizingWindow=(-0.2, 0.5),
-        minimumBaselineActivity=2,
+        normalizingWindow=(0, 0.5),
+        perisaccadicWindow=(-0.05, 0.1),
+        minimumBaselineActivity=0.5,
         minimumResponseAmplitude=2,
         binsize=0.02,
+        smoothingKernelWidth=0.01,
         overwrite=False,
-        nBins=101,
-        sd=0.01,
         ):
         """
         """
 
-        self.log(f'Extracting event-related response waveforms')
+        #
+        self.log(f'Extracting preferred and non-preferred responses to the probe stimulus')
 
         #
+        tBins, nTrials, nBins = psth2(
+            np.array([0]),
+            np.array([0]),
+            window=responseWindow,
+            binsize=binsize,
+            returnShape=True,
+        )
         nUnits = self.population.count()
 
         #
         datasetKeys = (
-            ('probe', 'preferred'),
-            ('probe', 'nonpreferred'),
-            ('saccade', 'preferred'),
-            ('saccade', 'nonpreferred')
+            ('rProbe', 'dg', 'preferred'),
+            ('rProbe', 'dg', 'nonpreferred'),
         )
 
         # Check if data is alread processed 
-        flags = np.full(4, False)
-        for i, (eventType, eventDirection) in enumerate(datasetKeys):
-            datasetPath = f'peths/{eventType}/{eventDirection}'
+        flags = np.full(len(datasetKeys), False)
+        for i, (responseType, protocol, eventDirection) in enumerate(datasetKeys):
+            datasetPath = f'peths/{responseType}/{protocol}/{eventDirection}'
             if self.hasDataset(datasetPath):
                 flags[i] = True
         if flags.all() and overwrite == False:
@@ -55,118 +61,121 @@ class ClusterProcessingMixin():
                 self.save(datasetPath, np.full([nUnits, nBins], np.nan))
             return
 
-        # Event type, event direction, event timestamps
-        iterable = (
-            ('probe', self.probeTimestamps, self.gratingMotionDuringProbes),
-            ('saccade', self.saccadeTimestamps[:, 0], self.saccadeLabels)
-        )
+        #
+        factors = {
+            'left': np.full(nUnits, np.nan),
+            'right': np.full(nUnits, np.nan)
+        }
+        amplitudes = {
+            'left': np.full(nUnits, np.nan),
+            'right': np.full(nUnits, np.nan)
+        }
+        peths = {
+            'left': np.full([nUnits, nBins], np.nan),
+            'right': np.full([nUnits, nBins], np.nan)
+        }
 
         #
-        for eventType, eventTimestamps, eventDirections in iterable:
-
-            self.log(f'Extracting preferred and non-preferred responses to {eventType}s')
+        for probeMotion, probeDirection in zip([-1, +1], ['left', 'right']):
 
             #
-            peths = {
-                'preferred': np.full([nUnits, nBins], np.nan),
-                'nonpreferred': np.full([nUnits, nBins], np.nan)
-            }
+            trialIndices = np.where(np.logical_and(
+                np.logical_or(
+                    self.probeLatencies < perisaccadicWindow[0],
+                    self.probeLatencies > perisaccadicWindow[1]
+                ),
+                self.gratingMotionDuringProbes == probeMotion,
+            ))[0]
 
             #
-            nUnits = self.population.count()
             for iUnit, unit in enumerate(self.population):
+                if iUnit == nUnits - 1:
+                    end = None
+                else:
+                    end = '\r'
+                self.log(f'Working on unit {iUnit + 1} out of {nUnits} (motion={probeMotion})', end=end)
 
-                self.log(f'Working on unit {iUnit + 1} out of {nUnits}')
+                # Estimate baseline activity
+                t, M = psth2(
+                    self.probeTimestamps[trialIndices],
+                    unit.timestamps,
+                    window=baselineWindow,
+                    binsize=None
+                )
+                mu = M.flatten().mean() / np.diff(baselineWindow).item()
 
-                #
-                factors = list()
-                responses = list()
-                baselines = list()
-                prominences = list()
-
-                #
-                for eventDirection in (-1, +1):
-
-                    # Estimate baseline activity
-                    t, M = psth2(
-                        eventTimestamps[eventDirections == eventDirection],
-                        unit.timestamps,
-                        window=baselineWindow,
-                        binsize=None
-                    )
-                    mu = M.flatten().mean() / np.diff(baselineWindow).item()
-
-                    # Filter out units with subthreshold baselines
-                    if mu < minimumBaselineActivity:
-                        factors.append(np.nan)
-                        responses.append(np.full(nBins, np.nan))
-                        baselines.append(np.nan)
-                        prominences.append(np.nan)
-                        continue
-                    else:
-                        baselines.append(mu)
-
-                    # Measure the evoked response
-                    try:
-                        t, fr = unit.peth(
-                            eventTimestamps[eventDirections == eventDirection],
-                            responseWindow=responseWindow,
-                            binsize=binsize,
-                            kde=True,
-                            sd=sd,
-                        )
-                    except:
-                        import pdb; pdb.set_trace()
-
-                    # Filter out units with subthreshold baselines
-                    if np.max(np.abs(fr - mu)) < minimumResponseAmplitude:
-                        factors.append(np.nan)
-                        responses.append(np.full(nBins, np.nan))
-                        baselines.append(np.nan)
-                        prominences.append(np.nan)
-                        continue
-
-                    # Save the baseline subtracted response
-                    normalizingWindowMask = np.logical_and(
-                        t >= normalizingWindow[0],
-                        t <= normalizingWindow[1]
-                    )
-                    responses.append(fr - mu)
-                    factor = round(np.max(np.abs(fr - mu)[normalizingWindowMask]), 2)
-                    factors.append(factor)
-
-                    # Measure the prominence of the response
-                    prominence = round(np.max(np.abs(fr - mu)) - np.mean(fr - mu), 2)
-                    prominences.append(prominence)
-
-                # Skip unit if either response fails the minimum baseline activity threshold
-                if np.isnan(factors).sum() != 0:
-                    peths['preferred'][iUnit, :] = np.full(nBins, np.nan)
-                    peths['nonpreferred'][iUnit, :] = np.full(nBins, np.nan)
+                # Filter out units with subthreshold baselines
+                if mu < minimumBaselineActivity:
                     continue
 
-                # Normalize and determine preference
-                iP = np.argmax(prominences)
-                iN = 0 if iP == 1 else 1
-                factor = factors[iP]
-                rP = np.around(responses[iP] / factor, 2)
-                rN = np.around(responses[iN] / factor, 2)
+                # Measure the evoked response
+                t, fr = unit.peth(
+                    self.probeTimestamps[trialIndices],
+                    responseWindow=responseWindow,
+                    binsize=binsize,
+                    kde=True,
+                    sd=smoothingKernelWidth,
+                )
 
-                # Store the peths
-                peths['preferred'][iUnit, :] = rP
-                peths['nonpreferred'][iUnit, :] = rN
+                # Filter out units with subthreshold baselines
+                if np.max(np.abs(fr - mu)) < minimumResponseAmplitude:
+                    continue
+                
+                #
+                amplitude = np.max(np.abs(fr - mu))
+                amplitudes[probeDirection][iUnit] = amplitude
+
+                #
+                peths[probeDirection][iUnit] = fr - mu
+
+                # Save the baseline subtracted response
+                normalizingWindowMask = np.logical_and(
+                    t >= normalizingWindow[0],
+                    t <= normalizingWindow[1]
+                )
+                factor = round(np.max(np.abs(fr - mu)[normalizingWindowMask]), 2)
+                factors[probeDirection][iUnit] = factor
+                
+        #
+        X = {
+            'preferred': np.full([nUnits, nBins], np.nan),
+            'nonpreferred': np.full([nUnits, nBins], np.nan)
+        }
+        for iUnit in range(nUnits):
 
             #
-            for k in peths.keys():
-                self.save(f'peths/{eventType}/{k}', peths[k])
+            mapping = {
+                'left': None,
+                'right': None
+            }
+            aL = amplitudes['left'][iUnit]
+            aR = amplitudes['right'][iUnit]
+            if np.isnan([aL, aR]).all():
+                continue
+            if aL > aR:
+                mapping['left'] = 'preferred'
+                mapping['right'] = 'nonpreferred'
+                factor = factors['left'][iUnit]
+            else:
+                mapping['left'] = 'nonpreferred'
+                mapping['right'] = 'preferred'
+                factor = factors['right'][iUnit]
 
-        return
+            #
+            for probeDirection, directionPreference in mapping.items():
+                X[directionPreference][iUnit] = peths[probeDirection][iUnit] / factor
+        
+        #
+        for directionPreference in ('preferred', 'nonpreferred'):
+           self.save(f'peths/rProbe/dg/{directionPreference}', X[directionPreference])
+
+        return X
 
     def _runClusterModule(self):
         """
         """
 
-        self._extractResponseWaveforms()
+        self._extractNormalizedVisulOnlyResponses()
 
         return
 
@@ -188,7 +197,7 @@ def clusterUnitsByVisualResponseShape(
     samples = list()
     inclusionMasksBySession = list()
     for session in sessions:
-        peths = session.load(f'peths/probe/preferred')
+        peths = session.load(f'peths/rProbe/preferred')
         inclusionMask = np.invert(np.isnan(peths).all(1))
         inclusionMasksBySession.append(inclusionMask)
         for unit in session.population:

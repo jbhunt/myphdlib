@@ -12,7 +12,7 @@ from myphdlib.pipeline.spikes import SpikesProcessingMixin
 from myphdlib.pipeline.activity import ActivityProcessingMixin
 from myphdlib.pipeline.prediction import PredictionProcessingMixin
 from myphdlib.pipeline.cleanup import CleanupProccessingMixin
-from myphdlib.pipeline.cluster import ClusterProcessingMixin
+from myphdlib.pipeline.clustering import ClusterProcessingMixin
 from myphdlib.pipeline.stimuli import StimuliProcessingMixin
 from myphdlib.analysis.basic import BasicResponseCharacterizationAnalysisMixin
 from myphdlib.pipeline.peths import TimeHistogramProcessingMixin

@@ -164,6 +164,7 @@ class TimeHistogramProcessingMixin():
         perisaccadicWindow=(-0.05, 0.1),
         binsize=0.02,
         protocol='dg',
+        overwrite=True,
         ):
         """
         """
@@ -196,7 +197,9 @@ class TimeHistogramProcessingMixin():
         for probeMotion, probeDirection in zip([-1, 1], ['left', 'right']):
 
             #
-            datasetPath = f'curves/rProbe/{protocol}/{probeDirection}'
+            datasetPath = f'peths/rProbe/{protocol}/{probeDirection}'
+            if self.hasDataset(datasetPath) and overwrite == False:
+                continue
             peths = np.full([nUnits, nBins], np.nan)
 
             #
@@ -239,6 +242,7 @@ class TimeHistogramProcessingMixin():
         perisaccadicWindow=(-0.05, 0.1),
         binsize=0.02,
         protocol='dg',
+        overwrite=True,
         ):
         """
         """
@@ -277,7 +281,9 @@ class TimeHistogramProcessingMixin():
         for saccadeLabel, saccadeDirection in zip([-1, 1], ['temporal', 'nasal']):
 
             #
-            datasetPath = f'curves/rSaccade/{protocol}/{saccadeDirection}'
+            datasetPath = f'peths/rSaccade/{protocol}/{saccadeDirection}'
+            if self.hasDataset(datasetPath) and overwrite == False:
+                continue
             peths = np.full([nUnits, nBins], np.nan)
 
             #
@@ -323,6 +329,7 @@ class TimeHistogramProcessingMixin():
         binsize=0.02,
         binEdges=None,
         protocol='dg',
+        overwrite=True
         ):
         """
         """
@@ -361,7 +368,9 @@ class TimeHistogramProcessingMixin():
 
             #
             peths = np.full([nUnits, nBins, binEdges.shape[0]], np.nan)
-            datasetPath = f'curves/rMixed/{protocol}/{probeDirection}'
+            datasetPath = f'peths/rMixed/{protocol}/{probeDirection}'
+            if self.hasDataset(datasetPath) and overwrite == False:
+                continue
 
             #
             if self.probeTimestamps is None:
@@ -410,6 +419,7 @@ class TimeHistogramProcessingMixin():
         perisaccadicWindow=(-0.05, 0.1),
         binsize=0.02,
         protocol='dg',
+        overwrite=True
         ):
         """
         """
@@ -448,7 +458,9 @@ class TimeHistogramProcessingMixin():
 
             #
             peths = np.full([nUnits, nBins, binEdges.shape[0]], np.nan)
-            datasetPath = f'curves/rSaccade/{protocol}/{probeDirection}'
+            datasetPath = f'peths/rSaccade/{protocol}/{probeDirection}'
+            if self.hasDataset(datasetPath) and overwrite == False:
+                continue
 
             #
             if self.probeTimestamps is None:
@@ -478,11 +490,10 @@ class TimeHistogramProcessingMixin():
                 for iBin, (leftEdge, rightEdge) in enumerate(binEdges):
 
                     #
-                    perisaccadicWindow = (leftEdge, rightEdge)
                     trialIndices = np.where(np.logical_and(
                         np.logical_and(
-                            probeLatencies >= perisaccadicWindow[0],
-                            probeLatencies <= perisaccadicWindow[1]
+                            probeLatencies >= leftEdge,
+                            probeLatencies <= rightEdge
                         ),
                         gratingMotionDuringProbes == probeMotion
                     ))[0]
@@ -513,16 +524,134 @@ class TimeHistogramProcessingMixin():
 
         return
 
+    def _extractVisualOnlyPethsWithResampling(
+        self,
+        nRuns=5000,
+        rTrials=0.05,
+        minimumTrialCount=30,
+        responseWindow=(-0.2, 0.5),
+        perisaccadicWindow=(-0.05, 0.1),
+        binsize=0.02,
+        protocol='dg',
+        overwrite=True,
+        ):
+        """
+        """
+
+        #
+        tBins, nTrials_, nBins = psth2(
+            np.array([0]),
+            np.array([0]),
+            window=responseWindow,
+            binsize=binsize,
+            returnShape=True,
+        )
+        nUnits = self.population.count()
+
+        #
+        metadata = {
+            't': tBins,
+            'binsize': binsize,
+        }
+
+        # Select event data
+        probeData, saccadeData = _loadEventData(
+            self,
+            protocol=protocol
+        )
+        probeTimestamps, probeLatencies, gratingMotionDuringProbes, saccadelabelsProximate = probeData
+        saccadeTimestamps, saccadeLatencies, saccadelabels, gratingMotionDuringSacccades = saccadeData
+
+        #
+        for probeMotion, probeDirection in zip([-1, 1], ['left', 'right']):
+
+            #
+            datasetPath = f'peths/rProbe/{protocol}/{probeDirection}'
+            if self.hasDataset(datasetPath) and overwrite == False:
+                continue
+            peths = np.full([nUnits, nBins, nRuns + 1], np.nan)
+
+            #
+            if self.probeTimestamps is None:
+                self.save(datasetPath, peths, metadata=metadata)
+                continue
+
+            # Identify extra-saccadic trials
+            trialIndices = np.where(np.logical_and(
+                np.logical_or(
+                    probeLatencies < perisaccadicWindow[0],
+                    probeLatencies > perisaccadicWindow[1]
+                ),
+                gratingMotionDuringProbes == probeMotion
+            ))[0]
+
+            # Determine the size of the samples
+            nTrials = int(round(trialIndices.size * rTrials))
+            if nTrials < minimumTrialCount:
+                nTrials = minimumTrialCount
+
+            #
+            for iUnit, unit in enumerate(self.population):
+
+                #
+                t, fr = unit.peth(
+                    probeTimestamps[trialIndices],
+                    responseWindow=responseWindow,
+                    binsize=binsize
+                )
+                peths[iUnit, :, 0] = fr
+
+                #
+                if iUnit + 1 == nUnits:
+                    end = None
+                else:
+                    end = '\r'
+                self.log(f'Extracting visual-only PSTHs for unit {iUnit + 1} out of {nUnits} (motion={probeMotion}, protocol={protocol})', end=end)
+
+                #
+                for iRun in range(nRuns):
+
+                    #
+                    trialIndicesResampled = np.random.choice(
+                        trialIndices,
+                        size=nTrials,
+                        replace=False
+                    )
+
+                    t, fr = unit.peth(
+                        probeTimestamps[trialIndicesResampled],
+                        responseWindow=responseWindow,
+                        binsize=binsize
+                    )
+                    peths[iUnit, :, iRun + 1] = fr
+
+            self.save(datasetPath, peths, metadata=metadata)
+
+        return
+
     def _runPethsModule(
         self,
+        overwrite=True
         ):
         """
         """
 
         for protocol in ('dg', 'fs'):
-            self._extractVisualOnlyPeths(protocol=protocol)
-            self._extractPerisaccadicPeths(protocol=protocol)
-            self._extractSaccadeOnlyPeths(protocol=protocol)
-            self._extractLatencyShiftedSaccadePeths(protocol=protocol)
+            self._extractVisualOnlyPeths(
+                protocol=protocol,
+                overwrite=overwrite
+            )
+            self._extractPerisaccadicPeths(
+                protocol=protocol,
+                overwrite=overwrite
+            )
+            self._extractSaccadeOnlyPeths(
+                protocol=protocol,
+                overwrite=overwrite
+            )
+            self._extractLatencyShiftedSaccadePeths(
+                protocol=protocol,
+                overwrite=overwrite
+            )
 
         return

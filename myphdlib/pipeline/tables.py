@@ -30,30 +30,15 @@ def _getVisualResponseAmplitude(session):
 
     return np.array(amplitudes).reshape(-1, 1), {}
 
-def _getComponentResponse(
+def _loadPeths(
     session,
-    component='probe',
-    eventDirection=-1,
-    shifted=False
+    path='peths/rProbe/left',
     ):
     """
     """
 
 
-    probeDirection = 'left' if eventDirection == -1 else 'right'
-    saccadeDirection = 'temporal' if eventDirection == -1 else 'nasal'
-
-    if component == 'probe':
-        peths, metadata = session.load(f'curves/rProbe/{probeDirection}', returnMetadata=True)
-
-    elif component == 'saccade':
-        if shifted:
-            peths, metadata = session.load(f'curves/rSaccade/{probeDirection}', returnMetadata=True)
-        else:
-            peths, metadata = session.load(f'curves/rSaccadeUnshifted/{saccadeDirection}', returnMetadata=True)
-
-    elif component == 'mixed':
-        peths, metadata = session.load(f'curves/rMixed/{probeDirection}', returnMetadata=True)
+    peths, metadata = session.load(path, returnMetadata=True)
 
     return peths, metadata
 
@@ -128,34 +113,46 @@ unitsTableMapping = {
         ('population/metrics/pr', {}),
     'kilosortLabel':
         ('population/metrics/ksl', {}),
-    'xPreferred':
-        ('peths/probe/preferred', {}),
-    'xNonpreferred':
-        ('peths/probe/nonpreferred', {}),
-    'rMixed/left':
-        (_getComponentResponse, {'eventDirection': -1, 'component': 'mixed'}),
-    'rMixed/right':
-        (_getComponentResponse, {'eventDirection': +1, 'component': 'mixed'}),
-    'rProbe/left':
-        (_getComponentResponse, {'eventDirection': -1, 'component': 'probe'}),
-    'rProbe/right':
-        (_getComponentResponse, {'eventDirection': +1, 'component': 'probe'}),
-    'rSaccade/left':
-        (_getComponentResponse, {'eventDirection': -1, 'component': 'saccade', 'shifted': True}),
-    'rSaccade/right':
-        (_getComponentResponse, {'eventDirection': +1, 'component': 'saccade', 'shifted': True}),
-    'rSaccadeUnshifted/nasal':
-        (_getComponentResponse, {'eventDirection': -1, 'component': 'saccade', 'shifted': False}),
-    'rSaccadeUnshifted/temporal':
-        (_getComponentResponse, {'eventDirection': +1, 'component': 'saccade', 'shifted': False}),
+    'rMixed/dg/left':
+        (_loadPeths, {'path': 'peths/rMixed/dg/left'}),
+    'rMixed/dg/right':
+        (_loadPeths, {'path': 'peths/rMixed/dg/right'}),
+    'rProbe/dg/left':
+        (_loadPeths, {'path': 'peths/rProbe/dg/left'}),
+    'rProbe/dg/right':
+        (_loadPeths, {'path': 'peths/rProbe/dg/right'}),
+    # 'rProbe/dg/preferred':
+    #     (_loadPeths, {'path': 'peths/rProbe/dg/preferred'}),
+    # 'rProbe/dg/nonpreferred':
+    #     (_loadPeths, {'path': 'peths/rProbe/dg/nonpreferred'}),
+    'rSaccade/dg/left':
+       (_loadPeths, {'path': 'peths/rSaccade/dg/left'}),
+    'rSaccade/dg/right':
+        (_loadPeths, {'path': 'peths/rSaccade/dg/right'}),
+    'rSaccade/dg/nasal':
+        (_loadPeths, {'path': 'peths/rSaccade/dg/nasal'}),
+    'rSaccade/dg/temporal':
+        (_loadPeths, {'path': 'peths/rSaccade/dg/temporal'}),
+    'rMixed/fs/left':
+        (_loadPeths, {'path': 'peths/rMixed/fs/left'}),
+    'rMixed/fs/right':
+        (_loadPeths, {'path': 'peths/rMixed/fs/right'}),
+    'rProbe/fs/left':
+        (_loadPeths, {'path': 'peths/rProbe/fs/left'}),
+    'rProbe/fs/right':
+        (_loadPeths, {'path': 'peths/rProbe/fs/right'}),
+    'rSaccade/fs/left':
+        (_loadPeths, {'path': 'peths/rSaccade/fs/left'}),
+    'rSaccade/fs/right':
+        (_loadPeths, {'path': 'peths/rSaccade/fs/right'}),
+    'rSaccade/fs/nasal':
+        (_loadPeths, {'path': 'peths/rSaccade/fs/nasal'}),
+    'rSaccade/fs/temporal':
+        (_loadPeths, {'path': 'peths/rSaccade/fs/temporal'}),
     'pZeta/left':
         (_getZetaTestProbabilities, {'probeMotion': -1}),
     'pZeta/right':
         (_getZetaTestProbabilities, {'probeMotion': +1}),
-    'sigma/left':
-        (_getSigmaValues, {'probeMotion': -1}),
-    'sigma/right':
-        (_getSigmaValues, {'probeMotion': +1}),
 }
 
 class UnitsTable():
@@ -211,16 +208,13 @@ class UnitsTable():
                                 attrs[k] = attrs_[k]
                     elif type(value) == str:
                         data = session.load(value)
-                    if len(data.shape) in (1, 2):
-                        for iUnit in range(data.shape[0]):
-                            x = data[iUnit]
-                            dataset.append(x)
-                    elif len(data.shape) == 3:
-                        for iUnit in range(data.shape[1]):
-                            x = data[:, iUnit, :]
-                            dataset.append(x)
+                    for x in data:
+                        dataset.append(x)
                 dataset = np.array(dataset)
-                ds = stream.create_dataset(key, dataset.shape, dataset.dtype, data=dataset)
+                try:
+                    ds = stream.create_dataset(key, dataset.shape, dataset.dtype, data=dataset)
+                except:
+                    import pdb; pdb.set_trace()
                 if len(attrs.keys()) != 0:
                     for k in attrs.keys():
                         ds.attrs[k] = attrs[k]
