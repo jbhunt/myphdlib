@@ -4,7 +4,7 @@ from scipy.stats import sem
 from matplotlib import pylab as plt
 from myphdlib.general.toolkit import smooth
 
-def getTimePoints(
+def getTimePointsForHistogram(
     hdf,
     ):
     """
@@ -12,14 +12,22 @@ def getTimePoints(
 
     return
 
-def getUnitLabels(
+def getTimeBinsForPerisaccadicWindow(
+    hdf,
+    ):
+    """
+    """
+
+    return
+
+def loadUnitLabels(
     hdf,
     ):
     """
     """
 
     with h5py.File(hdf, 'r') as stream:
-        unitLabels = np.array(stream['unitLabels'])
+        unitLabels = np.array(stream['unitLabel'])
 
     return unitLabels
 
@@ -179,11 +187,19 @@ def loadPeths(
                 index = 1
             elif directionPreference[iUnit] == +1 and probeDirection == 'left':
                 index = 1
-            elif directionPreference[iUnit == +1] and probeDirection == 'right':
+            elif directionPreference[iUnit] == +1 and probeDirection == 'right':
                 index = 0
             else:
                 continue
 
+            # Get the baseline FR for the visual-only PETH
+            binIndices = np.where(np.logical_and(
+                tPoints >= baselineWindow[0],
+                tPoints <= baselineWindow[1]
+            ))[0]
+            mu = round(rProbe[probeDirection][iUnit][binIndices].mean(), 3)
+
+            #
             for iBin in range(binCenters.size):
 
                 #
@@ -199,19 +215,18 @@ def loadPeths(
                     y3 = rMixed[probeDirection][iUnit, :, iBin]
 
                 #
-                rObserved = y3 - (y2 - mu)
-                rExpected = y1
+                rObserved = (y3) / sigma
+                rExpected = (y2 + (y1 - mu)) / sigma
                 y4 = rObserved - rExpected
 
                 #
-                data[iUnit, :, iBin, 0, index] = y1 - mu
-                data[iUnit, :, iBin, 1, index] = y2
-                data[iUnit, :, iBin, 2, index] = y3
+                data[iUnit, :, iBin, 0, index] = (y1 - mu) / sigma
+                data[iUnit, :, iBin, 1, index] = y2 / sigma
+                data[iUnit, :, iBin, 2, index] = y3 / sigma
                 data[iUnit, :, iBin, 3, index] = y4
-
-            #
-            # if nSpikes[iUnit] == 20346:
-            #     pass
+                
+    #
+    file.close()
 
     #
     binIndices = np.where(np.logical_and(
@@ -229,13 +244,7 @@ def loadPeths(
     data = np.delete(data, indicesToDelete, axis=0)
     sigma = np.delete(sigma, indicesToDelete, axis=0)
 
-    #
-    # for iBin in range(binCenters.size):
-    #     for iTerm in range(4):
-    #         for iPeth in range(2):
-    #             data[:, :, iBin, iTerm, iPeth] /= sigma
-
-    return data
+    return data, indicesToDelete
 
 class SaccadicModulationAcrossTimeByClusterFigure():
     """
@@ -248,62 +257,68 @@ class SaccadicModulationAcrossTimeByClusterFigure():
         """
 
         self.data = None
-        self.binCenters = None
-        self.unitLabels = None
-        self.tPeak = None
-        self.tPoints = None
+        self.labels = None
 
         return
-
-    def plotModulationCurves(
+    
+    def loadData(
         self,
-        figsize=(3, 8)
+        hdf
         ):
         """
         """
 
-        uniqueLabels = np.unique(self.unitLabels)
-        fig, axs = plt.subplots(nrows=len(uniqueLabels), sharex=True, sharey=True)
+        self.data, indicesToDelete = loadPeths(hdf)
+        self.labels = loadUnitLabels(hdf)
+        self.labels = np.delete(self.labels, indicesToDelete, axis=0)
+
+        return
+
+    def plotAveragePeths(
+        self,
+        figsize=(10, 8),
+        fig=None
+        ):
+        """
+        """
+
+        uniqueLabels = np.unique(self.labels)
+        uniqueLabels = np.delete(uniqueLabels, np.isnan(uniqueLabels))
+        nBins = self.data.shape[2]
+        if fig is None:
+            fig, axs = plt.subplots(nrows=len(uniqueLabels), ncols=nBins, sharex=True, sharey=False)
+        else:
+            axs = fig.axes
 
         #
         for labelIndex, unitLabel in enumerate(uniqueLabels):
+            if np.isnan(unitLabel):
+                continue
             color = f'C{labelIndex}'
-            labelMask = self.unitLabels == unitLabel
-            y = list()
-            for iBin in range(self.data.shape[-1]):
-                sample = self.data[labelMask, self.tPeak[labelMask], iBin, -1]
-                y.append([
-                    np.mean(sample) - sem(sample),
-                    np.mean(sample),
-                    np.mean(sample) + sem(sample)
-                ])
-            y = np.array(y)
-            axs[labelIndex].plot(self.binCenters, y[:, 1], color=color)
-            axs[labelIndex].scatter(self.binCenters, y[:, 1], color=color)
-            axs[labelIndex].vlines(self.binCenters, y[:, 0], y[:, 2], color=color)
+            labelMask = np.ravel(self.labels == unitLabel)
+            for iBin in range(nBins):
+                rProbe = self.data[labelMask, :, iBin, 0, 0]
+                rSaccade = self.data[labelMask, :, iBin, 1, 0]
+                rMixed = self.data[labelMask, :, iBin, 2, 0]
+                axs[labelIndex, iBin].plot(np.nanmean(rMixed, axis=0), color=color)
+                axs[labelIndex, iBin].plot(np.nanmean(rProbe, axis=0) + np.nanmean(rSaccade, axis=0), color=color, linestyle=':')
+
+            #
+            y1, y2 = np.inf, -np.inf
+            for ax in axs[labelIndex, :]:
+                ylim = ax.get_ylim()
+                if ylim[0] < y1:
+                    y1 = ylim[0]
+                if ylim[1] > y2:
+                    y2 = ylim[1]
+            for i, ax in enumerate(axs[labelIndex, :]):
+                if i != 0:
+                    ax.set_yticks([])
+                ax.set_ylim([y1, y2])
 
         #
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
-
-        return fig, axs
-
-    def plotPeths(
-        self,
-        ):
-        """
-        """
-
-        uniqueLabels = np.unique(self.unitLabels)
-        fig, axs = plt.subplots(nrows=len(uniqueLabels), sharex=True)
-
-        #
-        for labelIndex, unitLabel in enumerate(uniqueLabels):
-            color = f'C{labelIndex}'
-            labelMask = self.unitLabels == unitLabel
-            peths = self.data[labelMask, :, 0, 0]
-            axs[labelIndex].plot(peths.mean(0), color=color)
-            axs[labelIndex].set_ylim([0, axs[labelIndex].get_ylim()[-1]])
 
         return fig, axs
