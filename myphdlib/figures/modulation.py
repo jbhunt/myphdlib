@@ -4,7 +4,26 @@ from scipy.stats import sem
 from matplotlib import pylab as plt
 from myphdlib.general.toolkit import smooth
 
-def getResponseParams(
+def getTimePoints(
+    hdf,
+    ):
+    """
+    """
+
+    return
+
+def getUnitLabels(
+    hdf,
+    ):
+    """
+    """
+
+    with h5py.File(hdf, 'r') as stream:
+        unitLabels = np.array(stream['unitLabels'])
+
+    return unitLabels
+
+def determineResponseFeatures(
     hdf,
     protocol='dg',
     responseWindow=(0, 0.3),
@@ -64,14 +83,15 @@ def loadPeths(
     responseWindow=(0, 0.3),
     baselineWindow=(-0.2, 0),
     protocol='dg',
-    maximumProbability=0.01,
-    minimumResponseAmplitude=1,
+    maximumProbability=0.05,
+    minimumResponseAmplitude=3,
+    minimumBaselineActivity=1,
     ):
     """
     """
 
     #
-    directionPreference, responseSign = getResponseParams(
+    directionPreference, responseSign = determineResponseFeatures(
         hdf,
         responseWindow=responseWindow,
         baselineWindow=baselineWindow
@@ -81,7 +101,6 @@ def loadPeths(
     file = h5py.File(hdf, 'r')
 
     # Load datasets
-    unitLabels = np.array(file[f'unitLabel'])
     tPoints = file[f'rProbe/{protocol}/left'].attrs['t']
     binEdges = file[f'rMixed/{protocol}/left'].attrs['edges']
     nSpikes = np.array(file['nSpikes'])
@@ -93,16 +112,65 @@ def loadPeths(
     iPeak = np.full(nUnits, np.nan)
 
     #
-    for probeDirection in ('left', 'right'):
+    rProbe = {
+        'left': np.array(file[f'rProbe/{protocol}/left']),
+        'right': np.array(file[f'rProbe/{protocol}/right'])
+    }
+    rSaccade = {
+        'left': np.array(file[f'rSaccade/{protocol}/left']),
+        'right': np.array(file[f'rSaccade/{protocol}/right'])
+    }
+    rMixed = {
+        'left': np.array(file[f'rMixed/{protocol}/left']),
+        'right': np.array(file[f'rMixed/{protocol}/right'])
+    }
+    pZeta = {
+        'left': np.array(file[f'pZeta/left']),
+        'right': np.array(file[f'pZeta/right'])
+    }
+
+    for iUnit in range(nUnits):
 
         #
-        rProbe = np.array(file[f'rProbe/{protocol}/{probeDirection}'])
-        rMixed = np.array(file[f'rMixed/{protocol}/{probeDirection}'])
-        rSaccade = np.array(file[f'rSaccade/{protocol}/{probeDirection}'])
-        pZeta = np.array(file[f'pZeta/{probeDirection}'])
+        if directionPreference[iUnit] == -1:
+            probeDirection = 'left'
+        else:
+            probeDirection = 'right'
+        if responseSign[iUnit] < 0:
+            coeff = -1
+        else:
+            coeff = +1
 
         #
-        for iUnit in range(nUnits):
+        if maximumProbability is not None and pZeta[probeDirection][iUnit] > maximumProbability:
+            continue
+
+        # Get the baseline FR for the visual-only PETH
+        binIndices = np.where(np.logical_and(
+            tPoints >= baselineWindow[0],
+            tPoints <= baselineWindow[1]
+        ))[0]
+        mu = round(rProbe[probeDirection][iUnit][binIndices].mean(), 3)
+        sigma = round(rProbe[probeDirection][iUnit][binIndices].std(), 3)
+
+        # Filter out units with low baselines
+        if mu < minimumBaselineActivity:
+            continue
+
+        # Find the maximum of the PETH
+        binIndices = np.where(np.logical_and(
+            tPoints >= responseWindow[0],
+            tPoints <= responseWindow[1]
+        ))[0]
+        iPeak[iUnit] = np.argmax(coeff * (rProbe[probeDirection][iUnit][binIndices] - mu)) + np.sum(tPoints < responseWindow[0])
+        responseAmplitude = (coeff * (rProbe[probeDirection][iUnit] - mu))[int(iPeak[iUnit])]
+
+        # Filter out units with low amplitude resopnses
+        if responseAmplitude < minimumResponseAmplitude:
+            continue
+
+        #
+        for probeDirection in ('left', 'right'):
 
             #
             if directionPreference[iUnit] == -1 and probeDirection == 'left':
@@ -116,48 +184,19 @@ def loadPeths(
             else:
                 continue
 
-            #
-            if maximumProbability is not None and pZeta[iUnit] > maximumProbability:
-                continue
-
-            # Get the baseline FR for the visual-only PETH
-            tMask = np.logical_and(
-                tPoints >= baselineWindow[0],
-                tPoints <= baselineWindow[1]
-            )
-            mu = round(rProbe[iUnit][tMask].mean(), 3)
-            sigma = round(rProbe[iUnit][tMask].std(), 3)
-
-            # Find the maximum of the PETH
-            tMask = np.logical_and(
-                tPoints >= responseWindow[0],
-                tPoints <= responseWindow[1]
-            )
-            iPeak[iUnit] = np.argmax(np.abs(rProbe[iUnit][tMask] - mu))
-            iPeak[iUnit] += np.sum(tPoints < responseWindow[0])
-
-            #
-            if sigma == 0:
-                continue
-
-            #
-            rPeak = np.abs(rProbe[iUnit] - mu)[int(iPeak[iUnit])]
-            if rPeak < minimumResponseAmplitude:
-                continue
-
             for iBin in range(binCenters.size):
 
                 #
                 if responseSign[iUnit] == -1:
-                    y1 = -1 * (rProbe[iUnit] - mu) + mu
-                    y2 = -1 * (rSaccade[iUnit, :, iBin] - mu) + mu
-                    y3 = -1 * (rMixed[iUnit, :, iBin] - mu) + mu
+                    y1 = -1 * (rProbe[probeDirection][iUnit] - mu) + mu
+                    y2 = -1 * (rSaccade[probeDirection][iUnit, :, iBin] - mu) + mu
+                    y3 = -1 * (rMixed[probeDirection][iUnit, :, iBin] - mu) + mu
                 
                 #
                 else:
-                    y1 = rProbe[iUnit]
-                    y2 = rSaccade[iUnit, :, iBin]
-                    y3 = rMixed[iUnit, :, iBin]
+                    y1 = rProbe[probeDirection][iUnit]
+                    y2 = rSaccade[probeDirection][iUnit, :, iBin]
+                    y3 = rMixed[probeDirection][iUnit, :, iBin]
 
                 #
                 rObserved = y3 - (y2 - mu)
@@ -165,14 +204,36 @@ def loadPeths(
                 y4 = rObserved - rExpected
 
                 #
-                data[iUnit, :, iBin, 0, index] = y1
+                data[iUnit, :, iBin, 0, index] = y1 - mu
                 data[iUnit, :, iBin, 1, index] = y2
                 data[iUnit, :, iBin, 2, index] = y3
                 data[iUnit, :, iBin, 3, index] = y4
 
-                #
-                if nSpikes[iUnit] == 20346:
-                    pass
+            #
+            # if nSpikes[iUnit] == 20346:
+            #     pass
+
+    #
+    binIndices = np.where(np.logical_and(
+        tPoints >= baselineWindow[0],
+        tPoints <= baselineWindow[1]
+    ))[0]
+    sigma = data[:, binIndices, 0, 0, 0].std(1).reshape(-1, 1)
+
+    #
+    indicesToDelete = np.where(np.vstack([
+        np.isnan(sigma).all(1),
+        np.isnan(data[:, :, 0, 0, 0]).all(axis=1),
+        np.isnan(data[:, :, 0, 0, 1]).all(axis=1)
+    ]).any(0))[0]
+    data = np.delete(data, indicesToDelete, axis=0)
+    sigma = np.delete(sigma, indicesToDelete, axis=0)
+
+    #
+    # for iBin in range(binCenters.size):
+    #     for iTerm in range(4):
+    #         for iPeth in range(2):
+    #             data[:, :, iBin, iTerm, iPeth] /= sigma
 
     return data
 
@@ -193,138 +254,6 @@ class SaccadicModulationAcrossTimeByClusterFigure():
         self.tPoints = None
 
         return
-
-    def processPeths(
-        self,
-        table,
-        probeDirection='left',
-        responseWindow=(0, 0.3),
-        baselineWindow=(-0.2, 0),
-        pMax=None,
-        rMin=None,
-        protocol='dg',
-        version=1,
-        ):
-        """
-        """
-
-        # Read the table
-        file = h5py.File(table, 'r')
-
-        # Load datasets
-        rProbe = np.array(file[f'rProbe/{protocol}/{probeDirection}'])
-        rMixed = np.array(file[f'rMixed/{protocol}/{probeDirection}'])
-        rSaccade = np.array(file[f'rSaccade/{protocol}/{probeDirection}'])
-        pvalues = np.array(file[f'pZeta/{probeDirection}'])
-        unitLabels = np.array(file[f'unitLabel'])
-        nSpikes = np.array(file[f'nSpikes'])
-
-        #
-        tPoints = file[f'rProbe/{protocol}/{probeDirection}'].attrs['t']
-        binEdges = file[f'rMixed/{protocol}/{probeDirection}'].attrs['edges']
-        binCenters = binEdges.mean(1)
-
-        #
-        nUnits, nBinsInHistogram, nBinsInWindow = rMixed.shape
-        data = np.full([nUnits, nBinsInHistogram, nBinsInWindow, 4], np.nan)
-        tPeak = np.full(nUnits, np.nan)
-
-        #
-        for iUnit in range(nUnits):
-
-            #
-            if pMax is not None and pvalues[iUnit] > pMax:
-                continue
-
-            # Find the maximum of the PETH
-            tMask = np.logical_and(
-                tPoints >= responseWindow[0],
-                tPoints <= responseWindow[1]
-            )
-            tOffset = np.sum(tPoints < responseWindow[0])
-            tPeak[iUnit] = np.argmax(rProbe[iUnit][tMask])
-
-            # Get the baseline FR for the visual-only PETH
-            tMask = np.logical_and(
-                tPoints >= baselineWindow[0],
-                tPoints <= baselineWindow[1]
-            )
-            rBaseline = rProbe[iUnit][tMask].mean()
-            sigma = round(rProbe[iUnit][tMask].std(), 3)
-
-            #
-            if rMin is not None and np.interp(tPeak[iUnit], tPoints, rProbe[iUnit] - rBaseline) < rMin:
-                continue
-
-            #
-            for iBin in range(nBinsInWindow):
-
-                # Compute the difference between the expected and observed responses
-
-                # Version #1
-                if version == 1:
-                    rObserved = np.clip(np.interp(
-                        tPoints,
-                        tPoints,
-                        rMixed[iUnit, :, iBin] - (rSaccade[iUnit, :, iBin] - rBaseline)
-                    ), 0, np.inf)
-                    rExpected = np.interp(
-                        tPoints,
-                        tPoints,
-                        rProbe[iUnit]
-                    )
-
-                # Version #2
-                elif version == 2:
-                    rObserved = np.interp(
-                        tPoints,
-                        tPoints,
-                        rMixed[iUnit, :, iBin]
-                    )
-                    rExpected = np.interp(
-                        tPoints,
-                        tPoints,
-                        rSaccade[iUnit, :, iBin] + (rProbe[iUnit] - rBaseline)
-                    )
-
-                #
-                rDiff = smooth(rObserved - rExpected, 3)
-                rOffset = rDiff[tMask].mean()
-                rDiff -= rOffset # Correct for difference in baselines
-                rDiff /= sigma # Scale by standard deviation
-
-                #
-                data[iUnit, :, iBin, 0] = rProbe[iUnit]
-                data[iUnit, :, iBin, 1] = rSaccade[iUnit, :, iBin] - rBaseline
-                data[iUnit, :, iBin, 2] = rMixed[iUnit, :, iBin]
-                data[iUnit, :, iBin, 3] = rDiff
-
-            #
-            # if nSpikes[iUnit] == 26759:
-            #    return data[iUnit]
-
-        # Close the opened file
-        file.close()
-
-        #
-        indices = np.where(np.isnan(unitLabels))[0]
-        # indices = np.array([]).astype(int)
-        data = np.delete(
-            data,
-            indices,
-            axis=0
-        )
-        unitLabels = np.delete(unitLabels, indices)
-        tPeak = np.delete(tPeak, indices)
-
-        #
-        self.data = data
-        self.binCenters = binCenters
-        self.unitLabels = unitLabels
-        self.tPeak = tPeak.astype(int)
-        self.tPoints = tPoints
-
-        return data, binCenters, unitLabels
 
     def plotModulationCurves(
         self,
