@@ -182,13 +182,13 @@ def loadPeths(
 
             #
             if directionPreference[iUnit] == -1 and probeDirection == 'left':
-                index = 0
+                iPeth = 0
             elif directionPreference[iUnit] == -1 and probeDirection == 'right':
-                index = 1
+                iPeth = 1
             elif directionPreference[iUnit] == +1 and probeDirection == 'left':
-                index = 1
+                iPeth = 1
             elif directionPreference[iUnit] == +1 and probeDirection == 'right':
-                index = 0
+                iPeth = 0
             else:
                 continue
 
@@ -220,10 +220,10 @@ def loadPeths(
                 y4 = rObserved - rExpected
 
                 #
-                data[iUnit, :, iBin, 0, index] = (y1 - mu) / sigma
-                data[iUnit, :, iBin, 1, index] = y2 / sigma
-                data[iUnit, :, iBin, 2, index] = y3 / sigma
-                data[iUnit, :, iBin, 3, index] = y4
+                data[iUnit, :, iBin, 0, iPeth] = (y1 - mu) / sigma
+                data[iUnit, :, iBin, 1, iPeth] = y2 / sigma
+                data[iUnit, :, iBin, 2, iPeth] = y3 / sigma
+                data[iUnit, :, iBin, 3, iPeth] = y4
                 
     #
     file.close()
