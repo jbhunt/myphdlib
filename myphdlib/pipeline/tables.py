@@ -39,6 +39,8 @@ def _loadPeths(
 
 
     peths, metadata = session.load(path, returnMetadata=True)
+    if 'rProbe' in path and len(peths.shape) == 3:
+        peths = peths[:, :, 0]
 
     return peths, metadata
 
@@ -113,6 +115,8 @@ unitsTableMapping = {
         ('population/metrics/pr', {}),
     'kilosortLabel':
         ('population/metrics/ksl', {}),
+    'meanSpikeWaveform':
+        ('population/metrics/bsw', {}),
     'rMixed/dg/left':
         (_loadPeths, {'path': 'peths/rMixed/dg/left'}),
     'rMixed/dg/right':
