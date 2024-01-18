@@ -6,19 +6,29 @@ from myphdlib.general.toolkit import smooth
 
 def getTimePointsForHistogram(
     hdf,
+    protocol='dg'
     ):
     """
     """
 
-    return
+    #
+    with h5py.File(hdf, 'r') as stream:
+        t = np.array(stream[f'rProbe/{protocol}/left'].attrs['t'])
 
-def getTimeBinsForPerisaccadicWindow(
+    return t
+
+def getTimePointsForPerisaccadicWindow(
     hdf,
+    protocol='dg'
     ):
     """
     """
+    #
+    with h5py.File(hdf, 'r') as stream:
+        edges = np.array(stream[f'rMixed/{protocol}/left'].attrs['edges'])
+        t = edges.mean(1)
 
-    return
+    return t
 
 def loadUnitLabels(
     hdf,
@@ -154,23 +164,23 @@ def loadPeths(
             continue
 
         # Get the baseline FR for the visual-only PETH
-        binIndices = np.where(np.logical_and(
+        binIndicesForBaselineWindow = np.where(np.logical_and(
             tPoints >= baselineWindow[0],
             tPoints <= baselineWindow[1]
         ))[0]
-        mu = round(rProbe[probeDirection][iUnit][binIndices].mean(), 3)
-        sigma = round(rProbe[probeDirection][iUnit][binIndices].std(), 3)
+        mu = round(rProbe[probeDirection][iUnit][binIndicesForBaselineWindow].mean(), 3)
+        sigma = round(rProbe[probeDirection][iUnit][binIndicesForBaselineWindow].std(), 3)
 
         # Filter out units with low baselines
         if mu < minimumBaselineActivity:
             continue
 
         # Find the maximum of the PETH
-        binIndices = np.where(np.logical_and(
+        binIndicesForResponseWindow = np.where(np.logical_and(
             tPoints >= responseWindow[0],
             tPoints <= responseWindow[1]
         ))[0]
-        iPeak[iUnit] = np.argmax(coeff * (rProbe[probeDirection][iUnit][binIndices] - mu)) + np.sum(tPoints < responseWindow[0])
+        iPeak[iUnit] = np.argmax(coeff * (rProbe[probeDirection][iUnit][binIndicesForResponseWindow] - mu)) + np.sum(tPoints < responseWindow[0])
         responseAmplitude = (coeff * (rProbe[probeDirection][iUnit] - mu))[int(iPeak[iUnit])]
 
         # Filter out units with low amplitude resopnses
@@ -202,51 +212,46 @@ def loadPeths(
             #
             for iBin in range(binCenters.size):
 
-                #
+                # Reflect PSTHs around the baseline for negatively-signed responses
                 if responseSign[iUnit] == -1:
                     y1 = -1 * (rProbe[probeDirection][iUnit] - mu) + mu
                     y2 = -1 * (rSaccade[probeDirection][iUnit, :, iBin] - mu) + mu
                     y3 = -1 * (rMixed[probeDirection][iUnit, :, iBin] - mu) + mu
                 
-                #
+                # Do nothing for positively-signed responses
                 else:
                     y1 = rProbe[probeDirection][iUnit]
                     y2 = rSaccade[probeDirection][iUnit, :, iBin]
                     y3 = rMixed[probeDirection][iUnit, :, iBin]
 
                 #
-                rObserved = (y3) / sigma
-                rExpected = (y2 + (y1 - mu)) / sigma
-                y4 = rObserved - rExpected
+                y4 = y3 - y2
+                y4 -= y4[binIndicesForBaselineWindow].mean()
 
                 #
-                data[iUnit, :, iBin, 0, iPeth] = (y1 - mu) / sigma
-                data[iUnit, :, iBin, 1, iPeth] = y2 / sigma
-                data[iUnit, :, iBin, 2, iPeth] = y3 / sigma
+                data[iUnit, :, iBin, 0, iPeth] = y1 - y1[binIndicesForBaselineWindow].mean()
+                data[iUnit, :, iBin, 1, iPeth] = y2 - y2[binIndicesForBaselineWindow].mean()
+                data[iUnit, :, iBin, 2, iPeth] = y3 - y3[binIndicesForBaselineWindow].mean()
                 data[iUnit, :, iBin, 3, iPeth] = y4
                 
     #
     file.close()
 
     #
-    binIndices = np.where(np.logical_and(
-        tPoints >= baselineWindow[0],
-        tPoints <= baselineWindow[1]
-    ))[0]
-    sigma = data[:, binIndices, 0, 0, 0].std(1).reshape(-1, 1)
+    sigma = data[:, binIndicesForResponseWindow, 0, 0, 0].std(1).reshape(-1, 1)
 
     #
-    indicesToDelete = np.where(np.vstack([
+    indices = np.where(np.vstack([
         np.isnan(sigma).all(1),
         np.isnan(data[:, :, 0, 0, 0]).all(axis=1),
         np.isnan(data[:, :, 0, 0, 1]).all(axis=1)
     ]).any(0))[0]
-    data = np.delete(data, indicesToDelete, axis=0)
-    sigma = np.delete(sigma, indicesToDelete, axis=0)
+    data = np.delete(data, indices, axis=0)
+    sigma = np.delete(sigma, indices, axis=0)
 
-    return data, indicesToDelete
+    return data, sigma, indices
 
-class SaccadicModulationAcrossTimeByClusterFigure():
+class SaccadicModulationAnalysis():
     """
     """
 
@@ -258,6 +263,8 @@ class SaccadicModulationAcrossTimeByClusterFigure():
 
         self.data = None
         self.labels = None
+        self.sigma = None
+        self.t = None
 
         return
     
@@ -268,12 +275,63 @@ class SaccadicModulationAcrossTimeByClusterFigure():
         """
         """
 
-        self.data, indicesToDelete = loadPeths(hdf)
+        self.data, self.sigma, indices = loadPeths(hdf)
         self.labels = loadUnitLabels(hdf)
-        self.labels = np.delete(self.labels, indicesToDelete, axis=0)
+        self.labels = np.delete(self.labels, indices, axis=0)
+        self.tHist = getTimePointsForHistogram(hdf)
+        self.tWin = getTimePointsForPerisaccadicWindow(hdf)
 
         return
+    
+    def plotModulationCurves(
+        self,
+        responseWindow=(0, 0.3),
+        figsize=(5, 5),
+        fig=None,
+        ):
+        """
+        """
 
+        if fig is None:
+            fig, ax = plt.subplots()
+        else:
+            ax = fig.axes[0]
+        nBins = self.data.shape[2]
+        uniqueLabels = np.unique(self.labels)
+        uniqueLabels = np.delete(uniqueLabels, np.isnan(uniqueLabels))
+        binIndices = np.where(np.logical_and(
+            self.t >= responseWindow[0],
+            self.t <= responseWindow[1]
+        ))[0]
+        y0 = list()
+        for iLabel, unitLabel in enumerate(uniqueLabels):
+            y1 = list()
+            for iUnit in np.where(self.labels == unitLabel)[0]:
+                y2 = list()
+                for iBin in range(nBins):
+                    rProbeExpected = self.data[iUnit, :, iBin,  0, 0] / self.sigma[iUnit]
+                    rProbeComputed = self.data[iUnit, :, iBin, -1, 0] / self.sigma[iUnit]
+                    iPeak = np.argmax(rProbeExpected[binIndices]) + binIndices.min()
+                    y2.append(rProbeComputed[iPeak] - rProbeExpected[iPeak])
+                y1.append(y2)
+            y1 = np.array(y1)
+            y0.append(y1)
+            color = f'C{iLabel}'
+            ax.plot(self.tWin, y1.mean(0), color=color, label=f'C{iLabel + 1}')
+            ax.vlines(
+                self.tWin,
+                y1.mean(0) - sem(y1, axis=0),
+                y1.mean(0) + sem(y1, axis=0),
+                color=color
+            )
+
+        #
+        ax.set_ylabel('Modulation')
+        ax.set_xlabel('Time from saccade (sec)')
+        ax.legend()
+
+        return fig, ax, y0
+    
     def plotAveragePeths(
         self,
         figsize=(10, 8),
@@ -297,11 +355,10 @@ class SaccadicModulationAcrossTimeByClusterFigure():
             color = f'C{labelIndex}'
             labelMask = np.ravel(self.labels == unitLabel)
             for iBin in range(nBins):
-                rProbe = self.data[labelMask, :, iBin, 0, 0]
-                rSaccade = self.data[labelMask, :, iBin, 1, 0]
-                rMixed = self.data[labelMask, :, iBin, 2, 0]
-                axs[labelIndex, iBin].plot(np.nanmean(rMixed, axis=0), color=color)
-                axs[labelIndex, iBin].plot(np.nanmean(rProbe, axis=0) + np.nanmean(rSaccade, axis=0), color=color, linestyle=':')
+                rProbeExpected = self.data[labelMask, :, iBin,  0, 0]
+                rProbeComputed = self.data[labelMask, :, iBin, -1, 0]
+                axs[labelIndex, iBin].plot(self.tHist, np.nanmean(rProbeExpected / self.sigma[labelMask], axis=0), color=color, alpha=0.7)
+                axs[labelIndex, iBin].plot(self.tHist, np.nanmean(rProbeComputed / self.sigma[labelMask], axis=0), color='k', alpha=0.3)
 
             #
             y1, y2 = np.inf, -np.inf
@@ -314,7 +371,13 @@ class SaccadicModulationAcrossTimeByClusterFigure():
             for i, ax in enumerate(axs[labelIndex, :]):
                 if i != 0:
                     ax.set_yticks([])
-                ax.set_ylim([y1, y2])
+                # ax.set_ylim([y1, y2])
+                ax.set_ylim([-1, 3])
+
+        #
+        for i, ax in enumerate(axs[:, 0]):
+            ax.set_yticks([])
+            ax.set_ylabel(f'C{i + 1}', rotation='horizontal', ha='right', va='center')
 
         #
         fig.set_figwidth(figsize[0])
