@@ -18,7 +18,7 @@ class ClusterProcessingMixin():
         normalizingWindow=(0, 0.5),
         perisaccadicWindow=(-0.05, 0.1),
         minimumBaselineActivity=0.5,
-        minimumResponseAmplitude=2,
+        minimumResponseAmplitude=1,
         binsize=0.02,
         smoothingKernelWidth=0.01,
         overwrite=False,
@@ -170,12 +170,145 @@ class ClusterProcessingMixin():
            self.save(f'peths/rProbe/dg/{directionPreference}', X[directionPreference])
 
         return X
+    
+    def _extractNormalizedSaccadOnlyResponses(
+        self,
+        responseWindow=(-0.2, 0.5),
+        baselineWindow=(-0.5, -0.3),
+        normalizingWindow=(-0.3, 0.5),
+        perisaccadicWindow=(-0.05, 0.1),
+        minimumBaselineActivity=0.5,
+        minimumResponseAmplitude=1,
+        binsize=0.02,
+        smoothingKernelWidth=0.01,
+        overwrite=False,
+        ):
+        """
+        """
+
+        peristimulusWindow = np.array([
+            perisaccadicWindow[1] * -1,
+            perisaccadicWindow[0] * -1
+        ])
+
+#
+        self.log(f'Extracting preferred and non-preferred responses to the probe stimulus')
+
+        #
+        tBins, nTrials, nBins = psth2(
+            np.array([0]),
+            np.array([0]),
+            window=responseWindow,
+            binsize=binsize,
+            returnShape=True,
+        )
+        nUnits = self.population.count()
+
+        #
+        datasetKeys = (
+            ('rSaccade', 'dg', 'preferred'),
+            ('rSaccade', 'dg', 'nonpreferred'),
+        )
+
+        # Check if data is alread processed 
+        flags = np.full(len(datasetKeys), False)
+        for i, (responseType, protocol, eventDirection) in enumerate(datasetKeys):
+            datasetPath = f'peths/{responseType}/{protocol}/{eventDirection}'
+            if self.hasDataset(datasetPath):
+                flags[i] = True
+        if flags.all() and overwrite == False:
+           return
+
+        # Skip sessions without the drifting grating stimulus
+        if self.saccadeTimestamps is None:
+            for eventType, eventDirection in datasetKeys:
+                datasetPath = f'peths/{eventType}/{eventDirection}'
+                self.save(datasetPath, np.full([nUnits, nBins], np.nan))
+            return
+
+        #
+        factors = {
+            'nasal': np.full(nUnits, np.nan),
+            'temporal': np.full(nUnits, np.nan)
+        }
+        amplitudes = {
+            'nasal': np.full(nUnits, np.nan),
+            'temporal': np.full(nUnits, np.nan)
+        }
+        peths = {
+            'nasal': np.full([nUnits, nBins], np.nan),
+            'temporal': np.full([nUnits, nBins], np.nan)
+        }
+
+        #
+        for saccadeLabel, saccadeDirection in zip([-1, +1], ['temporal', 'nasal']):
+
+            #
+            trialIndices = np.where(np.logical_and(
+                np.logical_or(
+                    self.saccadeLatencies < peristimulusWindow[0],
+                    self.saccadeLatencies > peristimulusWindow[1]
+                ),
+                self.saccadeLabels == saccadeLabel,
+            ))[0]
+
+            #
+            for iUnit, unit in enumerate(self.population):
+                if iUnit == nUnits - 1:
+                    end = None
+                else:
+                    end = '\r'
+                self.log(f'Working on unit {iUnit + 1} out of {nUnits} (label={saccadeLabel})', end=end)
+
+                # Estimate baseline activity
+                t, M = psth2(
+                    self.saccadeTimestamps[trialIndices, 0],
+                    unit.timestamps,
+                    window=baselineWindow,
+                    binsize=None
+                )
+                mu = M.flatten().mean() / np.diff(baselineWindow).item()
+
+                # Filter out units with subthreshold baselines
+                if mu < minimumBaselineActivity:
+                    continue
+
+                # Measure the evoked response
+                t, fr = unit.peth(
+                    self.saccadeTimestamps[trialIndices, 0],
+                    responseWindow=responseWindow,
+                    binsize=binsize,
+                    kde=True,
+                    sd=smoothingKernelWidth,
+                )
+
+                # Filter out units with subthreshold baselines
+                if np.max(np.abs(fr - mu)) < minimumResponseAmplitude:
+                    continue
+                
+                #
+                amplitude = np.max(np.abs(fr - mu))
+                amplitudes[saccadeDirection][iUnit] = amplitude
+
+                #
+                peths[saccadeDirection][iUnit] = fr - mu
+
+                # Save the baseline subtracted response
+                normalizingWindowMask = np.logical_and(
+                    t >= normalizingWindow[0],
+                    t <= normalizingWindow[1]
+                )
+                factor = round(np.max(np.abs(fr - mu)[normalizingWindowMask]), 2)
+                factors[saccadeDirection][iUnit] = factor
+
+        return
 
     def _runClusterModule(self):
         """
         """
 
         self._extractNormalizedVisulOnlyResponses()
+        self._extractNormalizedSaccadOnlyResponses()
 
         return
 
@@ -197,11 +330,18 @@ def clusterUnitsByVisualResponseShape(
     samples = list()
     inclusionMasksBySession = list()
     for session in sessions:
-        peths = session.load(f'peths/rProbe/preferred')
-        inclusionMask = np.invert(np.isnan(peths).all(1))
+        pethsProbeOnly = session.load(f'peths/rProbe/preferred')
+        pethsSaccadeOnly = session.load(f'peths/rSaccade/preferred')
+        inclusionMask = np.logical_and(
+            np.invert(np.isnan(pethsProbeOnly).all(1)),
+            np.invert(np.isnan(pethsSaccadeOnly).all(1))
+        )
         inclusionMasksBySession.append(inclusionMask)
         for unit in session.population:
-            sample = peths[unit.index, :]
+            sample = np.concatenate([
+                pethsProbeOnly[unit.index, :],
+                pethsSaccadeOnly[unit.index, :]
+            ])
             if np.isnan(sample).all():
                 continue
             else:
