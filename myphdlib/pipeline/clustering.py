@@ -301,6 +301,41 @@ class ClusterProcessingMixin():
                 factor = round(np.max(np.abs(fr - mu)[normalizingWindowMask]), 2)
                 factors[saccadeDirection][iUnit] = factor
 
+        #
+        X = {
+            'preferred': np.full([nUnits, nBins], np.nan),
+            'nonpreferred': np.full([nUnits, nBins], np.nan)
+        }
+        for iUnit in range(nUnits):
+
+            #
+            mapping = {
+                'nasal': None,
+                'temporal': None
+            }
+            aN = amplitudes['nasal'][iUnit]
+            aT = amplitudes['temporal'][iUnit]
+            if np.isnan([aN, aT]).all():
+                continue
+            if aN > aT:
+                mapping['nasal'] = 'preferred'
+                mapping['temporal'] = 'nonpreferred'
+                factor = factors['nasal'][iUnit]
+            else:
+                mapping['nasal'] = 'nonpreferred'
+                mapping['temporal'] = 'preferred'
+                factor = factors['temporal'][iUnit]
+
+            #
+            for probeDirection, directionPreference in mapping.items():
+                X[directionPreference][iUnit] = peths[probeDirection][iUnit] / factor
+        
+        #
+        for directionPreference in ('preferred', 'nonpreferred'):
+           self.save(f'peths/rProbe/dg/{directionPreference}', X[directionPreference])
+
+        return X
+
         return
 
     def _runClusterModule(self):
