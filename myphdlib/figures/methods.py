@@ -1,7 +1,9 @@
+import h5py
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
 from myphdlib.general.toolkit import smooth
+from sklearn.decomposition import PCA
 
 def measureSaccadeFrequencyDuringGratingMotion(
     session,
@@ -478,3 +480,148 @@ class PopulationHeatmapBeforeAndAfterFilteringFigure():
         fig.tight_layout()
 
         return fig, (ax1, ax2)
+    
+class ClusteringAnalysis():
+    """
+    """
+
+    def __init__(
+        self,
+        ):
+        """
+        """
+
+        self.data = None
+        self.labels = None
+        self.t = None
+
+        return
+
+    def loadData(
+        self,
+        hdf,
+        baselineWindow=(-0.2, 0),
+        responseWindow=(0, 0.3),
+        minimumBaselineLevel=0.5,
+        minimumResponseAmplitude=1,
+        ):
+        """
+        """
+
+        with h5py.File(hdf, 'r') as stream:
+            labels = np.array(stream['unitLabel'])
+            rProbeLeft = np.array(stream['rProbe/dg/left'])
+            rProbeRight = np.array(stream['rProbe/dg/right'])
+            # rProbeNormalized = np.array(stream['rProbe/dg/preferred'])
+            # rSaccadeNormalized = np.array(stream['rSaccade/dg/preferred'])
+            t = np.array(stream['rProbe/dg/left'].attrs['t'])
+
+
+        #
+        binIndicesForBaselineWindow = np.where(np.logical_and(
+            t >= baselineWindow[0],
+            t <= baselineWindow[1]
+        ))[0]
+        binIndicesForResponseWindow = np.where(np.logical_and(
+            t >= responseWindow[0],
+            t <= responseWindow[1]
+        ))[0]
+
+        #
+        nUnits = rProbeLeft.shape[0]
+        nBins = rProbeLeft.shape[1]
+        exclude = np.full(nUnits, False)
+        X = np.full([nUnits, nBins], np.nan)
+        for iUnit in range(nUnits):
+
+            #
+            baselineLevelLeft = rProbeLeft[iUnit, binIndicesForBaselineWindow].mean()
+            baselineLevelRight = rProbeRight[iUnit, binIndicesForBaselineWindow].mean()
+            lowestBaselineLevel = np.max([
+                baselineLevelLeft,
+                baselineLevelRight
+            ])
+            if lowestBaselineLevel < minimumBaselineLevel:
+                exclude[iUnit] = True
+
+            #
+            peakAmplitudeLeft = np.max(np.abs(rProbeLeft[iUnit, binIndicesForResponseWindow] - baselineLevelLeft))
+            peakAmplitudeRight = np.max(np.abs(rProbeRight[iUnit, binIndicesForResponseWindow] - baselineLevelRight))
+            greatestPeakAmplitude = np.max([
+                peakAmplitudeLeft,
+                peakAmplitudeRight
+            ])
+            if greatestPeakAmplitude < minimumResponseAmplitude:
+                exclude[iUnit] = True
+
+            #
+            if exclude[iUnit]:
+                continue
+            if peakAmplitudeLeft > peakAmplitudeRight:
+                x = (rProbeLeft[iUnit] - baselineLevelLeft) / peakAmplitudeLeft
+            else:
+                x = (rProbeRight[iUnit] - baselineLevelRight) / peakAmplitudeRight
+            X[iUnit, :] = x
+
+        include = np.logical_and(
+            np.invert(exclude),
+            np.invert(np.isnan(labels.flatten()))
+        )
+
+        # self.data = np.conatenate([rProbeNormalized, rSaccadeNormalized], axis=1)
+        self.t = t
+        self.data = X[include, :]
+        self.labels = labels[include]
+
+        return
+    
+    def plotResponseSubspaceByCluster(
+        self,
+        ):
+        """
+        """
+
+        xy = PCA(n_components=3).fit_transform(self.data)
+        fig = plt.figure()
+        ax = fig.add_subplot(projection='3d')
+        colors = np.array([f'C{int(l)}' for l in self.labels])
+        ax.scatter(xy[:, 0], xy[:, 1], zs=xy[:, 2], c=colors, s=2, alpha=1)
+
+        return fig, ax
+    
+    def plotAverageResponsesbyCluster(
+        self,
+        figsize=(4, 8),
+        clusterOrder=(1, 7, 8, 2, 3, 5, 6, 0, 4),
+        ):
+        """
+        """
+
+        nUnits = self.data.shape[0]
+        clusterLabels, labelCounts = np.unique(self.labels.flatten(), return_counts=True)
+        fig, axs = plt.subplots(nrows=clusterLabels.size, gridspec_kw={'height_ratios':labelCounts})
+        for iCluster in range(clusterLabels.size):
+            if clusterOrder is None:
+                clusterLabel = clusterLabels[iCluster]
+                clusterName = f'C{iCluster + 1}'
+            else:
+                clusterLabel = clusterLabels[np.array(clusterOrder)][iCluster]
+                clusterName = f'C{int(clusterLabel + 1)}'
+            clusterMask = self.labels.flatten() == clusterLabel
+            unitIndices = np.arange(clusterMask.sum())
+            np.random.shuffle(unitIndices)
+            z = smooth(self.data[clusterMask, :][unitIndices, :], 5, axis=1)
+            y = np.arange(clusterMask.sum())
+            axs[iCluster].pcolor(self.t, y, z, vmin=-0.85, vmax=0.85)
+            axs[iCluster].set_yticks([])
+            axs[iCluster].set_ylabel(clusterName, rotation=0, va='center', ha='right')
+
+        #
+        for ax in axs[:-1]:
+            ax.set_xticks([])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+        fig.subplots_adjust(hspace=0.15)
+
+        return fig, axs
