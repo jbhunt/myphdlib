@@ -1,11 +1,10 @@
 import numpy as np
 from myphdlib.general.toolkit import psth2
 from sklearn.decomposition import PCA
-from sklearn.cluster import AgglomerativeClustering
+from sklearn.cluster import AgglomerativeClustering, KMeans
 from sklearn.mixture import GaussianMixture
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import silhouette_score
-import pandas as pd
 
 class ClusterProcessingMixin():
     """
@@ -56,7 +55,7 @@ class ClusterProcessingMixin():
 
         # Skip sessions without the drifting grating stimulus
         if self.probeTimestamps is None:
-            for eventType, eventDirection in datasetKeys:
+            for eventType, protocol, eventDirection in datasetKeys:
                 datasetPath = f'peths/{eventType}/{eventDirection}'
                 self.save(datasetPath, np.full([nUnits, nBins], np.nan))
             return
@@ -169,12 +168,12 @@ class ClusterProcessingMixin():
         for directionPreference in ('preferred', 'nonpreferred'):
            self.save(f'peths/rProbe/dg/{directionPreference}', X[directionPreference])
 
-        return X
+        return
     
     def _extractNormalizedSaccadOnlyResponses(
         self,
         responseWindow=(-0.2, 0.5),
-        baselineWindow=(-0.5, -0.3),
+        baselineWindow=(-2, -1.8),
         normalizingWindow=(-0.3, 0.5),
         perisaccadicWindow=(-0.05, 0.1),
         minimumBaselineActivity=0.5,
@@ -191,8 +190,8 @@ class ClusterProcessingMixin():
             perisaccadicWindow[0] * -1
         ])
 
-#
-        self.log(f'Extracting preferred and non-preferred responses to the probe stimulus')
+        #
+        self.log(f'Extracting preferred and non-preferred responses to saccades')
 
         #
         tBins, nTrials, nBins = psth2(
@@ -220,8 +219,8 @@ class ClusterProcessingMixin():
            return
 
         # Skip sessions without the drifting grating stimulus
-        if self.saccadeTimestamps is None:
-            for eventType, eventDirection in datasetKeys:
+        if self.probeTimestamps is None:
+            for eventType, protocol, eventDirection in datasetKeys:
                 datasetPath = f'peths/{eventType}/{eventDirection}'
                 self.save(datasetPath, np.full([nUnits, nBins], np.nan))
             return
@@ -332,27 +331,72 @@ class ClusterProcessingMixin():
         
         #
         for directionPreference in ('preferred', 'nonpreferred'):
-           self.save(f'peths/rProbe/dg/{directionPreference}', X[directionPreference])
-
-        return X
+           self.save(f'peths/rSaccade/dg/{directionPreference}', X[directionPreference])
 
         return
 
-    def _runClusterModule(self):
+    def _runClusterModule(self, overwrite=False):
         """
         """
 
-        self._extractNormalizedVisulOnlyResponses()
-        self._extractNormalizedSaccadOnlyResponses()
+        self._extractNormalizedVisulOnlyResponses(overwrite=overwrite)
+        self._extractNormalizedSaccadOnlyResponses(overwrite=overwrite)
 
         return
 
-def clusterUnitsByVisualResponseShape(
+def filterUnits(
+    session,
+    responseWindow=(0, 0.3),
+    baselineWindow=(-0.2, 0),
+    minimumBaselineActivity=0.5,
+    minimumResponseAmplitude=0.5,
+    ):
+    """
+    """
+
+    #
+    rProbe_, metadata = session.load('peths/rProbe/left', returnMetadata=True)
+    t = metadata['t']
+    binIndicesForBaselineWindow = np.where(np.logical_and(
+        t >= baselineWindow[0],
+        t <= baselineWindow[1]
+    ))[0]
+    binIndicesForResponseWindow = np.where(np.logical_and(
+        t >= responseWindow[0],
+        t <= responseWindow[1]
+    ))[0]
+
+    #
+    rProbe = {
+        'left': session.load(f'peths/rProbe/left'),
+        'right': session.load(f'peths/rProbe/right')
+    }
+
+    #
+    include = np.full(session.population.count(), True)
+    for iUnit in range(session.population.count()): 
+        baselineActivity = 0
+        responseAmplitude = 0
+        for probeDirection in ('left', 'right'):
+            mu = rProbe[probeDirection][iUnit][binIndicesForBaselineWindow].mean()
+            if mu > baselineActivity:
+                baselineActivity = mu
+            fr = np.abs(rProbe[probeDirection][iUnit][binIndicesForResponseWindow]).max()
+            if fr > responseAmplitude:
+                responseAmplitude = fr
+        if baselineActivity < minimumBaselineActivity or responseAmplitude < minimumResponseAmplitude:
+            include[iUnit] = False
+
+    return include
+
+def clusterUnits(
     sessions,
     k=None,
     kmin=1,
     kmax=15,
     model='gmm',
+    minimumBaselineActivity=0.5,
+    minimumResponseAmplitude=1,
     ):
     """
     """
@@ -365,17 +409,22 @@ def clusterUnitsByVisualResponseShape(
     samples = list()
     inclusionMasksBySession = list()
     for session in sessions:
-        pethsProbeOnly = session.load(f'peths/rProbe/preferred')
-        pethsSaccadeOnly = session.load(f'peths/rSaccade/preferred')
-        inclusionMask = np.logical_and(
-            np.invert(np.isnan(pethsProbeOnly).all(1)),
-            np.invert(np.isnan(pethsSaccadeOnly).all(1))
-        )
+        zProbe = session.load(f'peths/rProbe/preferred')
+        zSaccade = session.load(f'peths/rSaccade/preferred')
+        inclusionMask = np.vstack([
+            filterUnits(
+                session,
+                minimumBaselineActivity=minimumBaselineActivity,
+                minimumResponseAmplitude=minimumResponseAmplitude
+            ),
+            np.invert(np.isnan(zProbe).all(1)),
+            np.invert(np.isnan(zSaccade).all(1))
+        ]).all(0)
         inclusionMasksBySession.append(inclusionMask)
         for unit in session.population:
             sample = np.concatenate([
-                pethsProbeOnly[unit.index, :],
-                pethsSaccadeOnly[unit.index, :]
+                zProbe[unit.index, :],
+                zSaccade[unit.index, :]
             ])
             if np.isnan(sample).all():
                 continue
@@ -427,12 +476,31 @@ def clusterUnitsByVisualResponseShape(
             scores = None
         labels = model.predict(X)
 
+    # K-means clustering
+    elif model == 'kmeans':
+        if k is None:
+            grid = {
+                'n_clusters': krange,
+            }
+            search = GridSearchCV(
+                KMeans(),
+                param_grid=grid,
+                scoring=lambda estimator, X: -1 * silhouette_score(X, estimator.labels_)
+            )
+            search.fit(X)
+            model = search.best_estimator_
+            scores = -1 * search.cv_results_['mean_test_score']
+        else:
+            model = AgglomerativeClustering(n_clusters=k).fit(X)
+            scores = None
+        labels = model.labels_
+
     #
     xDecomposed = PCA(n_components=2).fit_transform(X)
 
     #
     nClusters = np.unique(labels).size
-    print(f'INFO: Visual responses optimally fit to {nClusters} clusters')
+    print(f'INFO: Event-related activity optimally fit to {nClusters} clusters')
 
     # NOTE: This needs to be done for estimators that don't implement a 'predict' method
     nUnitsIncludedBySession = np.array([

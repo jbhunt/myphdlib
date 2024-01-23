@@ -40,7 +40,9 @@ def _loadPeths(
 
     peths, metadata = session.load(path, returnMetadata=True)
     if 'rProbe' in path and len(peths.shape) == 3:
-        peths = peths[:, :, 0]
+        pethsFlattened = peths[:, :, 0]
+        del peths
+        return pethsFlattened, metadata
 
     return peths, metadata
 
@@ -125,14 +127,18 @@ unitsTableMapping = {
         (_loadPeths, {'path': 'peths/rProbe/dg/left'}),
     'rProbe/dg/right':
         (_loadPeths, {'path': 'peths/rProbe/dg/right'}),
-    # 'rProbe/dg/preferred':
-    #     (_loadPeths, {'path': 'peths/rProbe/dg/preferred'}),
-    # 'rProbe/dg/nonpreferred':
-    #     (_loadPeths, {'path': 'peths/rProbe/dg/nonpreferred'}),
-    'rSaccade/dg/left':
-       (_loadPeths, {'path': 'peths/rSaccade/dg/left'}),
-    'rSaccade/dg/right':
-        (_loadPeths, {'path': 'peths/rSaccade/dg/right'}),
+    'rProbe/dg/preferred':
+        (_loadPeths, {'path': 'peths/rProbe/dg/preferred'}),
+    'rProbe/dg/nonpreferred':
+        (_loadPeths, {'path': 'peths/rProbe/dg/nonpreferred'}),
+    'rSaccade/dg/preferred':
+        (_loadPeths, {'path': 'peths/rSaccade/dg/preferred'}),
+    'rSaccade/dg/nonpreferred':
+        (_loadPeths, {'path': 'peths/rSaccade/dg/nonpreferred'}),
+    # 'rSaccade/dg/left':
+    #    (_loadPeths, {'path': 'peths/rSaccade/dg/left'}),
+    # 'rSaccade/dg/right':
+    #     (_loadPeths, {'path': 'peths/rSaccade/dg/right'}),
     'rSaccade/dg/nasal':
         (_loadPeths, {'path': 'peths/rSaccade/dg/nasal'}),
     'rSaccade/dg/temporal':
@@ -167,7 +173,7 @@ class UnitsTable():
         self,
         filename,
         sessions,
-        minimumFiringRate=0.5,
+        minimumFiringRate=None,
         minimumResponseAmplitude=None,
         filterUnits=True
         ):

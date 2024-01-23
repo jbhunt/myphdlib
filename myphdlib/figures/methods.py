@@ -4,6 +4,8 @@ from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
 from myphdlib.general.toolkit import smooth
 from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.mixture import GaussianMixture
 
 def measureSaccadeFrequencyDuringGratingMotion(
     session,
@@ -512,8 +514,8 @@ class ClusteringAnalysis():
             labels = np.array(stream['unitLabel'])
             rProbeLeft = np.array(stream['rProbe/dg/left'])
             rProbeRight = np.array(stream['rProbe/dg/right'])
-            # rProbeNormalized = np.array(stream['rProbe/dg/preferred'])
-            # rSaccadeNormalized = np.array(stream['rSaccade/dg/preferred'])
+            rProbeNormalized = np.array(stream['rProbe/dg/preferred'])
+            rSaccadeNormalized = np.array(stream['rSaccade/dg/preferred'])
             t = np.array(stream['rProbe/dg/left'].attrs['t'])
 
 
@@ -531,7 +533,10 @@ class ClusteringAnalysis():
         nUnits = rProbeLeft.shape[0]
         nBins = rProbeLeft.shape[1]
         exclude = np.full(nUnits, False)
-        X = np.full([nUnits, nBins], np.nan)
+        X = {
+            'rProbe': np.full([nUnits, nBins], np.nan),
+            'rSaccade': np.full([nUnits, nBins], np.nan)
+        }
         for iUnit in range(nUnits):
 
             #
@@ -557,21 +562,53 @@ class ClusteringAnalysis():
             #
             if exclude[iUnit]:
                 continue
-            if peakAmplitudeLeft > peakAmplitudeRight:
-                x = (rProbeLeft[iUnit] - baselineLevelLeft) / peakAmplitudeLeft
-            else:
-                x = (rProbeRight[iUnit] - baselineLevelRight) / peakAmplitudeRight
-            X[iUnit, :] = x
 
-        include = np.logical_and(
+            # if peakAmplitudeLeft > peakAmplitudeRight:
+            #     x = (rProbeLeft[iUnit] - baselineLevelLeft) / peakAmplitudeLeft
+            # else:
+            #     x = (rProbeRight[iUnit] - baselineLevelRight) / peakAmplitudeRight
+
+            X['rProbe'][iUnit, :] = rProbeNormalized[iUnit]
+            X['rSaccade'][iUnit, :] = rSaccadeNormalized[iUnit]
+
+        #
+        xJoined = np.concatenate([
+            X['rProbe'],
+            X['rSaccade'],
+        ], axis=1)
+        include = np.vstack([
             np.invert(exclude),
-            np.invert(np.isnan(labels.flatten()))
-        )
+            np.invert(np.isnan(labels.flatten())),
+            np.invert(np.isnan(xJoined).any(1))
+        ]).all(0)
 
-        # self.data = np.conatenate([rProbeNormalized, rSaccadeNormalized], axis=1)
         self.t = t
-        self.data = X[include, :]
+        self.data = dict()
+        for k in ('rProbe', 'rSaccade'):
+            self.data[k] = X[k][include, :]
         self.labels = labels[include]
+
+        return
+
+    def recluster(
+        self,
+        k=3,
+        model='kmeans',
+        plot=True,
+        figsize=(5, 8)
+        ):
+        """
+        """
+
+        if model == 'kmeans':
+            estimator = KMeans(n_clusters=k, n_init='auto')
+
+        xJoined = np.concatenate([
+            self.data['rProbe'],
+            self.data['rSaccade'],
+        ], axis=1)
+        self.labels = estimator.fit_predict(xJoined)
+        
 
         return
     
@@ -581,7 +618,11 @@ class ClusteringAnalysis():
         """
         """
 
-        xy = PCA(n_components=3).fit_transform(self.data)
+        xJoined = np.concatenate([
+            self.data['rProbe'],
+            self.data['rSaccade'],
+        ], axis=1)
+        xy = PCA(n_components=3).fit_transform(xJoined)
         fig = plt.figure()
         ax = fig.add_subplot(projection='3d')
         colors = np.array([f'C{int(l)}' for l in self.labels])
@@ -591,16 +632,18 @@ class ClusteringAnalysis():
     
     def plotAverageResponsesbyCluster(
         self,
-        figsize=(4, 8),
-        clusterOrder=(1, 7, 8, 2, 3, 5, 6, 0, 4),
+        figsize=(8, 8),
+        clusterOrder=None,
         ):
         """
         """
 
-        nUnits = self.data.shape[0]
+        nUnits = self.data['rProbe'].shape[0]
         clusterLabels, labelCounts = np.unique(self.labels.flatten(), return_counts=True)
-        fig, axs = plt.subplots(nrows=clusterLabels.size, gridspec_kw={'height_ratios':labelCounts})
+        fig, axs = plt.subplots(nrows=clusterLabels.size, ncols=2, gridspec_kw={'height_ratios':labelCounts})
         for iCluster in range(clusterLabels.size):
+
+            #
             if clusterOrder is None:
                 clusterLabel = clusterLabels[iCluster]
                 clusterName = f'C{iCluster + 1}'
@@ -610,14 +653,19 @@ class ClusteringAnalysis():
             clusterMask = self.labels.flatten() == clusterLabel
             unitIndices = np.arange(clusterMask.sum())
             np.random.shuffle(unitIndices)
-            z = smooth(self.data[clusterMask, :][unitIndices, :], 5, axis=1)
+
+            #
+            zProbe = smooth(self.data['rProbe'][clusterMask, :][unitIndices, :], 5, axis=1)
+            zSaccade = smooth(self.data['rSaccade'][clusterMask, :][unitIndices, :], 5, axis=1)
             y = np.arange(clusterMask.sum())
-            axs[iCluster].pcolor(self.t, y, z, vmin=-0.85, vmax=0.85)
-            axs[iCluster].set_yticks([])
-            axs[iCluster].set_ylabel(clusterName, rotation=0, va='center', ha='right')
+            axs[iCluster, 0].pcolor(self.t, y, zProbe, vmin=-0.85, vmax=0.85)
+            axs[iCluster, 0].set_yticks([])
+            axs[iCluster, 0].set_ylabel(clusterName, rotation=0, va='center', ha='right')
+            axs[iCluster, 1].pcolor(self.t, y, zSaccade, vmin=-0.85, vmax=0.85)
+            axs[iCluster, 1].set_yticks([])
 
         #
-        for ax in axs[:-1]:
+        for ax in axs[:-1, :].flatten():
             ax.set_xticks([])
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])

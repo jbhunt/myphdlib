@@ -115,11 +115,17 @@ def _getResponseTemplatesForSaccades(
     )
 
     #
-    templates = {
+    responseTemplates = {
         ('left', 'nasal'): np.full(nBins, np.nan),
         ('left', 'temporal'): np.full(nBins, np.nan),
         ('right', 'nasal'): np.full(nBins, np.nan),
         ('right', 'temporal'): np.full(nBins, np.nan),
+    }
+    trialIndices = {
+        ('left', 'nasal'): None,
+        ('left', 'temporal'): None,
+        ('right', 'nasal'): None,
+        ('right', 'temporal'): None,
     }
 
     #
@@ -133,26 +139,27 @@ def _getResponseTemplatesForSaccades(
     )
 
     #
-    for gratingDirection, saccadeDirection in templates.keys():
+    for gratingDirection, saccadeDirection in responseTemplates.keys():
         gratingMotion = -1 if gratingDirection == 'left' else +1
         saccadeLabel = -1 if saccadeDirection == 'temporal' else +1
-        trialIndices = np.where(
+        trialIndicesForUniqueCondition = np.where(
             np.vstack([
                 extrastimulusMask,
                 gratingMotionDuringSaccades == gratingMotion,
                 saccadeLabels == saccadeLabel
             ]).all(0)
         )[0]
-        if trialIndices.size == 0:
+        trialIndices[(gratingDirection, saccadeDirection)] = trialIndicesForUniqueCondition
+        if trialIndicesForUniqueCondition.size == 0:
             continue
         t, fr = unit.peth(
-            saccadeTimestamps[trialIndices],
+            saccadeTimestamps[trialIndicesForUniqueCondition],
             responseWindow=responseWindow,
             binsize=binsize
         )
-        templates[(gratingDirection, saccadeDirection)] = fr
+        responseTemplates[(gratingDirection, saccadeDirection)] = fr
 
-    return templates
+    return responseTemplates, trialIndices
 
 class TimeHistogramProcessingMixin():
     """
@@ -419,6 +426,7 @@ class TimeHistogramProcessingMixin():
         perisaccadicWindow=(-0.05, 0.1),
         binsize=0.02,
         protocol='dg',
+        interp=False,
         overwrite=True
         ):
         """
@@ -478,7 +486,7 @@ class TimeHistogramProcessingMixin():
                 self.log(f'Extracting latency-shifted saccade PSTHs for unit {iUnit + 1} out of {nUnits} (motion={probeMotion}, protocol={protocol})', end=end)   
 
                 #
-                templates = _getResponseTemplatesForSaccades(
+                responseTemplates, trialIndicesForUniqueConditions = _getResponseTemplatesForSaccades(
                     unit,
                     probeData,
                     saccadeData,
@@ -509,12 +517,32 @@ class TimeHistogramProcessingMixin():
                         saccadelabelsProximate[trialIndices]
                     )
                     for probeMotion_, probeLatency, saccadeLabel in iterable:
+
+                        #
                         probeDirection = 'left' if probeMotion_ == -1 else 'right'
                         saccadeDirection = 'temporal' if saccadeLabel == -1 else 'nasal'
-                        fp = templates[(probeDirection, saccadeDirection)]
-                        xp = tBins
-                        x = tBins + probeLatency
-                        curve = np.interp(x, xp, fp)
+
+                        #
+                        if interp:
+                            fp = responseTemplates[(probeDirection, saccadeDirection)]
+                            xp = tBins
+                            x = tBins + probeLatency
+                            curve = np.interp(x, xp, fp, left=np.nan, right=np.nan)
+                        
+                        #
+                        else:
+                            saccadeIndices = trialIndicesForUniqueConditions[(probeDirection, saccadeDirection)]
+                            if saccadeIndices is None:
+                                continue
+                            saccadeTimestamps = self.saccadeTimestamps[saccadeIndices, 0] + probeLatency
+                            t, M = psth2(
+                                saccadeTimestamps,
+                                unit.timestamps,
+                                window=responseWindow,
+                                binsize=binsize
+                            )
+                            curve = M.mean(0) / binsize
+
                         curves.append(curve)
                     curves = np.array(curves)
                     peths[iUnit, :, iBin] = np.nanmean(curves, axis=0)
