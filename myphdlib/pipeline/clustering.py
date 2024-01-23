@@ -10,6 +10,23 @@ class ClusterProcessingMixin():
     """
     """
 
+    def _collectTrainingSamples(
+        self,
+        responseWindow=(-0.2, 0.5),
+        baselineWindowProbe=(-0.2, 0),
+        baselineWindowSaccade=(-2.2, -2),
+        perisaccadicWindow=(-0.05, 0.1),
+        minimumBaselineActivity=None,
+        minimumResponseAmplitude=None,
+        binsize=0.02,
+        smoothingKernelWidth=0.01,
+        overwrite=False
+        ):
+        """
+        """
+
+        return
+
     def _extractNormalizedVisulOnlyResponses(
         self,
         responseWindow=(-0.2, 0.5),
