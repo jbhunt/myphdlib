@@ -6,44 +6,58 @@ from sklearn.mixture import GaussianMixture
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import silhouette_score
 
+def translatePreference(
+    session,
+    probeMotion=-1,
+    saccadeLabel=-1
+    ):
+    """
+    """
+
+    probeDirection = 'left' if probeMotion == -1 else 'right'
+    saccadeDirection = 'temporal' if saccadeLabel == -1 else 'nasal'
+    preference = None
+    if session.eye == 'left':
+        if probeDirection == 'left':
+            if saccadeDirection == 'nasal':
+                preference = 'preferred'
+            else:
+                preference = 'nonpreferred'
+        else:
+            if saccadeDirection == 'nasal':
+                preference = 'nonpreferred'
+            else:
+                preference = 'preferred'
+    else:
+        pass
+
+    return preference
+
 class ClusterProcessingMixin():
     """
     """
 
-    def _collectTrainingSamples(
+    def _collectSamplesForClustering(
         self,
         responseWindow=(-0.2, 0.5),
-        baselineWindowProbe=(-0.2, 0),
-        baselineWindowSaccade=(-2.2, -2),
+        baselineWindows=([-0.2, 0], [-2.2, -2]),
+        normalizingWindow=(0, 0.5),
         perisaccadicWindow=(-0.05, 0.1),
-        minimumBaselineActivity=None,
-        minimumResponseAmplitude=None,
+        minimumBaselineActivity=0.5,
+        minimumResponseAmplitude=0.5,
         binsize=0.02,
         smoothingKernelWidth=0.01,
+        normalizationMethod=1,
         overwrite=False
         ):
         """
         """
 
-        return
-
-    def _extractNormalizedVisulOnlyResponses(
-        self,
-        responseWindow=(-0.2, 0.5),
-        baselineWindow=(-0.2, 0),
-        normalizingWindow=(0, 0.5),
-        perisaccadicWindow=(-0.05, 0.1),
-        minimumBaselineActivity=0.5,
-        minimumResponseAmplitude=1,
-        binsize=0.02,
-        smoothingKernelWidth=0.01,
-        overwrite=False,
-        ):
-        """
-        """
-
         #
-        self.log(f'Extracting preferred and non-preferred responses to the probe stimulus')
+        peristimulusWindow = (
+            perisaccadicWindow[1] * -1,
+            perisaccadicWindow[0] * -1
+        )
 
         #
         tBins, nTrials, nBins = psth2(
@@ -56,308 +70,163 @@ class ClusterProcessingMixin():
         nUnits = self.population.count()
 
         #
-        datasetKeys = (
-            ('rProbe', 'dg', 'preferred'),
-            ('rProbe', 'dg', 'nonpreferred'),
-        )
+        binIndicesForNormalizingWindow = np.where(np.logical_and(
+            tBins <= normalizingWindow[1],
+            tBins >= normalizingWindow[0]
+        ))[0]
 
-        # Check if data is alread processed 
-        flags = np.full(len(datasetKeys), False)
-        for i, (responseType, protocol, eventDirection) in enumerate(datasetKeys):
-            datasetPath = f'peths/{responseType}/{protocol}/{eventDirection}'
-            if self.hasDataset(datasetPath):
-                flags[i] = True
-        if flags.all() and overwrite == False:
-           return
+        #
+        xProbe = np.full([nUnits, nBins], np.nan)
+        xSaccade = np.full([nUnits, nBins], np.nan)
+        include = np.full(nUnits, False)
 
-        # Skip sessions without the drifting grating stimulus
+        #
         if self.probeTimestamps is None:
-            for eventType, protocol, eventDirection in datasetKeys:
-                datasetPath = f'peths/{eventType}/{eventDirection}'
-                self.save(datasetPath, np.full([nUnits, nBins], np.nan))
+            self.save(f'peths/rProbe/dg/preferred', xProbe)
+            self.save(f'peths/rSaccade/dg/preferred', xSaccade)
             return
 
         #
-        factors = {
-            'left': np.full(nUnits, np.nan),
-            'right': np.full(nUnits, np.nan)
-        }
-        amplitudes = {
-            'left': np.full(nUnits, np.nan),
-            'right': np.full(nUnits, np.nan)
-        }
-        peths = {
-            'left': np.full([nUnits, nBins], np.nan),
-            'right': np.full([nUnits, nBins], np.nan)
-        }
-
-        #
-        for probeMotion, probeDirection in zip([-1, +1], ['left', 'right']):
-
-            #
-            trialIndices = np.where(np.logical_and(
+        probeIndices = {
+            'left': np.where(np.logical_and(
                 np.logical_or(
                     self.probeLatencies < perisaccadicWindow[0],
                     self.probeLatencies > perisaccadicWindow[1]
                 ),
-                self.gratingMotionDuringProbes == probeMotion,
-            ))[0]
-
-            #
-            for iUnit, unit in enumerate(self.population):
-                if iUnit == nUnits - 1:
-                    end = None
-                else:
-                    end = '\r'
-                self.log(f'Working on unit {iUnit + 1} out of {nUnits} (motion={probeMotion})', end=end)
-
-                # Estimate baseline activity
-                t, M = psth2(
-                    self.probeTimestamps[trialIndices],
-                    unit.timestamps,
-                    window=baselineWindow,
-                    binsize=None
-                )
-                mu = M.flatten().mean() / np.diff(baselineWindow).item()
-
-                # Filter out units with subthreshold baselines
-                if mu < minimumBaselineActivity:
-                    continue
-
-                # Measure the evoked response
-                t, fr = unit.peth(
-                    self.probeTimestamps[trialIndices],
-                    responseWindow=responseWindow,
-                    binsize=binsize,
-                    kde=True,
-                    sd=smoothingKernelWidth,
-                )
-
-                # Filter out units with subthreshold baselines
-                if np.max(np.abs(fr - mu)) < minimumResponseAmplitude:
-                    continue
-                
-                #
-                amplitude = np.max(np.abs(fr - mu))
-                amplitudes[probeDirection][iUnit] = amplitude
-
-                #
-                peths[probeDirection][iUnit] = fr - mu
-
-                # Save the baseline subtracted response
-                normalizingWindowMask = np.logical_and(
-                    t >= normalizingWindow[0],
-                    t <= normalizingWindow[1]
-                )
-                factor = round(np.max(np.abs(fr - mu)[normalizingWindowMask]), 2)
-                factors[probeDirection][iUnit] = factor
-                
-        #
-        X = {
-            'preferred': np.full([nUnits, nBins], np.nan),
-            'nonpreferred': np.full([nUnits, nBins], np.nan)
-        }
-        for iUnit in range(nUnits):
-
-            #
-            mapping = {
-                'left': None,
-                'right': None
-            }
-            aL = amplitudes['left'][iUnit]
-            aR = amplitudes['right'][iUnit]
-            if np.isnan([aL, aR]).all():
-                continue
-            if aL > aR:
-                mapping['left'] = 'preferred'
-                mapping['right'] = 'nonpreferred'
-                factor = factors['left'][iUnit]
-            else:
-                mapping['left'] = 'nonpreferred'
-                mapping['right'] = 'preferred'
-                factor = factors['right'][iUnit]
-
-            #
-            for probeDirection, directionPreference in mapping.items():
-                X[directionPreference][iUnit] = peths[probeDirection][iUnit] / factor
-        
-        #
-        for directionPreference in ('preferred', 'nonpreferred'):
-           self.save(f'peths/rProbe/dg/{directionPreference}', X[directionPreference])
-
-        return
-    
-    def _extractNormalizedSaccadOnlyResponses(
-        self,
-        responseWindow=(-0.2, 0.5),
-        baselineWindow=(-2, -1.8),
-        normalizingWindow=(-0.3, 0.5),
-        perisaccadicWindow=(-0.05, 0.1),
-        minimumBaselineActivity=0.5,
-        minimumResponseAmplitude=1,
-        binsize=0.02,
-        smoothingKernelWidth=0.01,
-        overwrite=False,
-        ):
-        """
-        """
-
-        peristimulusWindow = np.array([
-            perisaccadicWindow[1] * -1,
-            perisaccadicWindow[0] * -1
-        ])
-
-        #
-        self.log(f'Extracting preferred and non-preferred responses to saccades')
-
-        #
-        tBins, nTrials, nBins = psth2(
-            np.array([0]),
-            np.array([0]),
-            window=responseWindow,
-            binsize=binsize,
-            returnShape=True,
-        )
-        nUnits = self.population.count()
-
-        #
-        datasetKeys = (
-            ('rSaccade', 'dg', 'preferred'),
-            ('rSaccade', 'dg', 'nonpreferred'),
-        )
-
-        # Check if data is alread processed 
-        flags = np.full(len(datasetKeys), False)
-        for i, (responseType, protocol, eventDirection) in enumerate(datasetKeys):
-            datasetPath = f'peths/{responseType}/{protocol}/{eventDirection}'
-            if self.hasDataset(datasetPath):
-                flags[i] = True
-        if flags.all() and overwrite == False:
-           return
-
-        # Skip sessions without the drifting grating stimulus
-        if self.probeTimestamps is None:
-            for eventType, protocol, eventDirection in datasetKeys:
-                datasetPath = f'peths/{eventType}/{eventDirection}'
-                self.save(datasetPath, np.full([nUnits, nBins], np.nan))
-            return
-
-        #
-        factors = {
-            'nasal': np.full(nUnits, np.nan),
-            'temporal': np.full(nUnits, np.nan)
-        }
-        amplitudes = {
-            'nasal': np.full(nUnits, np.nan),
-            'temporal': np.full(nUnits, np.nan)
-        }
-        peths = {
-            'nasal': np.full([nUnits, nBins], np.nan),
-            'temporal': np.full([nUnits, nBins], np.nan)
+                self.gratingMotionDuringProbes == -1,
+            ))[0],
+            'right': np.where(np.logical_and(
+                np.logical_or(
+                    self.probeLatencies < perisaccadicWindow[0],
+                    self.probeLatencies > perisaccadicWindow[1]
+                ),
+                self.gratingMotionDuringProbes == +1,
+            ))[0],
         }
 
         #
-        for saccadeLabel, saccadeDirection in zip([-1, +1], ['temporal', 'nasal']):
-
-            #
-            trialIndices = np.where(np.logical_and(
+        saccadeIndices = {
+            'nasal': np.where(np.logical_and(
                 np.logical_or(
                     self.saccadeLatencies < peristimulusWindow[0],
                     self.saccadeLatencies > peristimulusWindow[1]
                 ),
-                self.saccadeLabels == saccadeLabel,
-            ))[0]
+                self.saccadeLabels == -1,
+            ))[0],
+            'temporal': np.where(np.logical_and(
+                np.logical_or(
+                    self.saccadeLatencies < peristimulusWindow[0],
+                    self.saccadeLatencies > peristimulusWindow[1]
+                ),
+                self.saccadeLabels == +1,
+            ))[0],
+        }
+
+        #
+        for iUnit, unit in enumerate(self.population):
 
             #
-            for iUnit, unit in enumerate(self.population):
-                if iUnit == nUnits - 1:
-                    end = None
-                else:
-                    end = '\r'
-                self.log(f'Working on unit {iUnit + 1} out of {nUnits} (label={saccadeLabel})', end=end)
+            if iUnit + 1 == nUnits:
+                end = None
+            else:
+                end = '\r'
+            self.log(f'Extracting preferred and non-preferred responses to events ({iUnit + 1} / {nUnits} units)', end=end)
+            
+            #
+            peths = {
+                ('probe', 'left'): None,
+                ('probe', 'right'): None,
+                ('saccade', 'nasal'): None,
+                ('saccade', 'temporal'): None
+            }
 
-                # Estimate baseline activity
+            #
+            checks = np.array([False, False])
+
+            #
+            for probeMotion, probeDirection in zip([-1, 1], ['left', 'right']):
+                probeTimestamps = self.probeTimestamps[probeIndices[probeDirection]]
                 t, M = psth2(
-                    self.saccadeTimestamps[trialIndices, 0],
+                    probeTimestamps,
                     unit.timestamps,
-                    window=baselineWindow,
+                    window=baselineWindows[0],
                     binsize=None
                 )
-                mu = M.flatten().mean() / np.diff(baselineWindow).item()
-
-                # Filter out units with subthreshold baselines
-                if mu < minimumBaselineActivity:
-                    continue
-
-                # Measure the evoked response
+                mu = M.flatten().mean() / np.diff(baselineWindows[0])
                 t, fr = unit.peth(
-                    self.saccadeTimestamps[trialIndices, 0],
+                    probeTimestamps,
+                    responseWindow=responseWindow,
+                    binsize=binsize,
+                )
+                a = np.max(np.abs(fr[binIndicesForNormalizingWindow]))
+                peths[('probe', probeDirection)] = fr - mu
+
+                # Check for baseline activity and response amplitude
+                if minimumResponseAmplitude is None:
+                    checks[0] = True
+                elif a > minimumResponseAmplitude:
+                    checks[0] = True
+                if minimumBaselineActivity is None:
+                    checks[1] = True
+                elif mu > minimumBaselineActivity:
+                    checks[1] = True
+            
+            # Skip to next unit if fails to meet criteria
+            if checks.all() == False:
+                continue
+            include[iUnit] = True
+
+            #
+            for saccadeLabel, saccadeDirection in zip([-1, 1], ['temporal', 'nasal']):
+                saccadeTimestamps = self.saccadeTimestamps[saccadeIndices[saccadeDirection], 0]
+                t, M = psth2(
+                    saccadeTimestamps,
+                    unit.timestamps,
+                    window=baselineWindows[1],
+                    binsize=None
+                )
+                mu = M.flatten().mean() / np.diff(baselineWindows[1])
+                t, fr = unit.peth(
+                    saccadeTimestamps,
                     responseWindow=responseWindow,
                     binsize=binsize,
                     kde=True,
-                    sd=smoothingKernelWidth,
+                    sd=smoothingKernelWidth
                 )
-
-                # Filter out units with subthreshold baselines
-                if np.max(np.abs(fr - mu)) < minimumResponseAmplitude:
-                    continue
-                
-                #
-                amplitude = np.max(np.abs(fr - mu))
-                amplitudes[saccadeDirection][iUnit] = amplitude
-
-                #
-                peths[saccadeDirection][iUnit] = fr - mu
-
-                # Save the baseline subtracted response
-                normalizingWindowMask = np.logical_and(
-                    t >= normalizingWindow[0],
-                    t <= normalizingWindow[1]
-                )
-                factor = round(np.max(np.abs(fr - mu)[normalizingWindowMask]), 2)
-                factors[saccadeDirection][iUnit] = factor
-
-        #
-        X = {
-            'preferred': np.full([nUnits, nBins], np.nan),
-            'nonpreferred': np.full([nUnits, nBins], np.nan)
-        }
-        for iUnit in range(nUnits):
+                peths[('saccade', saccadeDirection)] = fr - mu
 
             #
-            mapping = {
-                'nasal': None,
-                'temporal': None
+            responseAmplitudes = {
+                ('probe', 'left'): np.max(np.abs(peths[('probe', 'left')][binIndicesForNormalizingWindow])),
+                ('probe', 'right'): np.max(np.abs(peths[('probe', 'right')][binIndicesForNormalizingWindow])),
+                ('saccade', 'nasal'): np.max(np.abs(peths[('saccade', 'nasal')][binIndicesForNormalizingWindow])),
+                ('saccade', 'temporal'): np.max(np.abs(peths[('saccade', 'temporal')][binIndicesForNormalizingWindow]))
             }
-            aN = amplitudes['nasal'][iUnit]
-            aT = amplitudes['temporal'][iUnit]
-            if np.isnan([aN, aT]).all():
-                continue
-            if aN > aT:
-                mapping['nasal'] = 'preferred'
-                mapping['temporal'] = 'nonpreferred'
-                factor = factors['nasal'][iUnit]
+            if responseAmplitudes[('probe', 'left')] >= responseAmplitudes[('probe', 'right')]:
+                probeDirection = 'left'
+                saccadeDirection = 'nasal'
             else:
-                mapping['nasal'] = 'nonpreferred'
-                mapping['temporal'] = 'preferred'
-                factor = factors['temporal'][iUnit]
+                probeDirection = 'right'
+                saccadeDirection = 'temporal'
 
             #
-            for probeDirection, directionPreference in mapping.items():
-                X[directionPreference][iUnit] = peths[probeDirection][iUnit] / factor
-        
+            xProbe[iUnit] = peths[('probe', probeDirection)] / responseAmplitudes[('probe', probeDirection)]
+            if normalizationMethod == 1:
+                xSaccade[iUnit] = peths[('saccade', saccadeDirection)] / responseAmplitudes[('saccade', saccadeDirection)]
+            elif normalizationMethod == 2:
+                xSaccade[iUnit] = peths[('saccade', saccadeDirection)] / responseAmplitudes[('probe', probeDirection)]
+
         #
-        for directionPreference in ('preferred', 'nonpreferred'):
-           self.save(f'peths/rSaccade/dg/{directionPreference}', X[directionPreference])
+        self.save('peths/rProbe/dg/preferred', xProbe)
+        self.save('peths/rSaccade/dg/preferred', xSaccade)
 
         return
 
-    def _runClusterModule(self, overwrite=False):
+    def _runClusterModule(self):
         """
         """
 
-        self._extractNormalizedVisulOnlyResponses(overwrite=overwrite)
-        self._extractNormalizedSaccadOnlyResponses(overwrite=overwrite)
+        self._collectSamplesForClustering()
 
         return
 

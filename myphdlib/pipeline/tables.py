@@ -4,31 +4,56 @@ import pathlib as pl
 from types import FunctionType
 from myphdlib.general.toolkit import psth2
 
-def _getVisualResponseSign(session):
-    return np.array([unit.visualResponseSign for unit in session.population]).reshape(-1, 1), {}
-
-def _getVisualResponseLatency(session):
+class TableBase():
     """
     """
 
-    latencies = list()
-    for unit in session.population:
-        lPos, lNeg = unit.visualResponseLatency[unit.preferredProbeDirection]
-        l = lNeg if unit.visualResponseSign == -1 else lPos
-        latencies.append(l)
+    def make(
+        self,
+        filename,
+        sessions,
+        mapping
+        ):
+        """
+        """
 
-    return np.array(latencies).reshape(-1, 1), {}
+        #
+        if type(filename) != pl.Path:
+            filename = pl.Path(filename)
 
-def _getVisualResponseAmplitude(session):
-    """
-    """
+        #
+        with h5py.File(str(filename), 'w') as stream:
+            for key, (value, kwargs) in mapping.items():
+                dataset = list()
+                attrs = {}
+                for index, session in enumerate(sessions):
+                    if index + 1 == len(sessions):
+                        end = '\n'
+                    else:
+                        end = '\r'
+                    print(f'Working on session {index + 1} out of {len(sessions)} (dataset={key})', end=end)
+                    if session.probeTimestamps is None:
+                        continue
+                    if type(value) == FunctionType:
+                        f = value
+                        data, attrs_ = f(session, **kwargs)
+                        for k in attrs_.keys():
+                            if k not in attrs.keys():
+                                attrs[k] = attrs_[k]
+                    elif type(value) == str:
+                        data = session.load(value)
+                    if data is None:
+                        import pdb; pdb.set_trace()
+                    for x in data:
+                        dataset.append(x)
+                dataset = np.array(dataset)
+                ds = stream.create_dataset(key, dataset.shape, dataset.dtype, data=dataset)
+                del dataset
+                if len(attrs.keys()) != 0:
+                    for k in attrs.keys():
+                        ds.attrs[k] = attrs[k]
 
-    amplitudes = list()
-    for unit in session.population:
-        a = unit.visualResponseAmplitude[unit.preferredProbeDirection]
-        amplitudes.append(a)
-
-    return np.array(amplitudes).reshape(-1, 1), {}
+        return
 
 def _loadPeths(
     session,
@@ -46,13 +71,6 @@ def _loadPeths(
 
     return peths, metadata
 
-# TODO: Code these functions
-def _getSaccadicModulationIndex(session):
-    return np.full(session.population.count(), np.nan).reshape(-1, 1), {}
-
-def _getSaccadicModulationProbabilities(session):
-    return np.full(session.population.count(), np.nan).reshape(-1, 1), {}
-
 def _getZetaTestProbabilities(
     session,
     probeMotion=-1
@@ -67,17 +85,6 @@ def _getZetaTestProbabilities(
 
     pvalues = session.load(f'population/zeta/probe/{probeDirection}/p')
     return pvalues.reshape(-1, 1), {}
-
-def _getSigmaValues(
-    session,
-    probeMotion=-1,
-    ):
-    """
-    """
-    probeDirection = 'left' if probeMotion == -1 else 'right'
-    sigmas = session.load(f'population/metrics/sigma/{probeDirection}')
-
-    return sigmas, {}
 
 unitsTableMapping = {
     'date': (
@@ -117,7 +124,7 @@ unitsTableMapping = {
         ('population/metrics/pr', {}),
     'kilosortLabel':
         ('population/metrics/ksl', {}),
-    'meanSpikeWaveform':
+    'spikeWaveforms':
         ('population/metrics/bsw', {}),
     'rMixed/dg/left':
         (_loadPeths, {'path': 'peths/rMixed/dg/left'}),
@@ -129,12 +136,8 @@ unitsTableMapping = {
         (_loadPeths, {'path': 'peths/rProbe/dg/right'}),
     'rProbe/dg/preferred':
         (_loadPeths, {'path': 'peths/rProbe/dg/preferred'}),
-    'rProbe/dg/nonpreferred':
-        (_loadPeths, {'path': 'peths/rProbe/dg/nonpreferred'}),
     'rSaccade/dg/preferred':
         (_loadPeths, {'path': 'peths/rSaccade/dg/preferred'}),
-    'rSaccade/dg/nonpreferred':
-        (_loadPeths, {'path': 'peths/rSaccade/dg/nonpreferred'}),
     # 'rSaccade/dg/left':
     #    (_loadPeths, {'path': 'peths/rSaccade/dg/left'}),
     # 'rSaccade/dg/right':
@@ -165,7 +168,7 @@ unitsTableMapping = {
         (_getZetaTestProbabilities, {'probeMotion': +1}),
 }
 
-class UnitsTable():
+class UnitsTable(TableBase):
     """
     """
 
@@ -175,7 +178,7 @@ class UnitsTable():
         sessions,
         minimumFiringRate=None,
         minimumResponseAmplitude=None,
-        filterUnits=True
+        filterUnits=False
         ):
         """
         """
@@ -194,39 +197,73 @@ class UnitsTable():
                 )
 
         #
-        if type(filename) != pl.Path:
-            filename = pl.Path(filename)
+        super().make(
+            filename,
+            sessions,
+            unitsTableMapping
+        )
 
-        #
-        with h5py.File(str(filename), 'w') as stream:
-            for key, (value, kwargs) in unitsTableMapping.items():
-                dataset = list()
-                attrs = {}
-                for index, session in enumerate(sessions):
-                    if index + 1 == len(sessions):
-                        end = '\n'
-                    else:
-                        end = '\r'
-                    print(f'Working on session {index + 1} out of {len(sessions)} (dataset={key})', end=end)
-                    if session.probeTimestamps is None:
-                        continue
-                    if type(value) == FunctionType:
-                        f = value
-                        data, attrs_ = f(session, **kwargs)
-                        for k in attrs_.keys():
-                            if k not in attrs.keys():
-                                attrs[k] = attrs_[k]
-                    elif type(value) == str:
-                        data = session.load(value)
-                    for x in data:
-                        dataset.append(x)
-                dataset = np.array(dataset)
-                try:
-                    ds = stream.create_dataset(key, dataset.shape, dataset.dtype, data=dataset)
-                except:
-                    import pdb; pdb.set_trace()
-                if len(attrs.keys()) != 0:
-                    for k in attrs.keys():
-                        ds.attrs[k] = attrs[k]
+        return
+
+def _getSaccadeLabels(session):
+    """
+    """
+    saccadeDirections = list()
+    for saccadeLabel in session.saccadeLabels:
+        if saccadeLabel == -1:
+            saccadeDirections.append('temporal')
+        elif saccadeLabel == +1:
+            saccadeDirections.append('nasal')
+        else:
+            saccadeDirections.append('unclassified')
+    return np.array(saccadeDirections, dtype='S').reshape(-1, 1)
+
+def _getSaccadeAmplitudes(session):
+    return
+
+def _getSaccadeWaveforms(sessions):
+    return
+
+saccadesTableMapping = {
+    'date': (
+        lambda session: np.array([str(session.date) for i in range(session.saccadeTimestamps.shape[0])], dtype='S'),
+        {}
+    ),
+    'animal': (
+        lambda session: np.array([session.animal for i in range(session.saccadeTimestamps.shape[0])], dtype='S'),
+        {}
+    ),
+    'treatment': (
+        lambda session: np.array([session.treatment for i in range(session.saccadeTimestamps.shape[0])], dtype='S'),
+        {}
+    ),
+    'saccadeLabels': (
+        _getSaccadeLabels, {}
+    ),
+    'saccadeAmplitudes': (
+        _getSaccadeAmplitudes, {}
+    ),
+    'saccadeWaveforms': (
+        _getSaccadeWaveforms, {}
+    )
+}
+
+class SaccadesTable(TableBase):
+    """
+    """
+
+    def make(
+        self,
+        filename,
+        sessions,
+        ):
+        """
+        """
+
+        super().make(
+            filename,
+            sessions,
+            saccadesTableMapping
+        )
 
         return
