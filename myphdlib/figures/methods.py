@@ -7,7 +7,18 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans, AgglomerativeClustering, Birch
 from sklearn.mixture import GaussianMixture
 from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
+from sklearn.manifold import TSNE
 from scipy.spatial import distance
+from sklearn.preprocessing import StandardScaler
+from scipy.optimize import curve_fit as fitCurve
+from scipy.signal import find_peaks as findPeaks
+from sklearn.impute import SimpleImputer
+
+def g(x, a, mu, sigma, d):
+    """
+    """
+
+    return a * np.exp(-((x - mu) / 4 / sigma) ** 2) + d
 
 def measureSaccadeFrequencyDuringGratingMotion(
     session,
@@ -484,6 +495,313 @@ class PopulationHeatmapBeforeAndAfterFilteringFigure():
         fig.tight_layout()
 
         return fig, (ax1, ax2)
+
+class ClusteringAnalysisRemixed():
+    """
+    """
+
+    def __init__(self):
+        """
+        """
+
+        self.peths = None
+        self.combos = None
+        self.labels = None
+        self.X = None
+        self.t = None
+
+        return
+
+    def load(
+        self,
+        hdf,
+        baselineWindow=(-0.2, 0),
+        responseWindow=(0, 0.3),
+        minimumBaselineLevel=0.5,
+        minimumResponseAmplitude=3,
+        smoothingWindowSize=None,
+        ):
+        """
+        """
+
+        # Load the PETHs
+        with h5py.File(hdf, 'r') as stream:
+            rProbe = {
+                'left': np.array(stream['rProbe/dg/left/fr']),
+                'right': np.array(stream['rProbe/dg/right/fr'])
+            }
+            np.array(stream['rProbe/dg/right'])
+            xProbe = np.array(stream['xProbe'])
+            xSaccade = np.array(stream['xSaccade'])
+            self.t = np.array(stream['rProbe/dg/left/fr'].attrs['t'])
+
+
+        # Define the baseline and response windows
+        binIndicesForBaselineWindow = np.where(np.logical_and(
+            self.t >= baselineWindow[0],
+            self.t <= baselineWindow[1]
+        ))[0]
+        binIndicesForResponseWindow = np.where(np.logical_and(
+            self.t >= responseWindow[0],
+            self.t <= responseWindow[1]
+        ))[0]
+
+        # Initialize variables
+        nUnits = rProbe['left'].shape[0]
+        nBins = rProbe['left'].shape[1]
+        exclude = np.full(nUnits, False)
+        peths = {
+            'p': np.full([nUnits, nBins], np.nan),
+            's': np.full([nUnits, nBins], np.nan)
+        }
+
+        # Iterate over units
+        for iUnit in range(nUnits):
+
+            #
+            lowestBaselineLevel = np.max([
+                rProbe['left'][iUnit, binIndicesForBaselineWindow].mean(),
+                rProbe['right'][iUnit, binIndicesForBaselineWindow].mean(),
+            ])
+            if lowestBaselineLevel < minimumBaselineLevel:
+                exclude[iUnit] = True
+
+            #
+            greatestPeakAmplitude = np.max([
+                np.max(np.abs(rProbe['left'][iUnit, binIndicesForResponseWindow] - rProbe['left'][iUnit, binIndicesForBaselineWindow].mean())),
+                np.max(np.abs(rProbe['right'][iUnit, binIndicesForResponseWindow] - rProbe['right'][iUnit, binIndicesForBaselineWindow].mean())),
+            ])
+            if greatestPeakAmplitude < minimumResponseAmplitude:
+                exclude[iUnit] = True
+
+            peths['p'][iUnit, :] = xProbe[iUnit]
+            peths['s'][iUnit, :] = xSaccade[iUnit]
+
+        # Filter and smooth PETHs
+        include = np.invert(exclude)
+        self.peths = {
+            'p': peths['p'][include, :],
+            's': peths['s'][include, :]
+        }
+        if smoothingWindowSize is not None:
+            for k in self.peths.keys():
+                self.peths[k] = smooth(self.peths[k], smoothingWindowSize, axis=1)
+
+        return
+
+    def save(
+        self,
+        hdf
+        ):
+        """
+        """
+
+        return
+
+    def measureResponseComplexity(
+        self,
+        ):
+        """
+        """
+
+        #
+        parameterBoundaries = np.array([
+            [-1, 1],      # Amplitude
+            [0, 0.3],     # Mean
+            [0.02, 0.05], # Standard deviation
+            [-0.2, 0.2],  # Zero offset
+        ]).T
+        initialParameterValues = parameterBoundaries.mean(0)
+
+        #
+        nUnits = self.peths['p'].shape[0]
+        residuals = np.full(nUnits, np.nan)
+        for iUnit in range(nUnits):
+            yTrue = self.peths['p'][iUnit, :]
+            popt, pcov = fitCurve(
+                g,
+                self.t,
+                yTrue,
+                bounds=parameterBoundaries,
+                p0=initialParameterValues
+            )
+            yFit = g(self.t, *popt)
+            dy = yTrue - yFit
+            residuals[iUnit] = np.sqrt(np.sum(np.power(dy, 2)))
+
+        #
+        self.X[:, 0] = residuals
+
+        return
+
+    def measureResponseLatency(
+        self,
+        latencyBoundaries=(0, 0.3),
+        minimumPeakHeight=0.2,
+        ):
+        """
+        """
+
+        binIndices = np.where(np.logical_and(
+            self.t >= latencyBoundaries[0],
+            self.t <= latencyBoundaries[1]
+        ))[0]
+        nUnits = self.peths['p'].shape[0]
+        responseLatencies = np.full(nUnits, np.nan)
+        for iUnit in range(nUnits):
+            y = self.peths['p'][iUnit]
+            dy = np.diff(y)
+            peakIndices, peakProperties = findPeaks(
+                dy,
+                height=minimumPeakHeight
+            )
+            if peakIndices.size == 0:
+                continue
+            #
+            peakIndices.sort()
+            binIndex = np.nan
+            for peakIndex in peakIndices:
+                if peakIndex - 1 in binIndices:
+                    binIndex = peakIndex - 1
+                    break
+            if np.isnan(binIndex) == False:
+                responseLatencies[iUnit] = self.t[binIndex]
+
+        #
+        self.X[:, 1] = responseLatencies
+
+        return
+
+    def measureResponsePolarity(
+        self,
+        responseWindow=(0, 0.3),
+        nFeatures=15,
+        ):
+        """
+        """
+
+        nUnits = self.peths['p'].shape[0]
+        pethsCentered = np.full([nUnits, nFeatures], np.nan)
+        binIndices = np.where(np.logical_and(
+            self.t >= responseWindow[0],
+            self.t <= responseWindow[1]
+        ))[0]
+        peakOffset = int((nFeatures - 1) / 2)
+        for iUnit in range(nUnits):
+            r = self.peths['p'][iUnit]
+            peakIndex = np.argmax(np.abs(r[binIndices])) + binIndices[0]
+            y = r[peakIndex - peakOffset: peakIndex + peakOffset + 1]
+            if y.size != nFeatures:
+                y = np.full(nFeatures, np.nan)
+            pethsCentered[iUnit, :] = y
+
+        #
+        xReduced = PCA(n_components=1).fit_transform(pethsCentered)
+        self.X[:, 2] = xReduced.flatten()
+
+        return pethsCentered
+
+    def cluster(
+        self,
+        model='gmm',
+        ):
+        """
+        """
+
+        #
+        nUnits = self.peths['p'].shape[0]
+        self.X = np.full([nUnits, 3], np.nan)
+        self.measureResponseComplexity()
+        self.measureResponseLatency()
+        self.measureResponsePolarity()
+
+        #
+        self.combos = np.full([nUnits, 3], np.nan)
+        X = SimpleImputer().fit_transform(self.X)
+        for i in range(X.shape[1]):
+            initMeanEstimates = np.array([
+                X[:, i].min(),
+                X[:, i].max()
+            ]).reshape(-1, 1)
+            if model == 'gmm':
+                self.combos[:, i] = GaussianMixture(n_components=2, means_init=initMeanEstimates).fit_predict(X[:, i].reshape(-1, 1))
+            elif model == 'kmeans':
+                self.combos[:, i] = KMeans(n_clusters=2, init=initMeanEstimates).fit_predict(X[:, i].reshape(-1, 1))
+
+        #
+        self.labels = np.full(nUnits, np.nan)
+        for label, uniqueCombo in enumerate(np.unique(self.combos, axis=0)):
+            unitIndices = np.where(np.array([
+                np.array_equal(combo, uniqueCombo) for combo in self.combos
+            ]))[0]
+            self.labels[unitIndices] = label
+
+        return X, self.labels
+
+    def plotPeths(
+        self,
+        plot='line',
+        figsize=(3, 8.5),
+        ):
+        """
+        """
+
+        labels, counts = np.unique(self.labels, return_counts=True)
+        if plot == 'heatmap':
+            fig, axs = plt.subplots(nrows=labels.size, gridspec_kw={'height_ratios': counts})
+        else:
+            fig, axs = plt.subplots(nrows=labels.size, sharey=True, sharex=True)
+        for i, l in enumerate(labels):
+            color = f'C{int(i)}'
+            z = self.peths['p'][self.labels == l, :]
+            axs[i].set_ylabel(f'C{int(i + 1)}', va='center', rotation=0, labelpad=15)
+            if plot == 'heatmap':
+                y = np.arange(z.shape[0])
+                shuffledIndices = np.arange(z.shape[0])
+                orderedIndices = np.argsort(np.array([np.argmax(np.abs(zi)) for zi in z]))
+                np.random.shuffle(shuffledIndices)
+                axs[i].pcolor(
+                    self.t,
+                    y,
+                    z[shuffledIndices, :],
+                    vmin=-1, vmax=1
+                )
+            elif plot == 'line':
+                y = z.mean(0)
+                e = z.std(0)
+                axs[i].plot(self.t, y, color=color)
+                # axs[i].fill_between(
+                #     self.t,
+                #     y - e,
+                #     y + e,
+                #     color=color,
+                #     alpha=0.2
+                # )
+        for ax in axs[:-1]:
+            ax.set_xticklabels([])
+        if plot == 'heatmap':
+            for ax in axs:
+                ax.set_yticks([])
+        elif plot == 'line':
+            for ax in axs:
+                # ax.set_ylim([-1, 1])
+                ax.set_yticks([-1, 0, 1])
+                ax.set_yticklabels([])
+        axs[-1].set_xlabel('Time from probe (sec)')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+        fig.subplots_adjust(hspace=0.15)
+
+        return fig, axs
+
+    def plotSubspace(
+        self,
+        ):
+        """
+        """
+
+        return
     
 class ClusteringAnalysis():
     """
@@ -508,6 +826,7 @@ class ClusteringAnalysis():
         responseWindow=(0, 0.3),
         minimumBaselineLevel=0.5,
         minimumResponseAmplitude=1,
+        smoothingWindowSize=None,
         ):
         """
         """
@@ -515,13 +834,13 @@ class ClusteringAnalysis():
         with h5py.File(hdf, 'r') as stream:
             labels = np.array(stream['unitLabel'])
             rProbe = {
-                'left': np.array(stream['rProbe/dg/left']),
-                'right': np.array(stream['rProbe/dg/right'])
+                'left': np.array(stream['rProbe/dg/left/fr']),
+                'right': np.array(stream['rProbe/dg/right/fr'])
             }
             np.array(stream['rProbe/dg/right'])
-            xProbe = np.array(stream['rProbe/dg/preferred'])
-            xSaccade = np.array(stream['rSaccade/dg/preferred'])
-            t = np.array(stream['rProbe/dg/left'].attrs['t'])
+            xProbe = np.array(stream['xProbe'])
+            xSaccade = np.array(stream['xSaccade'])
+            t = np.array(stream['rProbe/dg/left/fr'].attrs['t'])
 
 
         #
@@ -560,6 +879,7 @@ class ClusteringAnalysis():
             X[iUnit, :] = np.concatenate([xProbe[iUnit], xSaccade[iUnit]])
 
         #
+        
         include = np.logical_and(
             np.invert(exclude),
             np.invert(np.isnan(X).any(1))
@@ -568,7 +888,43 @@ class ClusteringAnalysis():
         #
         self.t = t
         self.data = X[include]
+        if smoothingWindowSize is not None:
+            self.data = smooth(self.data, smoothingWindowSize, axis=1)
         self.labels = labels[include]
+
+        return include
+
+    # TODO: Code this
+    def saveLabels(
+        self,
+        ):
+        """
+        """
+
+        return
+
+    def flipNegativePeths(
+        self,
+        tmin=0,
+        tmax=0.3,
+        ):
+        """
+        """
+
+        #
+        binIndices = np.where(np.logical_and(
+            self.t >= tmin,
+            self.t <= tmax
+        ))[0]
+        xProbe, xSaccade = np.split(self.data, 2, axis=1)
+        nUnits = self.data.shape[0]
+        for iUnit in range(nUnits):
+            iPeak = np.argmax(np.abs(xProbe[iUnit, binIndices])) + binIndices[0]
+            if xProbe[iUnit, iPeak] < 0:
+                coeff = -1
+            else:
+                coeff = +1
+            self.data[iUnit, :35] *= coeff
 
         return
 
@@ -599,6 +955,8 @@ class ClusteringAnalysis():
         x=-1,
         tmin=0,
         tmax=0.3,
+        scale=False,
+        X=None,
         ):
         """
         """
@@ -614,29 +972,34 @@ class ClusteringAnalysis():
             estimator = Birch(n_clusters=k)
 
         #
-        include = np.invert(np.isnan(self.data).any(1))
+        if X is None:
+            include = np.invert(np.isnan(self.data).any(1))
+
+            #
+            binIndices = np.where(np.logical_and(
+                self.t >= tmin,
+                self.t <= tmax
+            ))[0]
+            xProbe, xSaccade = np.split(self.data, 2, axis=1)
+            if x == -1:
+                X = np.concatenate([
+                    xProbe[include][:, binIndices],
+                    xSaccade[include][:, binIndices]
+                ], axis=1)
+            else:
+                if x == 0:
+                    X = xProbe[include][:, binIndices]
+                elif x == 1:
+                    X = xSaccade[include][:, binIndices]
 
         #
-        binIndices = np.where(np.logical_and(
-            self.t >= tmin,
-            self.t <= tmax
-        ))[0]
-        xProbe, xSaccade = np.split(self.data, 2, axis=1)
-        if x == -1:
-            X = np.concatenate([
-                xProbe[include][:, binIndices],
-                xSaccade[include][:, binIndices]
-            ], axis=1)
-        else:
-            if x == 0:
-                X = xProbe[include][:, binIndices]
-            elif x == 1:
-                X = xSaccade[include][:, binIndices]
+        if scale:
+            X = StandardScaler().fit_transform(X)
 
         #
         labels = estimator.fit_predict(X)
         self.labels = np.full(self.data.shape[0], np.nan)
-        self.labels[include] = labels
+        self.labels[:] = labels
 
         #
         scores = [
@@ -646,15 +1009,90 @@ class ClusteringAnalysis():
         ]
         if model == 'mixture':
             scores.append(estimator.bic(X))
+        elif model == 'kmeans':
+            scores.append(estimator.inertia_)
         else:
             scores.append(np.nan)
 
         return scores
 
+    def getk(
+        self,
+        amin=0,
+        amax=0.03,
+        an=301,
+        kmin=2,
+        kmax=30,
+        tmin=0,
+        tmax=0.3,
+        x=0,
+        ):
+        """
+        """
+
+
+        #
+        binIndices = np.where(np.logical_and(
+            self.t >= tmin,
+            self.t <= tmax
+        ))[0]
+        xProbe, xSaccade = np.split(self.data, 2, axis=1)
+        if x == -1:
+            X = np.concatenate([
+                xProbe[:, binIndices],
+                xSaccade[:, binIndices]
+            ], axis=1)
+        else:
+            if x == 0:
+                X = xProbe[:, binIndices]
+            elif x == 1:
+                X = xSaccade[:, binIndices]
+
+        #
+        model = KMeans(n_clusters=1, n_init='auto').fit(X)
+        imax = model.inertia_
+
+        #
+        wcss = {
+            'a': list(),
+            'b': list()
+        }
+        kopts = list()
+        kvals = np.arange(kmin, kmax + 1, 1)
+        avals = np.linspace(amin, amax, an)
+        for iRun, a in enumerate(avals):
+            if iRun + 1 == an:
+                end = None
+            else:
+                end = '\r'
+            print(f'Generating WCSS curve ({iRun + 1} out of {an} runs, a={a:2f})', end=end)
+            curves = {
+                'a': list(),
+                'b': list()
+            }
+            for k in kvals:
+                model = KMeans(n_clusters=k, n_init='auto').fit(X)
+                curves['a'].append(model.inertia_)
+                curves['b'].append(
+                    (model.inertia_ / imax) + (k * a)
+                )
+            wcss['a'].append(curves['a'])
+            wcss['b'].append(curves['b'])
+            i = np.argmin(curves['b'])
+            kopts.append(kvals[i])
+
+        #
+        for k in ('a', 'b'):
+            wcss[k] = np.array(wcss[k])
+        kopts = np.array(kopts)
+
+        return kopts, wcss
+
     def plotClusteringPerformance(
         self,
         kmin=2,
-        kmax=15,
+        kmax=30,
+        scale=False,
         ):
         """
         """
@@ -666,7 +1104,7 @@ class ClusteringAnalysis():
             for x in (0, 1, -1):
                 scores = list()
                 for k in range(kmin, kmax + 1, 1):
-                    scores.append(self.recluster(k=k, x=x, model=model))
+                    scores.append(self.recluster(k=k, x=x, model=model, scale=scale))
                 scores = np.array(scores)
                 for i in range(scores.shape[1]):
                     axs[i, j].plot(
@@ -702,40 +1140,103 @@ class ClusteringAnalysis():
     def plotResponseSubspaceByCluster(
         self,
         nd=2,
+        x=0,
+        tmin=0,
+        tmax=0.3,
+        scale=False,
+        X=None,
+        figsize=(5, 4)
         ):
         """
         """
 
-        include = np.invert(np.isnan(self.data).any(1))
-        xy = PCA(n_components=nd).fit_transform(self.data[include])
-        colors = np.array([f'C{int(l)}' for l in self.labels[include]])
+        if X is None:
+            include = np.invert(np.isnan(self.data).any(1))
+
+            #
+            binIndices = np.where(np.logical_and(
+                self.t >= tmin,
+                self.t <= tmax
+            ))[0]
+            xProbe, xSaccade = np.split(self.data, 2, axis=1)
+            if x == -1:
+                X = np.concatenate([
+                    xProbe[include][:, binIndices],
+                    xSaccade[include][:, binIndices]
+                ], axis=1)
+            else:
+                if x == 0:
+                    X = xProbe[include][:, binIndices]
+                elif x == 1:
+                    X = xSaccade[include][:, binIndices]
+            if scale:
+                X = StandardScaler().fit_transform(X)
+
+        xy = PCA(n_components=nd).fit_transform(X)
+        colors = list()
+        for l in self.labels:
+            if l == -1:
+                colors.append('k')
+            else:
+                colors.append(f'C{int(l)}')
         fig = plt.figure()
         if nd == 3:
             ax = fig.add_subplot(projection='3d')
             ax.scatter(xy[:, 0], xy[:, 1], zs=xy[:, 2], c=colors, s=2, alpha=0.8)
         else:
             ax = fig.add_subplot()
-            ax.scatter(xy[:, 0], xy[:, 1], c=colors, s=2, alpha=0.8)        
+            ax.scatter(xy[:, 0], xy[:, 1], c=colors, s=2, alpha=0.8)
+            for i, l in enumerate(np.unique(self.labels)):
+                color = f'C{int(i)}'
+                sampleIndices = np.where(self.labels == l)[0]
+                cx, cy = xy[sampleIndices].mean(0)
+                ax.scatter(cx, cy, color=color, edgecolor='k', marker='D', s=25)
+
+        #
+        ax.set_xlabel('PC1')
+        ax.set_ylabel('PC2')
+        ax.set_aspect('equal')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
 
         return fig, ax
     
     def plotAverageResponsesbyCluster(
         self,
         figsize=(4, 9),
+        vrange=(-1, 1),
+        plot='heatmap',
+        X=None,
         clusterOrder=None,
         ):
         """
         """
 
-        xProbe, xSaccade = np.split(self.data, 2, axis=1)
+        vmin, vmax = vrange
+        if X is None:
+            x1, x2 = np.split(self.data, 2, axis=1)
+            t = self.t
+        else:
+            x1 = X
+            x2 = np.full_like(X, np.nan)
+            t = np.arange(X.shape[1])
         clusterLabels, labelCounts = np.unique(self.labels.flatten(), return_counts=True)
         labelCounts = np.delete(labelCounts, np.isnan(clusterLabels))
         clusterLabels = np.delete(clusterLabels, np.isnan(clusterLabels))
-        fig, axs = plt.subplots(
-            nrows=clusterLabels.size,
-            ncols=2,
-            gridspec_kw={'height_ratios':labelCounts}
-        )
+        if plot == 'heatmap':
+            fig, axs = plt.subplots(
+                nrows=clusterLabels.size,
+                ncols=2,
+                gridspec_kw={'height_ratios':labelCounts}
+            )
+        elif plot == 'line':
+            fig, axs = plt.subplots(
+                nrows=clusterLabels.size,
+                ncols=2,
+                sharex=True,
+                sharey=True,
+            )
         for iCluster in range(clusterLabels.size):
 
             #
@@ -750,12 +1251,19 @@ class ClusteringAnalysis():
             np.random.shuffle(unitIndices)
 
             #
-            y = np.arange(clusterMask.sum())
-            axs[iCluster, 0].pcolor(self.t, y, smooth(xProbe[clusterMask, :][unitIndices, :], 5, axis=1), vmin=-0.7, vmax=0.85)
-            axs[iCluster, 0].set_yticks([])
-            axs[iCluster, 0].set_ylabel(clusterName, rotation=0, va='center', ha='right')
-            axs[iCluster, 1].pcolor(self.t, y, smooth(xSaccade[clusterMask, :][unitIndices, :], 5, axis=1), vmin=-0.7, vmax=0.85)
-            axs[iCluster, 1].set_yticks([])
+            if plot == 'heatmap':
+                y = np.arange(clusterMask.sum())
+                axs[iCluster, 0].pcolor(t, y, smooth(x1[clusterMask, :][unitIndices, :], 3, axis=1), vmin=vmin, vmax=vmax)
+                axs[iCluster, 0].set_yticks([])
+                axs[iCluster, 0].set_ylabel(clusterName, rotation=0, va='center', ha='right')
+                axs[iCluster, 1].pcolor(t, y, smooth(x2[clusterMask, :][unitIndices, :], 3, axis=1), vmin=vmin, vmax=vmax)
+                axs[iCluster, 1].set_yticks([])
+
+            #
+            elif plot == 'line':
+                color = f'C{int(iCluster)}'
+                axs[iCluster, 0].plot(t, smooth(x1[clusterMask, :], 3, axis=1).mean(0), color=color)
+                axs[iCluster, 1].plot(t, smooth(x2[clusterMask, :], 3, axis=1).mean(0), color=color)
 
         #
         for ax in axs[:-1, :].flatten():

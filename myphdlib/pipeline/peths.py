@@ -159,7 +159,7 @@ def _getResponseTemplatesForSaccades(
         )
         responseTemplates[(gratingDirection, saccadeDirection)] = fr
 
-    return responseTemplates, trialIndices
+    return responseTemplates, tBins, trialIndices
 
 class TimeHistogramProcessingMixin():
     """
@@ -208,6 +208,7 @@ class TimeHistogramProcessingMixin():
             if self.hasDataset(datasetPath) and overwrite == False:
                 continue
             peths = np.full([nUnits, nBins], np.nan)
+            error = np.full([nUnits, nBins], np.nan)
 
             #
             if self.probeTimestamps is None:
@@ -233,13 +234,18 @@ class TimeHistogramProcessingMixin():
                     end = '\r'
                 self.log(f'Extracting visual-only PSTHs for unit {iUnit + 1} out of {nUnits} (motion={probeMotion}, protocol={protocol})', end=end)    
 
-                t, fr = unit.peth(
+                t, M = psth2(
                     probeTimestamps[trialIndices],
-                    responseWindow=responseWindow,
+                    unit.timestamps,
+                    window=responseWindow,
                     binsize=binsize
                 )
+                fr = M.mean(0) / binsize
+                sd = M.std(0) / binsize
                 peths[iUnit] = fr
-            self.save(datasetPath, peths, metadata=metadata)
+                error[iUnit] = sd
+            self.save(f'{datasetPath}/fr', peths, metadata=metadata) # Mean firing rate
+            self.save(f'{datasetPath}/sd', error, metadata=metadata) # Standard deviation across trials per bin
 
         return
 
@@ -292,6 +298,7 @@ class TimeHistogramProcessingMixin():
             if self.hasDataset(datasetPath) and overwrite == False:
                 continue
             peths = np.full([nUnits, nBins], np.nan)
+            error = np.full([nUnits, nBins], np.nan)
 
             #
             if self.probeTimestamps is None:
@@ -317,15 +324,20 @@ class TimeHistogramProcessingMixin():
                     end = '\r'
                 self.log(f'Extracting saccade-only PSTHs for unit {iUnit + 1} out of {nUnits} (direction={saccadeDirection}, protocol={protocol})', end=end)   
 
-                t, fr = unit.peth(
+                t, M = psth2(
                     saccadeTimestamps[trialIndices],
-                    responseWindow=responseWindow,
+                    unit.timestamps,
+                    window=responseWindow,
                     binsize=binsize
                 )
+                fr = M.mean(0) / binsize
+                sd = M.std(0) / binsize
                 peths[iUnit] = fr
+                error[iUnit] = sd
             
             #
-            self.save(datasetPath, peths, metadata=metadata)
+            self.save(f'{datasetPath}/fr', peths, metadata=metadata)
+            self.save(f'{datasetPath}/sd', error, metadata=metadata)
 
         return
 
@@ -375,6 +387,7 @@ class TimeHistogramProcessingMixin():
 
             #
             peths = np.full([nUnits, nBins, binEdges.shape[0]], np.nan)
+            error = np.full([nUnits, nBins, binEdges.shape[0]], np.nan)
             datasetPath = f'peths/rMixed/{protocol}/{probeDirection}'
             if self.hasDataset(datasetPath) and overwrite == False:
                 continue
@@ -407,15 +420,26 @@ class TimeHistogramProcessingMixin():
                     ))[0]
 
                     #
-                    t, fr = unit.peth(
+                    if trialIndices.size == 0:
+                        peths[iUnit, :, iBin] = np.full(nBins, np.nan)
+                        error[iUnit, :, iBin] = np.full(nBins, np.nan)
+                        continue
+
+                    #
+                    t, M = psth2(
                         probeTimestamps[trialIndices],
-                        responseWindow=responseWindow,
+                        unit.timestamps,
+                        window=responseWindow,
                         binsize=binsize
                     )
+                    fr = M.mean(0) / binsize
+                    sd = M.std(0) / binsize
                     peths[iUnit, :, iBin] = fr
+                    error[iUnit, :, iBin] = sd
             
             #
-            self.save(datasetPath, peths, metadata=metadata)
+            self.save(f'{datasetPath}/fr', peths, metadata=metadata)
+            self.save(f'{datasetPath}/sd', error, metadata=metadata)
 
         return
 
@@ -427,6 +451,7 @@ class TimeHistogramProcessingMixin():
         binsize=0.02,
         protocol='dg',
         interp=False,
+        windowPadSize=1,
         overwrite=True
         ):
         """
@@ -466,6 +491,7 @@ class TimeHistogramProcessingMixin():
 
             #
             peths = np.full([nUnits, nBins, binEdges.shape[0]], np.nan)
+            error = np.full([nUnits, nBins, binEdges.shape[0]], np.nan)
             datasetPath = f'peths/rSaccade/{protocol}/{probeDirection}'
             if self.hasDataset(datasetPath) and overwrite == False:
                 continue
@@ -486,14 +512,19 @@ class TimeHistogramProcessingMixin():
                 self.log(f'Extracting latency-shifted saccade PSTHs for unit {iUnit + 1} out of {nUnits} (motion={probeMotion}, protocol={protocol})', end=end)   
 
                 #
-                responseTemplates, trialIndicesForUniqueConditions = _getResponseTemplatesForSaccades(
-                    unit,
-                    probeData,
-                    saccadeData,
-                    responseWindow=responseWindow,
-                    perisaccadicWindow=perisaccadicWindow,
-                    binsize=binsize
-                )
+                if interp:
+                    responseWindowPadded = np.array([
+                        responseWindow[0] - windowPadSize,
+                        responseWindow[1] + windowPadSize
+                    ])
+                    responseTemplates, tBinsPadded, trialIndicesForUniqueConditions = _getResponseTemplatesForSaccades(
+                        unit,
+                        probeData,
+                        saccadeData,
+                        responseWindow=responseWindowPadded,
+                        perisaccadicWindow=perisaccadicWindow,
+                        binsize=binsize
+                    )
                 
                 for iBin, (leftEdge, rightEdge) in enumerate(binEdges):
 
@@ -525,7 +556,7 @@ class TimeHistogramProcessingMixin():
                         #
                         if interp:
                             fp = responseTemplates[(probeDirection, saccadeDirection)]
-                            xp = tBins
+                            xp = tBinsPadded
                             x = tBins + probeLatency
                             curve = np.interp(x, xp, fp, left=np.nan, right=np.nan)
                         
@@ -546,9 +577,11 @@ class TimeHistogramProcessingMixin():
                         curves.append(curve)
                     curves = np.array(curves)
                     peths[iUnit, :, iBin] = np.nanmean(curves, axis=0)
+                    error[iUnit, :, iBin] = np.nanstd(curves, axis=0)
             
             #
-            self.save(datasetPath, peths, metadata=metadata)
+            self.save(f'{datasetPath}/fr', peths, metadata=metadata)
+            self.save(f'{datasetPath}/sd', error, metadata=metadata)
 
         return
 
@@ -659,12 +692,22 @@ class TimeHistogramProcessingMixin():
 
     def _runPethsModule(
         self,
-        overwrite=True
+        overwrite=True,
+        interp=True
         ):
         """
         """
 
         for protocol in ('dg', 'fs'):
+
+            #
+            for motionDirection in ('left', 'right', 'nasal', 'temporal'):
+                for responseTerm in ('rProbe', 'rSaccade', 'rMixed'):
+                    datasetPath = f'peths/{responseTerm}/{protocol}/{motionDirection}'
+                    if self.hasDataset(datasetPath):
+                        self.log(f'Removing dataset: {datasetPath}')
+                        self.remove(datasetPath)
+            
             self._extractVisualOnlyPeths(
                 protocol=protocol,
                 overwrite=overwrite
@@ -679,7 +722,8 @@ class TimeHistogramProcessingMixin():
             )
             self._extractLatencyShiftedSaccadePeths(
                 protocol=protocol,
-                overwrite=overwrite
+                overwrite=overwrite,
+                interp=interp
             )
 
         return

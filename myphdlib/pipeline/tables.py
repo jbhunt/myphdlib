@@ -126,42 +126,74 @@ unitsTableMapping = {
         ('population/metrics/ksl', {}),
     'spikeWaveforms':
         ('population/metrics/bsw', {}),
-    'rMixed/dg/left':
-        (_loadPeths, {'path': 'peths/rMixed/dg/left'}),
-    'rMixed/dg/right':
-        (_loadPeths, {'path': 'peths/rMixed/dg/right'}),
-    'rProbe/dg/left':
-        (_loadPeths, {'path': 'peths/rProbe/dg/left'}),
-    'rProbe/dg/right':
-        (_loadPeths, {'path': 'peths/rProbe/dg/right'}),
-    'rProbe/dg/preferred':
+    'rMixed/dg/left/fr':
+        (_loadPeths, {'path': 'peths/rMixed/dg/left/fr'}),
+    'rMixed/dg/left/sd':
+        (_loadPeths, {'path': 'peths/rMixed/dg/left/sd'}),
+    'rMixed/dg/right/fr':
+        (_loadPeths, {'path': 'peths/rMixed/dg/right/fr'}),
+    'rMixed/dg/right/sd':
+        (_loadPeths, {'path': 'peths/rMixed/dg/right/sd'}),
+    'rProbe/dg/left/fr':
+        (_loadPeths, {'path': 'peths/rProbe/dg/left/fr'}),
+    'rProbe/dg/left/sd':
+        (_loadPeths, {'path': 'peths/rProbe/dg/left/sd'}),
+    'rProbe/dg/right/fr':
+        (_loadPeths, {'path': 'peths/rProbe/dg/right/fr'}),
+    'rProbe/dg/right/sd':
+        (_loadPeths, {'path': 'peths/rProbe/dg/right/sd'}),
+    'rSaccade/dg/left/fr':
+       (_loadPeths, {'path': 'peths/rSaccade/dg/left/fr'}),
+    'rSaccade/dg/left/sd':
+       (_loadPeths, {'path': 'peths/rSaccade/dg/left/sd'}),
+    'rSaccade/dg/right/fr':
+        (_loadPeths, {'path': 'peths/rSaccade/dg/right/fr'}),
+    'rSaccade/dg/right/sd':
+        (_loadPeths, {'path': 'peths/rSaccade/dg/right/sd'}),
+    'rSaccade/dg/nasal/fr':
+        (_loadPeths, {'path': 'peths/rSaccade/dg/nasal/fr'}),
+    'rSaccade/dg/nasal/sd':
+        (_loadPeths, {'path': 'peths/rSaccade/dg/nasal/sd'}),
+    'rSaccade/dg/temporal/fr':
+        (_loadPeths, {'path': 'peths/rSaccade/dg/temporal/fr'}),
+    'rSaccade/dg/temporal/sd':
+        (_loadPeths, {'path': 'peths/rSaccade/dg/temporal/sd'}),
+    'rMixed/fs/left/fr':
+        (_loadPeths, {'path': 'peths/rMixed/fs/left/fr'}),
+    'rMixed/fs/left/sd':
+        (_loadPeths, {'path': 'peths/rMixed/fs/left/sd'}),
+    'rMixed/fs/right/fr':
+        (_loadPeths, {'path': 'peths/rMixed/fs/right/fr'}),
+    'rMixed/fs/right/sd':
+        (_loadPeths, {'path': 'peths/rMixed/fs/right/sd'}),
+    'rProbe/fs/left/fr':
+        (_loadPeths, {'path': 'peths/rProbe/fs/left/fr'}),
+    'rProbe/fs/left/sd':
+        (_loadPeths, {'path': 'peths/rProbe/fs/left/sd'}),
+    'rProbe/fs/right/fr':
+        (_loadPeths, {'path': 'peths/rProbe/fs/right/fr'}),
+    'rProbe/fs/right/sd':
+        (_loadPeths, {'path': 'peths/rProbe/fs/right/sd'}),
+    'rSaccade/fs/left/fr':
+        (_loadPeths, {'path': 'peths/rSaccade/fs/left/fr'}),
+    'rSaccade/fs/left/sd':
+        (_loadPeths, {'path': 'peths/rSaccade/fs/left/sd'}),
+    'rSaccade/fs/right/fr':
+        (_loadPeths, {'path': 'peths/rSaccade/fs/right/fr'}),
+    'rSaccade/fs/right/sd':
+        (_loadPeths, {'path': 'peths/rSaccade/fs/right/sd'}),
+    'rSaccade/fs/nasal/fr':
+        (_loadPeths, {'path': 'peths/rSaccade/fs/nasal/fr'}),
+    'rSaccade/fs/nasal/sd':
+        (_loadPeths, {'path': 'peths/rSaccade/fs/nasal/sd'}),
+    'rSaccade/fs/temporal/fr':
+        (_loadPeths, {'path': 'peths/rSaccade/fs/temporal/fr'}),
+    'rSaccade/fs/temporal/sd':
+        (_loadPeths, {'path': 'peths/rSaccade/fs/temporal/sd'}),
+    'xProbe':
         (_loadPeths, {'path': 'peths/rProbe/dg/preferred'}),
-    'rSaccade/dg/preferred':
-        (_loadPeths, {'path': 'peths/rSaccade/dg/preferred'}),
-    # 'rSaccade/dg/left':
-    #    (_loadPeths, {'path': 'peths/rSaccade/dg/left'}),
-    # 'rSaccade/dg/right':
-    #     (_loadPeths, {'path': 'peths/rSaccade/dg/right'}),
-    'rSaccade/dg/nasal':
-        (_loadPeths, {'path': 'peths/rSaccade/dg/nasal'}),
-    'rSaccade/dg/temporal':
-        (_loadPeths, {'path': 'peths/rSaccade/dg/temporal'}),
-    'rMixed/fs/left':
-        (_loadPeths, {'path': 'peths/rMixed/fs/left'}),
-    'rMixed/fs/right':
-        (_loadPeths, {'path': 'peths/rMixed/fs/right'}),
-    'rProbe/fs/left':
-        (_loadPeths, {'path': 'peths/rProbe/fs/left'}),
-    'rProbe/fs/right':
-        (_loadPeths, {'path': 'peths/rProbe/fs/right'}),
-    'rSaccade/fs/left':
-        (_loadPeths, {'path': 'peths/rSaccade/fs/left'}),
-    'rSaccade/fs/right':
-        (_loadPeths, {'path': 'peths/rSaccade/fs/right'}),
-    'rSaccade/fs/nasal':
-        (_loadPeths, {'path': 'peths/rSaccade/fs/nasal'}),
-    'rSaccade/fs/temporal':
-        (_loadPeths, {'path': 'peths/rSaccade/fs/temporal'}),
+    'xSaccade':
+       (_loadPeths, {'path': 'peths/rSaccade/dg/preferred'}),
     'pZeta/left':
         (_getZetaTestProbabilities, {'probeMotion': -1}),
     'pZeta/right':

@@ -129,14 +129,17 @@ class SpikesProcessingMixin(object):
     def _extractSpikeWaveforms(
         self,
         nWaveforms=50,
-        nBestChannels=5,
+        nBestChannels=1,
         nogui=True,
-        windowsProcessTimeout=60*10, # Ten minutes
+        windowsProcessTimeout=60*10, # Ten minutes,
+        baselineWindowInSamples=(0, 20),
         ):
 
         #
         # if self.hasDataset('population/metrics/bsw'):
         #     return
+
+        self.log(f'Extrcting best average spike waveforms')
 
         #
         partsFromEphysFolder = (
@@ -191,13 +194,13 @@ class SpikesProcessingMixin(object):
         nUnits, nChannels, nSamples = spikeWaveformsArray.shape
         bestSpikeWaveforms = np.full([nUnits, nSamples], np.nan)
         for iUnit in range(nUnits):
-            lfp = spikeWaveformsArray[iUnit, :, :].mean(0)
-            adv = np.array([
-                np.abs(wf - lfp) for wf in spikeWaveformsArray[iUnit]
+            waveformPower = np.array([
+                np.sum(np.abs(wf - wf[baselineWindowInSamples[0]:baselineWindowInSamples[1]].mean())) for wf in spikeWaveformsArray[iUnit, :, :]
             ])
-            channelIndices = np.argsort(adv.sum(axis=1))[::-1][:nBestChannels]
+            channelIndices = np.argsort(waveformPower)[::-1][:nBestChannels]
             bestSpikeWaveform = spikeWaveformsArray[iUnit, channelIndices, :].mean(0)
-            bestSpikeWaveforms[iUnit :] = bestSpikeWaveform
+
+            bestSpikeWaveforms[iUnit :] = bestSpikeWaveform - bestSpikeWaveform[baselineWindowInSamples[0]: baselineWindowInSamples[1]].mean()
 
         #
         self.save(f'population/metrics/bsw', bestSpikeWaveforms)

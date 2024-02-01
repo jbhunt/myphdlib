@@ -92,6 +92,7 @@ class SessionFactory(object):
         animals=None,
         dates=(None, None),
         letters=(None, 'a', 'b', 'c'),
+        eye='left',
         ):
         """
         """
@@ -148,11 +149,11 @@ class SessionFactory(object):
                 folder = volume.joinpath(str(date_), animal_)
                 if folder.exists():
                     if experiment_ == 'Muscimol':
-                        session = MuscimolSession(folder)
+                        session = MuscimolSession(folder, eye=eye)
                     elif experiment_ == 'Dreadds':
-                        session = DreaddsSession(folder)
+                        session = DreaddsSession(folder, eye=eye)
                     elif experiment_ == 'Mlati':
-                        session = MlatiSession(folder)
+                        session = MlatiSession(folder, eye=eye)
                     else:
                         continue
                     sessions.append(session)

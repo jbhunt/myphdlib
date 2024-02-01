@@ -226,7 +226,7 @@ class SessionBase():
     
     def remove(self, path):
         """
-        Remove a group from the hdf file
+        Remove a group or dataset from the hdf file
         """
 
         if self.hdf.exists() == False:
@@ -257,11 +257,12 @@ class SessionBase():
         with h5py.File(self.hdf, 'r') as file:
             file.visit(lambda name: pathsInFile.append(name))
 
-        for path in pathsInFile:
-            print(path)
-            
+        with h5py.File(self.hdf, 'r') as file:
+            for path in pathsInFile:
+                if type(file[path]) == h5py.Dataset:
+                    print(path) 
 
-        return pathsInFile
+        return
 
     def _makeOutputFile(
         self,

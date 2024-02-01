@@ -157,7 +157,7 @@ class StimuliProcessingMixinMuscimol(StimuliProcessingMixin):
 
         return
 
-    def _processsDriftingGratingProtocol(self):
+    def _processDriftingGratingProtocol(self):
         """
         """
 
@@ -176,6 +176,8 @@ class StimuliProcessingMixinMuscimol(StimuliProcessingMixin):
             eventIndices = np.array(eventIndices)
             gratingOnsetTimestamps = self.computeTimestamps(eventIndices)
             itiOnsetTimestamps = np.array([]).astype(float)
+            nBlocks = gratingOnsetTimestamps.size
+            gratingMotionByBlock = np.full(nBlocks, np.nan)
 
         # Grating onset and offset were signaled
         elif self.cohort == 2:
@@ -191,6 +193,7 @@ class StimuliProcessingMixinMuscimol(StimuliProcessingMixin):
                 int(line.split(', ')[1]) for line in lines
             ])
             nEvents = gratingMotionDuringEvents.size
+            gratingMotionByBlock = gratingMotionDuringEvents[::2]
 
             # 
             M = self.load('labjack/matrix')
@@ -214,6 +217,7 @@ class StimuliProcessingMixinMuscimol(StimuliProcessingMixin):
         #
         self.save('stimuli/dg/iti/timestamps', itiOnsetTimestamps)
         self.save('stimuli/dg/grating/timestamps', gratingOnsetTimestamps)
+        self.save('stimuli/dg/grating/motion', gratingMotionByBlock)
 
         return
 
@@ -241,9 +245,9 @@ class ActivityProcessingMixinMuscimol(ActivityProcessingMixin):
         return
 
 class MuscimolSession(
+    StimuliProcessingMixinMuscimol,
     SaccadesProcessingMixinMuscimol,
     EventsProcessingMixinMuscimol,
-    StimuliProcessingMixinMuscimol,
     SpikesProcessingMixinMuscimol,
     ActivityProcessingMixinMuscimol,
     PredictionProcessingMixin,
