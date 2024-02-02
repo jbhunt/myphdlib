@@ -636,8 +636,9 @@ class ClusteringAnalysisRemixed():
 
     def measureResponseLatency(
         self,
-        latencyBoundaries=(0, 0.3),
+        latencyBoundaries=(0, 0.5),
         minimumPeakHeight=0.2,
+        version=2,
         ):
         """
         """
@@ -650,21 +651,25 @@ class ClusteringAnalysisRemixed():
         responseLatencies = np.full(nUnits, np.nan)
         for iUnit in range(nUnits):
             y = self.peths['p'][iUnit]
-            dy = np.diff(y)
-            peakIndices, peakProperties = findPeaks(
-                dy,
-                height=minimumPeakHeight
-            )
-            if peakIndices.size == 0:
-                continue
-            #
-            peakIndices.sort()
-            binIndex = np.nan
-            for peakIndex in peakIndices:
-                if peakIndex - 1 in binIndices:
-                    binIndex = peakIndex - 1
-                    break
-            if np.isnan(binIndex) == False:
+            if version == 1:
+                dy = np.diff(y)
+                peakIndices, peakProperties = findPeaks(
+                    dy,
+                    height=minimumPeakHeight
+                )
+                if peakIndices.size == 0:
+                    continue
+                #
+                peakIndices.sort()
+                binIndex = np.nan
+                for peakIndex in peakIndices:
+                    if peakIndex - 1 in binIndices:
+                        binIndex = peakIndex - 1
+                        break
+                if np.isnan(binIndex) == False:
+                    responseLatencies[iUnit] = self.t[binIndex]
+            elif version == 2:
+                binIndex = np.argmax(np.abs(y[binIndices])) + binIndices[0]
                 responseLatencies[iUnit] = self.t[binIndex]
 
         #
@@ -719,14 +724,23 @@ class ClusteringAnalysisRemixed():
         self.combos = np.full([nUnits, 3], np.nan)
         X = SimpleImputer().fit_transform(self.X)
         for i in range(X.shape[1]):
-            initMeanEstimates = np.array([
-                X[:, i].min(),
-                X[:, i].max()
-            ]).reshape(-1, 1)
+            if i == 0:
+                k = 2
+                initMeanEstimates = np.array([
+                    X[:, i].min(),
+                    # X[:, i].mean(),
+                    X[:, i].max()
+                ]).reshape(-1, 1)
+            else:
+                k = 2
+                initMeanEstimates = np.array([
+                    X[:, i].min(),
+                    X[:, i].max()
+                ]).reshape(-1, 1)
             if model == 'gmm':
-                self.combos[:, i] = GaussianMixture(n_components=2, means_init=initMeanEstimates).fit_predict(X[:, i].reshape(-1, 1))
+                self.combos[:, i] = GaussianMixture(n_components=k, means_init=initMeanEstimates).fit_predict(X[:, i].reshape(-1, 1))
             elif model == 'kmeans':
-                self.combos[:, i] = KMeans(n_clusters=2, init=initMeanEstimates).fit_predict(X[:, i].reshape(-1, 1))
+                self.combos[:, i] = KMeans(n_clusters=k, init=initMeanEstimates).fit_predict(X[:, i].reshape(-1, 1))
 
         #
         self.labels = np.full(nUnits, np.nan)
@@ -748,27 +762,38 @@ class ClusteringAnalysisRemixed():
 
         labels, counts = np.unique(self.labels, return_counts=True)
         if plot == 'heatmap':
-            fig, axs = plt.subplots(nrows=labels.size, gridspec_kw={'height_ratios': counts})
+            fig, axs = plt.subplots(nrows=labels.size, ncols=2, gridspec_kw={'height_ratios': counts})
         else:
             fig, axs = plt.subplots(nrows=labels.size, sharey=True, sharex=True)
         for i, l in enumerate(labels):
             color = f'C{int(i)}'
-            z = self.peths['p'][self.labels == l, :]
-            axs[i].set_ylabel(f'C{int(i + 1)}', va='center', rotation=0, labelpad=15)
+            zProbe = self.peths['p'][self.labels == l, :]
+            zSaccade = self.peths['s'][self.labels == l, :]
             if plot == 'heatmap':
-                y = np.arange(z.shape[0])
-                shuffledIndices = np.arange(z.shape[0])
-                orderedIndices = np.argsort(np.array([np.argmax(np.abs(zi)) for zi in z]))
+                axs[i, 0].set_ylabel(f'C{int(i + 1)}', va='center', rotation=0, labelpad=15)
+                y = np.arange(zProbe.shape[0])
+                shuffledIndices = np.arange(zProbe.shape[0])
+                orderedIndices = np.argsort(np.array([np.argmax(np.abs(zi)) for zi in zProbe]))
                 np.random.shuffle(shuffledIndices)
-                axs[i].pcolor(
+                axs[i, 0].pcolor(
                     self.t,
                     y,
-                    z[shuffledIndices, :],
+                    zProbe[orderedIndices, :],
                     vmin=-1, vmax=1
                 )
+                axs[i, 1].pcolor(
+                    self.t,
+                    y,
+                    zSaccade[orderedIndices, :],
+                    vmin=-1, vmax=1
+                )
+                for ax in axs[i, :]:
+                    ax.set_xticklabels([])
+                axs[-1, 0].set_xlabel('Time from event (sec)')
             elif plot == 'line':
-                y = z.mean(0)
-                e = z.std(0)
+                axs[i].set_ylabel(f'C{int(i + 1)}', va='center', rotation=0, labelpad=15)
+                y = zProbe.mean(0)
+                e = zProbe.std(0)
                 axs[i].plot(self.t, y, color=color)
                 # axs[i].fill_between(
                 #     self.t,
@@ -777,17 +802,17 @@ class ClusteringAnalysisRemixed():
                 #     color=color,
                 #     alpha=0.2
                 # )
-        for ax in axs[:-1]:
-            ax.set_xticklabels([])
+                axs[i].plot(self.t, zSaccade.mean(0), color='k', alpha=0.5)
+                axs[i].set_xticklabels([])
+                axs[-1].set_xlabel('Time from event (sec)')
         if plot == 'heatmap':
-            for ax in axs:
+            for ax in axs.flatten():
                 ax.set_yticks([])
         elif plot == 'line':
-            for ax in axs:
+            for ax in axs.flatten():
                 # ax.set_ylim([-1, 1])
                 ax.set_yticks([-1, 0, 1])
                 ax.set_yticklabels([])
-        axs[-1].set_xlabel('Time from probe (sec)')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
