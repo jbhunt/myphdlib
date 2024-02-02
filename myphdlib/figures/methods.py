@@ -600,37 +600,53 @@ class ClusteringAnalysisRemixed():
 
     def measureResponseComplexity(
         self,
+        version=2
         ):
         """
         """
 
-        #
-        parameterBoundaries = np.array([
-            [-1, 1],      # Amplitude
-            [0, 0.3],     # Mean
-            [0.02, 0.05], # Standard deviation
-            [-0.2, 0.2],  # Zero offset
-        ]).T
-        initialParameterValues = parameterBoundaries.mean(0)
-
-        #
         nUnits = self.peths['p'].shape[0]
-        residuals = np.full(nUnits, np.nan)
-        for iUnit in range(nUnits):
-            yTrue = self.peths['p'][iUnit, :]
-            popt, pcov = fitCurve(
-                g,
-                self.t,
-                yTrue,
-                bounds=parameterBoundaries,
-                p0=initialParameterValues
-            )
-            yFit = g(self.t, *popt)
-            dy = yTrue - yFit
-            residuals[iUnit] = np.sqrt(np.sum(np.power(dy, 2)))
 
         #
-        self.X[:, 0] = residuals
+        if version == 1:
+            parameterBoundaries = np.array([
+                [-1, 1],      # Amplitude
+                [0, 0.3],     # Mean
+                [0.02, 0.05], # Standard deviation
+                [-0.2, 0.2],  # Zero offset
+            ]).T
+            initialParameterValues = parameterBoundaries.mean(0)
+
+            #
+            residuals = np.full(nUnits, np.nan)
+            for iUnit in range(nUnits):
+                yTrue = self.peths['p'][iUnit, :]
+                popt, pcov = fitCurve(
+                    g,
+                    self.t,
+                    yTrue,
+                    bounds=parameterBoundaries,
+                    p0=initialParameterValues
+                )
+                yFit = g(self.t, *popt)
+                dy = yTrue - yFit
+                residuals[iUnit] = np.sqrt(np.sum(np.power(dy, 2)))
+
+            #
+            self.X[:, 0] = residuals
+
+        #
+        elif version == 2:
+            complexity = np.full(nUnits, np.nan)
+            for iUnit in range(nUnits):
+                y = self.peths['p'][iUnit]
+                cummulativeAmplitude = 0
+                for coef in (-1, + 1):
+                    peakIndices, peakProps = findPeaks(coef * y, height=0.1, prominence=0.2)
+                    for peakAmplitude in peakProps['peak_heights']:
+                        cummulativeAmplitude += peakAmplitude
+                complexity[iUnit] = cummulativeAmplitude
+            self.X[:, 0] = complexity
 
         return
 
