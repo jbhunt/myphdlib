@@ -1008,11 +1008,11 @@ class MlatiSession(
         'stimulus': 7,
     }
 
-    def __init__(self, sessionFolder):
+    def __init__(self, sessionFolder, eye='left'):
         """
         """
 
-        super().__init__(sessionFolder)
+        super().__init__(sessionFolder, eye=eye)
 
         return
     

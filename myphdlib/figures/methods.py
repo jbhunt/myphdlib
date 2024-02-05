@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler
 from scipy.optimize import curve_fit as fitCurve
 from scipy.signal import find_peaks as findPeaks
 from sklearn.impute import SimpleImputer
+from scipy.interpolate import CubicSpline
 
 def g(x, a, mu, sigma, d):
     """
@@ -638,30 +639,35 @@ class ClusteringAnalysisRemixed():
         #
         elif version == 2:
             complexity = np.full(nUnits, np.nan)
+            maximumPeakCount = 0
             for iUnit in range(nUnits):
                 y = self.peths['p'][iUnit]
                 cummulativeAmplitude = 0
+                peakCount = 0
                 for coef in (-1, + 1):
                     peakIndices, peakProps = findPeaks(coef * y, height=0.1, prominence=0.2)
                     for peakAmplitude in peakProps['peak_heights']:
                         cummulativeAmplitude += peakAmplitude
+                    peakCount += peakIndices.size
+                if peakCount > maximumPeakCount:
+                    maximumPeakCount = peakCount
                 complexity[iUnit] = cummulativeAmplitude
-            self.X[:, 0] = complexity
+            self.X[:, 0] = complexity / maximumPeakCount
 
         return
 
     def measureResponseLatency(
         self,
-        latencyBoundaries=(0, 0.5),
+        maximumLatency=0.5,
         minimumPeakHeight=0.2,
-        version=2,
+        version=3,
         ):
         """
         """
 
         binIndices = np.where(np.logical_and(
-            self.t >= latencyBoundaries[0],
-            self.t <= latencyBoundaries[1]
+            self.t >= 0,
+            self.t <= maximumLatency
         ))[0]
         nUnits = self.peths['p'].shape[0]
         responseLatencies = np.full(nUnits, np.nan)
@@ -687,40 +693,84 @@ class ClusteringAnalysisRemixed():
             elif version == 2:
                 binIndex = np.argmax(np.abs(y[binIndices])) + binIndices[0]
                 responseLatencies[iUnit] = self.t[binIndex]
+            elif version == 3:
+                f = CubicSpline(self.t, y)
+                tExpanded = np.linspace(self.t.min(), self.t.max(), 301)
+                yFit = f(tExpanded)
+                responseLatencies[iUnit] = tExpanded[np.argmax(np.abs(yFit))]
 
         #
-        self.X[:, 1] = responseLatencies
+        self.X[:, 1] = responseLatencies / maximumLatency
 
         return
 
     def measureResponsePolarity(
         self,
-        responseWindow=(0, 0.3),
+        responseWindow=(0, 0.5),
         nFeatures=15,
+        version=3,
         ):
         """
         """
 
         nUnits = self.peths['p'].shape[0]
-        pethsCentered = np.full([nUnits, nFeatures], np.nan)
-        binIndices = np.where(np.logical_and(
-            self.t >= responseWindow[0],
-            self.t <= responseWindow[1]
-        ))[0]
-        peakOffset = int((nFeatures - 1) / 2)
-        for iUnit in range(nUnits):
-            r = self.peths['p'][iUnit]
-            peakIndex = np.argmax(np.abs(r[binIndices])) + binIndices[0]
-            y = r[peakIndex - peakOffset: peakIndex + peakOffset + 1]
-            if y.size != nFeatures:
-                y = np.full(nFeatures, np.nan)
-            pethsCentered[iUnit, :] = y
 
         #
-        xReduced = PCA(n_components=1).fit_transform(pethsCentered)
-        self.X[:, 2] = xReduced.flatten()
+        if version == 1:
+            binIndices = np.where(np.logical_and(
+                self.t >= responseWindow[0],
+                self.t <= responseWindow[1]
+            ))[0]
+            pethsCentered = np.full([nUnits, nFeatures], np.nan)
+            peakOffset = int((nFeatures - 1) / 2)
+            for iUnit in range(nUnits):
+                r = self.peths['p'][iUnit]
+                peakIndex = np.argmax(np.abs(r[binIndices])) + binIndices[0]
+                y = r[peakIndex - peakOffset: peakIndex + peakOffset + 1]
+                if y.size != nFeatures:
+                    y = np.full(nFeatures, np.nan)
+                pethsCentered[iUnit, :] = y
+            xReduced = PCA(n_components=1).fit_transform(pethsCentered)
+            self.X[:, 2] = xReduced.flatten()
 
-        return pethsCentered
+        #
+        # TODO: Get rid of the information about amplitude here
+        elif version == 2:
+            tExpanded = np.linspace(responseWindow[0], responseWindow[1], 301)
+            binIndices = np.where(np.logical_and(
+                tExpanded >= responseWindow[0],
+                tExpanded <= responseWindow[1]
+            ))[0]
+            peakAmplitudes = np.full(nUnits, np.nan)
+            for iUnit in range(nUnits):
+                y = self.peths['p'][iUnit]
+                f = CubicSpline(self.t, y)
+                yFit = f(tExpanded)
+                peakIndex = np.argmax(np.abs(yFit[binIndices]))
+                peakAmplitudes[iUnit] = yFit[peakIndex]
+            self.X[:, 2] = peakAmplitudes
+
+        #
+        elif version == 3:
+            tExpanded = np.linspace(responseWindow[0], responseWindow[1], 301)
+            binIndices = np.where(np.logical_and(
+                tExpanded >= responseWindow[0],
+                tExpanded <= responseWindow[1]
+            ))[0]
+            polarityIndices = np.full(nUnits, np.nan)
+            for iUnit in range(nUnits):
+                y = self.peths['p'][iUnit]
+                f = CubicSpline(self.t, y)
+                yFit = f(tExpanded)
+                peakIndexPositive = np.argmax(yFit[binIndices])
+                peakIndexNegative = np.argmin(yFit[binIndices])
+                peakAmplitudePositive = yFit[peakIndexPositive]
+                peakAmplitudeNegative = abs(yFit[peakIndexNegative])
+                polarityIndex = (peakAmplitudePositive - peakAmplitudeNegative) / (peakAmplitudePositive + peakAmplitudeNegative)
+                polarityIndices[iUnit] = polarityIndex
+            self.X[:, 2] = polarityIndices
+
+        return
 
     def cluster(
         self,
@@ -757,6 +807,8 @@ class ClusteringAnalysisRemixed():
                 self.combos[:, i] = GaussianMixture(n_components=k, means_init=initMeanEstimates).fit_predict(X[:, i].reshape(-1, 1))
             elif model == 'kmeans':
                 self.combos[:, i] = KMeans(n_clusters=k, init=initMeanEstimates).fit_predict(X[:, i].reshape(-1, 1))
+            elif model == 'agg':
+                self.combos[:, i] = AgglomerativeClustering(n_clusters=k).fit_predict(X[:, i].reshape(-1, 1))
 
         #
         self.labels = np.full(nUnits, np.nan)
@@ -772,11 +824,15 @@ class ClusteringAnalysisRemixed():
         self,
         plot='line',
         figsize=(3, 8.5),
+        order=None
         ):
         """
         """
 
         labels, counts = np.unique(self.labels, return_counts=True)
+        if order is not None:
+            labels = labels[order]
+            counts = counts[order]
         if plot == 'heatmap':
             fig, axs = plt.subplots(nrows=labels.size, ncols=2, gridspec_kw={'height_ratios': counts})
         else:
@@ -795,13 +851,13 @@ class ClusteringAnalysisRemixed():
                     self.t,
                     y,
                     zProbe[orderedIndices, :],
-                    vmin=-1, vmax=1
+                    vmin=-0.7, vmax=0.7
                 )
                 axs[i, 1].pcolor(
                     self.t,
                     y,
                     zSaccade[orderedIndices, :],
-                    vmin=-1, vmax=1
+                    vmin=-0.7, vmax=0.7
                 )
                 for ax in axs[i, :]:
                     ax.set_xticklabels([])
@@ -833,6 +889,52 @@ class ClusteringAnalysisRemixed():
         fig.set_figheight(figsize[1])
         fig.tight_layout()
         fig.subplots_adjust(hspace=0.15)
+
+        return fig, axs
+
+    def plotFeatureDistributions(
+        self,
+        nBins=100,
+        figsize=(3, 7)
+        ):
+        """
+        """
+        featureRanges = (
+            [ 0, 1],
+            [ 0, 1],
+            [-1, 1]
+        )
+        featureLabels = (
+            'Complexity',
+            'Latency',
+            'Polarity'
+        )
+        fig, axs = plt.subplots(nrows=self.X.shape[1])
+        for i in range(self.X.shape[1]):
+            samples = self.X[:, i]
+            classes = self.combos[:, i]
+            axs[i].hist(
+                [samples[classes == 0], samples[classes == 1]],
+                color=['r', 'b'],
+                histtype='step',
+                range=featureRanges[i],
+                bins=nBins,
+            )
+            axs[i].hist(
+                [samples[classes == 0], samples[classes == 1]],
+                color=['r', 'b'],
+                histtype='stepfilled',
+                range=featureRanges[i],
+                bins=nBins,
+                alpha=0.2
+            )
+            axs[i].set_xlabel(featureLabels[i])
+            axs[i].set_ylabel('Frequency')
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
 
         return fig, axs
 
