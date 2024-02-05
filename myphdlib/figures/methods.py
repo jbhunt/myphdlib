@@ -517,10 +517,10 @@ class ClusteringAnalysisRemixed():
         self,
         hdf,
         baselineWindow=(-0.2, 0),
-        responseWindow=(0, 0.3),
-        minimumBaselineLevel=0.5,
+        responseWindow=(0, 0.5),
+        minimumBaselineLevel=1,
         minimumResponseAmplitude=3,
-        smoothingWindowSize=None,
+        smoothingWindowSize=5,
         ):
         """
         """
@@ -559,23 +559,39 @@ class ClusteringAnalysisRemixed():
         # Iterate over units
         for iUnit in range(nUnits):
 
+            bl = {
+                'left': rProbe['left'][iUnit, binIndicesForBaselineWindow].mean(),
+                'right': rProbe['right'][iUnit, binIndicesForBaselineWindow].mean()
+            }
+
+            fr = {
+                'left': rProbe['left'][iUnit, binIndicesForResponseWindow],
+                'right': rProbe['right'][iUnit, binIndicesForResponseWindow],
+            }
+
             #
-            lowestBaselineLevel = np.max([
-                rProbe['left'][iUnit, binIndicesForBaselineWindow].mean(),
-                rProbe['right'][iUnit, binIndicesForBaselineWindow].mean(),
-            ])
+            lowestBaselineLevel = np.max([bl['left'], bl['right']])
             if lowestBaselineLevel < minimumBaselineLevel:
                 exclude[iUnit] = True
+                continue
 
             #
             greatestPeakAmplitude = np.max([
-                np.max(np.abs(rProbe['left'][iUnit, binIndicesForResponseWindow] - rProbe['left'][iUnit, binIndicesForBaselineWindow].mean())),
-                np.max(np.abs(rProbe['right'][iUnit, binIndicesForResponseWindow] - rProbe['right'][iUnit, binIndicesForBaselineWindow].mean())),
+                np.max(np.abs(fr['left'] - bl['left'])),
+                np.max(np.abs(fr['left'] - bl['left'])),
             ])
             if greatestPeakAmplitude < minimumResponseAmplitude:
                 exclude[iUnit] = True
+                continue
 
-            peths['p'][iUnit, :] = xProbe[iUnit]
+            # Determine the preferred direction
+            if np.max(np.abs(fr['left'] - bl['left'])) > np.max(np.abs(fr['right'] - bl['right'])):
+                pd = 'left'
+            else:
+                pd = 'right'
+
+            factor = np.max(np.abs(fr[pd] - bl[pd]))
+            peths['p'][iUnit, :] = (rProbe[pd][iUnit] - bl[pd]) / factor
             peths['s'][iUnit, :] = xSaccade[iUnit]
 
         # Filter and smooth PETHs
