@@ -344,3 +344,12 @@ def computeAngleFromStandardPosition(point):
             theta += 270
 
     return theta
+
+def stretch(a, b=None, c=(0, 1)):
+    """
+    Linearly re-scale and array
+    """
+
+    if b is None:
+        b = a
+    return ((a - np.min(b)) / (np.max(b) - np.min(b))) * (np.max(c) - np.min(c)) + np.min(c)
