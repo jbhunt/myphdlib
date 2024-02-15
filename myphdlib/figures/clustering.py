@@ -187,10 +187,10 @@ class ClusteringAnalysis():
         self,
         event='probe',
         sortby='amplitude',
-        tRange=(-0.1, 0.5),
+        tRange=(-0.2, 0.5),
         nx=None,
         returnFitCurves=False,
-        minimumPeakHeight=0.2,
+        minimumPeakHeight=0.15,
         maximumPeakWidth=0.25,
         ):
         """
@@ -208,6 +208,11 @@ class ClusteringAnalysis():
             tExpanded = np.linspace(self.t.min(), self.t.max(), nx)
         fitCurves = list()
         fitParams = list()
+        fillValues = {
+            'a': np.nan,
+            'b': np.nan,
+            'c': np.nan,
+        }
 
         #
         for iUnit in range(nUnits):
@@ -248,7 +253,7 @@ class ClusteringAnalysis():
                 np.repeat([[0.005, maximumPeakWidth]], k, axis=0)
             ]).T
 
-            #
+            # Fit psths
             gmm = GaussianMixturesModel(k)
             gmm.fit(
                 self.t,
@@ -259,77 +264,51 @@ class ClusteringAnalysis():
             yFit = gmm.predict(tExpanded)
             fitCurves.append(yFit)
 
-            #
+            # Extract parameters
             A, B, C = np.split(gmm._popt[1:], 3)
-            D = list()
-            for a in A:
-                if a < 0:
-                    D.append(-1)
-                elif a > 0:
-                    D.append(+1)
-                else:
-                    D.append(0)
-            D = np.array(D)
-            fillValues = {
-                'a': -1,
-                'b': -1,
-                'c': -1,
-                'd':  0,
-            }
+
+            #
             if k == 1:
                 sample = np.array([
-                    abs(A[0]), fillValues['a'], fillValues['a'],
+                    A[0], fillValues['a'], fillValues['a'],
                     B[0], fillValues['b'], fillValues['b'],
                     C[0], fillValues['c'], fillValues['c'],
-                    D[0], fillValues['d'], fillValues['d']
                 ])
             elif k == 2:
                 sample = np.array([
-                    abs(A[0]), abs(A[1]), fillValues['a'],
+                    A[0], A[1], fillValues['a'],
                     B[0], B[1], fillValues['b'],
                     C[0], C[1], fillValues['c'],
-                    D[0], D[1], fillValues['d']
                 ])
             else:
-                sample = np.array([*list(map(abs, A[:3])), *B[:3], *C[:3], *D[:3]])
+                sample = np.array([*A[:3], *B[:3], *C[:3]])
 
             # Sort parameter sets
             if sortby == 'latency':
-                order = np.argsort(sample[3:6])
+                sortingFeatures = sample[3:6]
+                reverseOrder = False
             elif sortby == 'amplitude':
-                # TODO: ignore values of -1 when sorting
-                order = np.argsort(sample[0:3])[::-1]
-            sample[0:3] = sample[0:3][order] # Amplitude
+                sortingFeatures = np.abs(sample[0:3])
+                reverseOrder = True
+            mask = np.invert(np.isnan(sortingFeatures))
+            order = np.argsort(sortingFeatures[mask])
+            order = np.concatenate([
+                np.where(np.isnan(sortingFeatures))[0],
+                order,
+            ])
+            order = order[::-1] if reverseOrder else order
+
+            #
+            sample[0:3] = sample[0:3][order] # Amplitude (Signed)
             sample[3:6] = sample[3:6][order] # Latency
             sample[6:9] = sample[6:9][order] # Width
-            sample[9:12] = sample[9:12][order] # Sign
+
+            #
             fitParams.append(sample)
 
         #
         self.X = np.array(fitParams)
-        for j in range(0, 3, 1): # Amplitude (unsigned)
-            indices = np.where(self.X[:, j] != -1)[0]
-            self.X[indices, j] = stretch(
-                self.X[indices, j],
-                b=(0, 1),
-                c=(0, 1)
-            )
-        for j in range(3, 6, 1): # Latency
-            indices = np.where(self.X[:, j] != -1)[0]
-            self.X[indices, j] = stretch(
-                self.X[indices, j],
-                tRange,
-                (0, 1)
-            )
-        for j in range(6, 9, 1): # Width
-            indices = np.where(self.X[:, j] != -1)[0]
-            self.X[indices, j] = stretch(
-                self.X[indices, j],
-                (0, maximumPeakWidth),
-                (0, 1)
-            )
-        for j in range(9, 12, 1): # Sign
-            self.X[:, j] = self.X[:, j]
+
         if returnFitCurves:
             return np.array(fitCurves)
 
@@ -339,7 +318,26 @@ class ClusteringAnalysis():
         """
         """
 
-        return
+        # Mono-phasic PSTHs
+        sampleIndicesMonophasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 2)[0]
+        samplesMonophasic = self.X[sampleIndicesMonophasic, 0:9:3]
+
+        # Bi-phasic PSTHs
+        sampleIndicesBiphasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 1)[0]
+        samplesBiphasic = np.concatenate([
+            self.X[sampleIndicesBiphasic, 0:9:3],
+            self.X[sampleIndicesBiphasic, 1:9:3]
+        ])
+
+        # Multi-phasic PSTHs
+        sampleIndicesMultiphasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 0)[0]
+        samplesMultiphasic = np.concatenate([
+            self.X[sampleIndicesMultiphasic, 0:9:3],
+            self.X[sampleIndicesMultiphasic, 1:9:3],
+            self.X[sampleIndicesMultiphasic, 2:9:3],
+        ])
+
+        return samplesMonophasic
 
     def saveClusterLabels(
         self,
