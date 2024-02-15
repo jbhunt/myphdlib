@@ -5,6 +5,7 @@ from myphdlib.general.toolkit import smooth, stretch
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans, AgglomerativeClustering, Birch
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.metrics import silhouette_score
 from scipy.optimize import curve_fit as fitCurve
 from scipy.signal import find_peaks as findPeaks
 
@@ -191,7 +192,7 @@ class ClusteringAnalysis():
         nx=None,
         returnFitCurves=False,
         minimumPeakHeight=0.15,
-        maximumPeakWidth=0.25,
+        maximumPeakWidth=0.1,
         ):
         """
         """
@@ -313,33 +314,102 @@ class ClusteringAnalysis():
 
         if returnFitCurves:
             return np.array(fitCurves)
+        
+    def measureClusteringPerformance(
+        self,
+        kmin=3,
+        kmax=30,
+        ):
+        """
+        """
+
+
+        # Mono-phasic PSTHs
+        sampleIndices = np.where(np.isnan(self.X[:, :3]).sum(1) == 2)[0]
+        xMonophasic = self.X[sampleIndices, 0:9:3]
+
+        # Bi-phasic PSTHs
+        sampleIndices = np.where(np.isnan(self.X[:, :3]).sum(1) == 1)[0]
+        xBiphasic = np.concatenate([
+            self.X[sampleIndices, 0:9:3],
+            self.X[sampleIndices, 1:9:3],
+        ], axis=1)
+
+        # Multi-phasic PSTHs
+        sampleIndices = np.where(np.isnan(self.X[:, :3]).sum(1) == 0)[0]
+        xMultiphasic = np.concatenate([
+            self.X[sampleIndices, 0:9:3],
+            self.X[sampleIndices, 1:9:3],
+            self.X[sampleIndices, 2:9:3],
+        ], axis=1)
+        
+        #
+        xSets = (
+            xMonophasic,
+            xBiphasic,
+            xMultiphasic
+        )
+
+        #
+        curves = list()
+        for X in xSets:
+            xScaled = MinMaxScaler().fit_transform(X)
+            curve = list()
+            for k in range(kmin, kmax + 1, 1):
+                labels = AgglomerativeClustering(n_clusters=k).fit_predict(xScaled)
+                curve.append(silhouette_score(xScaled, labels))
+            curves.append(curve)
+
+        return np.arange(kmin, kmax + 1, 1), np.array(curves)
 
     def cluster(
         self,
+        clustersByType=(4, 6, 7),
         ):
         """
         """
 
         # Mono-phasic PSTHs
-        sampleIndicesMonophasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 2)[0]
-        samplesMonophasic = self.X[sampleIndicesMonophasic, 0:9:3]
+        iMonophasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 2)[0]
+        xMonophasic = self.X[iMonophasic, 0:9:3]
 
         # Bi-phasic PSTHs
-        sampleIndicesBiphasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 1)[0]
-        samplesBiphasic = np.concatenate([
-            self.X[sampleIndicesBiphasic, 0:9:3],
-            self.X[sampleIndicesBiphasic, 1:9:3]
-        ])
+        iBiphasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 1)[0]
+        xBiphasic = np.concatenate([
+            self.X[iBiphasic, 0:9:3],
+            self.X[iBiphasic, 1:9:3],
+        ], axis=1)
 
         # Multi-phasic PSTHs
-        sampleIndicesMultiphasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 0)[0]
-        samplesMultiphasic = np.concatenate([
-            self.X[sampleIndicesMultiphasic, 0:9:3],
-            self.X[sampleIndicesMultiphasic, 1:9:3],
-            self.X[sampleIndicesMultiphasic, 2:9:3],
-        ])
+        iMultiphasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 0)[0]
+        xMultiphasic = np.concatenate([
+            self.X[iMultiphasic, 0:9:3],
+            self.X[iMultiphasic, 1:9:3],
+            self.X[iMultiphasic, 2:9:3],
+        ], axis=1)
 
-        return samplesMonophasic
+        #
+        xSet = (
+            xMonophasic,
+            xBiphasic,
+            xMultiphasic,
+        )
+        iSet = (
+            iMonophasic,
+            iBiphasic,
+            iMultiphasic,
+        )
+        nUnits = self.peths['probe'].shape[0]
+        labels = np.full(nUnits, np.nan)
+        c = 0
+        for X, i, k in zip(xSet, iSet, clustersByType):
+            xScaled = MinMaxScaler().fit_transform(X)
+            labelsWithinType = AgglomerativeClustering(n_clusters=k).fit_predict(xScaled)
+            labels[i] = labelsWithinType + c
+            # import pdb; pdb.set_trace()
+            c += labelsWithinType.max() + 1
+
+        return labels
 
     def saveClusterLabels(
         self,
