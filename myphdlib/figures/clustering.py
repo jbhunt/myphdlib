@@ -296,7 +296,9 @@ class ClusteringAnalysis():
                 np.where(np.isnan(sortingFeatures))[0],
                 order,
             ])
-            order = order[::-1] if reverseOrder else order
+            if reverseOrder:
+                order = order[::-1]
+            import pdb; pdb.set_trace()
 
             #
             sample[0:3] = sample[0:3][order] # Amplitude (Signed)
