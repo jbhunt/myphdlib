@@ -385,3 +385,131 @@ class SaccadicModulationAnalysis():
         fig.tight_layout()
 
         return fig, axs
+
+exampleUnitKeys = (
+    ('2023-07-10', 'mlati9', 560), # Suppressed unit
+)
+from myphdlib.interface.factory import SessionFactory
+
+class SaccadicModulationAnalysisRemixed():
+    """
+    """
+
+    def __init__(self):
+        self.peths = None
+        return
+
+    def loadPeths(
+        self,
+        hdf,
+        baselineWindow=(-0.2, 0),
+        responseWindow=(0, 0.3),
+        minimumBaselineLevel=0.5,
+        minimumResponseAmplitude=5,
+        ):
+        """
+        """
+
+        # Load the PETHs
+        self.peths = {}
+        with h5py.File(hdf, 'r') as stream:
+            for r in ('rProbe', 'rMixed', 'rSaccade'):
+                for d in ('left', 'right'):
+                    self.peths[(r, d)] = np.array(stream[f'{r}/dg/{d}/fr'])
+            self.t = np.array(stream['rProbe/dg/left/fr'].attrs['t'])
+
+        # Define the baseline and response windows
+        binIndicesForBaselineWindow = np.where(np.logical_and(
+            self.t >= baselineWindow[0],
+            self.t <= baselineWindow[1]
+        ))[0]
+        binIndicesForResponseWindow = np.where(np.logical_and(
+            self.t >= responseWindow[0],
+            self.t <= responseWindow[1]
+        ))[0]
+
+        # Initialize variables
+        nUnits = self.peths[('rProbe', 'left')].shape[0]
+        exclude = np.full(nUnits, False)
+
+        # Iterate over units
+        for iUnit in range(nUnits):
+
+            #
+            lowestBaselineLevel = np.max([
+                self.peths[('rProbe', 'left')][iUnit, binIndicesForBaselineWindow].mean(),
+                self.peths[('rProbe', 'right')][iUnit, binIndicesForBaselineWindow].mean(),
+            ])
+            if lowestBaselineLevel < minimumBaselineLevel:
+                exclude[iUnit] = True
+
+            #
+            greatestPeakAmplitude = np.max([
+                np.max(np.abs(self.peths[('rProbe', 'left')][iUnit, binIndicesForResponseWindow] - \
+                    self.peths[('rProbe', 'left')][iUnit, binIndicesForBaselineWindow].mean())),
+                np.max(np.abs(self.peths[('rProbe', 'right')][iUnit, binIndicesForResponseWindow] - \
+                    self.peths[('rProbe', 'right')][iUnit, binIndicesForBaselineWindow].mean())),
+            ])
+            if greatestPeakAmplitude < minimumResponseAmplitude:
+                exclude[iUnit] = True
+
+        # Filter and smooth PETHs
+        self.include = np.invert(exclude)
+        for k in self.peths.keys():
+            self.peths[k] = np.delete(self.peths[k], np.where(exclude)[0], axis=0)
+
+        return
+
+    def measureSaccadicModulation(
+        self,
+        ):
+        """
+        """
+
+        return
+
+    def plotLogicDemonstration(
+        self,
+        ):
+        """
+        """
+
+        return
+
+    def plotExampleCurves(
+        self,
+        perisaccadicWindow=(-0.05, 0.1),
+        probeMotion=-1,
+        tag='JH-DATA-'
+        ):
+        """
+        """
+
+        factory = SessionFactory(tag=tag)
+        for (date, animal, cluster) in exampleUnitKeys:
+
+            #
+            session = factory.produce(
+                dates=(date,),
+                animals=(animal,),
+            ).pop()
+            unit = session.population.indexByCluster(cluster)
+
+            #
+            trialIndicesExtrasaccadic = np.where(session.parseEvents(
+                eventName='probe',
+                coincident=False,
+                eventDirection=probeMotion,
+                coincidenceWindow=perisaccadicWindow
+            ))
+            trialIndicesPerisaccadic = np.where(session.parseEvents(
+                eventName='probe',
+                coincident=True,
+                eventDirection=probeMotion,
+                coincidenceWindow=perisaccadicWindow
+            ))
+
+            #
+
+
+        return
