@@ -351,5 +351,10 @@ def stretch(a, b=None, c=(0, 1)):
     """
 
     if b is None:
-        b = a
-    return ((a - np.min(b)) / (np.max(b) - np.min(b))) * (np.max(c) - np.min(c)) + np.min(c)
+        bmin, bmax = np.nanmin(a), np.nanmax(a)
+    elif len(b) == 2:
+        bmin, bmax = b
+    mask = np.invert(np.isnan(a))
+    d = np.full(a.size, np.nan)
+    d[mask] =  ((a[mask] - bmin) / (bmax - bmin)) * (np.max(c) - np.min(c)) + np.min(c)
+    return d    
