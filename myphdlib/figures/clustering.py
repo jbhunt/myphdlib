@@ -4,10 +4,20 @@ from matplotlib import pyplot as plt
 from myphdlib.general.toolkit import smooth, stretch
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans, AgglomerativeClustering, Birch
+from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.impute import SimpleImputer
 from sklearn.metrics import silhouette_score
 from scipy.optimize import curve_fit as fitCurve
 from scipy.signal import find_peaks as findPeaks
+from scipy.ndimage import gaussian_filter1d as smooth2
+
+#
+exampleUnitIndices = (
+    [38, 1], # Mono-phasic, positive/negative
+    [3,  296], # Bi-phasic, positive/negative
+    [27, 80] # Multi-phasic, positive/negative
+)
 
 def g(x, a, mu, sigma, d):
     """
@@ -99,6 +109,8 @@ class ClusteringAnalysis():
         self.include = None
         self.X = None
         self.t = None
+        self.te = None
+        self.fits = None
 
         return
 
@@ -109,8 +121,8 @@ class ClusteringAnalysis():
         baselineWindow=(-0.2, 0),
         responseWindow=(0, 0.3),
         minimumBaselineLevel=0.5,
-        minimumResponseAmplitude=3,
-        smoothingWindowSize=None,
+        minimumResponseAmplitude=5,
+        smoothingKernelWidth=1.5,
         ):
         """
         """
@@ -125,6 +137,7 @@ class ClusteringAnalysis():
             xProbe = np.array(stream['xProbe'])
             xSaccade = np.array(stream['xSaccade'])
             self.t = np.array(stream['rProbe/dg/left/fr'].attrs['t'])
+            dsi = np.array(stream['directionSelectivityIndex'])
 
         # Define the baseline and response windows
         binIndicesForBaselineWindow = np.where(np.logical_and(
@@ -170,7 +183,6 @@ class ClusteringAnalysis():
                 peths['saccade'][iUnit, :] = xSaccade[iUnit]
             else:
                 peths['probe'][iUnit, :] = rProbe[iUnit]
-                # peths['saccade'][iUnit, :] = rSaccade[iUnit]
 
         # Filter and smooth PETHs
         self.include = np.invert(exclude)
@@ -178,21 +190,24 @@ class ClusteringAnalysis():
             'probe': peths['probe'][self.include, :],
             'saccade': peths['saccade'][self.include, :]
         }
-        if smoothingWindowSize is not None:
+        if smoothingKernelWidth is not None:
             for k in self.peths.keys():
-                self.peths[k] = smooth(self.peths[k], smoothingWindowSize, axis=1)
+                for i in range(self.peths[k].shape[0]):
+                    self.peths[k][i, :] = smooth2(self.peths[k][i, :], smoothingKernelWidth)
 
-        return
+        return dsi[self.include]
 
     def fitPeths(
         self,
         event='probe',
         sortby='amplitude',
-        tRange=(-0.2, 0.5),
-        nx=None,
-        returnFitCurves=False,
         minimumPeakHeight=0.15,
         maximumPeakWidth=0.1,
+        responseWindow=(-0.1, 0.5),
+        nPoints=None,
+        fillValue=np.nan,
+        normalize=True,
+        returnFitCurves=False,
         ):
         """
         """
@@ -200,20 +215,15 @@ class ClusteringAnalysis():
         peths = self.peths[event]
         nUnits = peths.shape[0]
         binIndices = np.where(np.logical_and(
-            self.t >= tRange[0],
-            self.t <= tRange[1]
+            self.t >= responseWindow[0],
+            self.t <= responseWindow[1]
         ))[0]
-        if nx is None:
-            tExpanded = self.t
+        if nPoints is None:
+            self.te = self.t
         else:
-            tExpanded = np.linspace(self.t.min(), self.t.max(), nx)
+            self.te = np.linspace(self.t.min(), self.t.max(), nPoints)
         fitCurves = list()
         fitParams = list()
-        fillValues = {
-            'a': np.nan,
-            'b': np.nan,
-            'c': np.nan,
-        }
 
         #
         for iUnit in range(nUnits):
@@ -223,7 +233,10 @@ class ClusteringAnalysis():
             peakIndices = list()
             for coef in (-1, 1):
                 ySigned = yTrue[binIndices] * coef
-                peakIndices_, peakProps = findPeaks(ySigned, height=minimumPeakHeight)
+                peakIndices_, peakProps = findPeaks(
+                    ySigned,
+                    height=minimumPeakHeight,
+                )
                 for binIndex in peakIndices_:
                     peakIndices.append(binIndex)
 
@@ -250,7 +263,7 @@ class ClusteringAnalysis():
                     -1.05 * np.abs(peakAmplitudes).max(),
                     +1.05 * np.abs(peakAmplitudes).max()
                 ]], k, axis=0),
-                np.repeat([[tRange[0], tRange[1]]], k, axis=0),
+                np.repeat([[responseWindow[0], responseWindow[1]]], k, axis=0),
                 np.repeat([[0.005, maximumPeakWidth]], k, axis=0)
             ]).T
 
@@ -262,7 +275,7 @@ class ClusteringAnalysis():
                 p0=p0,
                 bounds=bounds
             )
-            yFit = gmm.predict(tExpanded)
+            yFit = gmm.predict(self.te)
             fitCurves.append(yFit)
 
             # Extract parameters
@@ -271,15 +284,15 @@ class ClusteringAnalysis():
             #
             if k == 1:
                 sample = np.array([
-                    A[0], fillValues['a'], fillValues['a'],
-                    B[0], fillValues['b'], fillValues['b'],
-                    C[0], fillValues['c'], fillValues['c'],
+                    A[0], np.nan, np.nan,
+                    B[0], np.nan, np.nan,
+                    C[0], np.nan, np.nan,
                 ])
             elif k == 2:
                 sample = np.array([
-                    A[0], A[1], fillValues['a'],
-                    B[0], B[1], fillValues['b'],
-                    C[0], C[1], fillValues['c'],
+                    A[0], A[1], np.nan,
+                    B[0], B[1], np.nan,
+                    C[0], C[1], np.nan,
                 ])
             else:
                 sample = np.array([*A[:3], *B[:3], *C[:3]])
@@ -299,7 +312,6 @@ class ClusteringAnalysis():
             ])
             if reverseOrder:
                 order = order[::-1]
-            import pdb; pdb.set_trace()
 
             #
             sample[0:3] = sample[0:3][order] # Amplitude (Signed)
@@ -312,65 +324,44 @@ class ClusteringAnalysis():
         #
         self.X = np.array(fitParams)
 
+        # Normalize
+        if normalize:
+            for start in (0, 3, 6):
+                stop = start + 3
+                sample = self.X[:, start: stop]
+                fmin, fmax = np.nanmin(sample), np.nanmax(sample)
+                for j in range(3):
+                    self.X[:, start + j] = stretch(
+                        self.X[:, start + j],
+                        b=(fmin, fmax),
+                        c=(0, 1)
+                    )
+
+        # Impute
+        for j in range(self.X.shape[1]):
+            column = self.X[:, j]
+            if fillValue == 'mean':
+                fillValue_ = np.nanmean(column)
+            elif fillValue == 'median':
+                fillValue_ = np.nanmedian(column)
+            else:
+                fillValue_ = fillValue
+            self.X[np.isnan(column), j] = np.full(np.isnan(column).sum(), fillValue_)
+
+        #
+        self.fits = np.array(fitCurves)
         if returnFitCurves:
-            return np.array(fitCurves)
-        
-    def measureClusteringPerformance(
+            return self.fits
+
+    def predictLabels(
         self,
-        kmin=3,
-        kmax=30,
-        ):
-        """
-        """
-
-
-        # Mono-phasic PSTHs
-        sampleIndices = np.where(np.isnan(self.X[:, :3]).sum(1) == 2)[0]
-        xMonophasic = self.X[sampleIndices, 0:9:3]
-
-        # Bi-phasic PSTHs
-        sampleIndices = np.where(np.isnan(self.X[:, :3]).sum(1) == 1)[0]
-        xBiphasic = np.concatenate([
-            self.X[sampleIndices, 0:9:3],
-            self.X[sampleIndices, 1:9:3],
-        ], axis=1)
-
-        # Multi-phasic PSTHs
-        sampleIndices = np.where(np.isnan(self.X[:, :3]).sum(1) == 0)[0]
-        xMultiphasic = np.concatenate([
-            self.X[sampleIndices, 0:9:3],
-            self.X[sampleIndices, 1:9:3],
-            self.X[sampleIndices, 2:9:3],
-        ], axis=1)
-        
-        #
-        xSets = (
-            xMonophasic,
-            xBiphasic,
-            xMultiphasic
-        )
-
-        #
-        curves = list()
-        for X in xSets:
-            xScaled = MinMaxScaler().fit_transform(X)
-            curve = list()
-            for k in range(kmin, kmax + 1, 1):
-                labels = AgglomerativeClustering(n_clusters=k).fit_predict(xScaled)
-                curve.append(silhouette_score(xScaled, labels))
-            curves.append(curve)
-
-        return np.arange(kmin, kmax + 1, 1), np.array(curves)
-
-    def cluster(
-        self,
-        clustersByType=(4, 6, 7),
+        clustersByType=(2, 2, 2),
         ):
         """
         """
 
         # Mono-phasic PSTHs
-        iMonophasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 2)[0]
+        iMonophasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 2)[0] # 2 NaNs indicates only one component
         xMonophasic = self.X[iMonophasic, 0:9:3]
 
         # Bi-phasic PSTHs
@@ -399,19 +390,20 @@ class ClusteringAnalysis():
             iBiphasic,
             iMultiphasic,
         )
+
+        #
         nUnits = self.peths['probe'].shape[0]
         labels = np.full(nUnits, np.nan)
         c = 0
         for X, i, k in zip(xSet, iSet, clustersByType):
-            xScaled = MinMaxScaler().fit_transform(X)
-            labelsWithinType = AgglomerativeClustering(n_clusters=k).fit_predict(xScaled)
+            labelsWithinType = AgglomerativeClustering(n_clusters=k).fit_predict(X)
             labels[i] = labelsWithinType + c
-            # import pdb; pdb.set_trace()
             c += labelsWithinType.max() + 1
 
+        self.labels = labels
         return labels
 
-    def saveClusterLabels(
+    def saveLabels(
         self,
         hdf,
         name,
@@ -435,71 +427,161 @@ class ClusteringAnalysis():
 
         return
 
-    def plotPeths(
+    def measureLatency(
         self,
-        plot='line',
-        figsize=(3, 8.5),
-        minimumClusterSize=15,
-        order=None,
-        z=None,
+        alignment='peak',
+        minimumResponseAmplitude=0.3,
+        responseSigns=(-1, 1),
         ):
         """
         """
 
-        labels, counts = np.unique(self.labels, return_counts=True)
-        mask = counts >= minimumClusterSize
-        labels = labels[mask]
-        counts = counts[mask]
+        latency = list()
+        for y in self.fits:
+            l = np.inf
+            a = 0
+            for coef in responseSigns:
+
+                #
+                if alignment == 'onset':
+                    peakIndices, peakProps = findPeaks(coef * y, height=minimumResponseAmplitude)
+                    for peakIndex in peakIndices:
+                        if self.te[peakIndex] < l:
+                            l = self.te[peakIndex]
+                
+                #
+                elif alignment == 'peak':
+                    if np.max(coef * y) > a:
+                        a = np.max(coef * y)
+                        l = self.te[np.argmax(coef * y)]
+                    
+            #
+            latency.append(l)
+
+        #
+        latency =  np.array(latency)
+
+        return latency
+
+    def plotPeths(
+        self,
+        figsize=(2, 8.5),
+        vrange=(-0.7, 0.7),
+        cmap='coolwarm',
+        ):
+        """
+        """
+
+        fig, ax = plt.subplots()
+        n = np.arange(self.fits.shape[0])
+        latency = self.measureLatency()
+        index = np.argsort(latency)
+        ax.pcolor(
+            self.te,
+            n,
+            self.fits[index],
+            vmin=vrange[0],
+            vmax=vrange[1],
+            cmap=cmap,
+            rasterized=True,
+        )
+        ax.vlines(0, 0, n.max(), color='k')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax
+
+    def plotPethsWithClustering(
+        self,
+        order=None,
+        figsize=(2, 8.5),
+        vrange=(-0.7, 0.7),
+        cmap='Blues_r',
+        ):
+        """
+        """
+
+        labels = self.predictLabels([2, 2, 2])
+        uniqueLabels, labelCounts = np.unique(labels, return_counts=True)
         if order is not None:
-            labels = labels[order]
-            counts = counts[order]
-        if plot == 'heatmap':
-            fig, axs = plt.subplots(nrows=labels.size, ncols=2, gridspec_kw={'height_ratios': counts})
-        else:
-            fig, axs = plt.subplots(nrows=labels.size, sharey=True, sharex=True)
-        for i, l in enumerate(labels):
-            color = f'C{int(i)}'
-            if z is None:
-                zProbe = self.peths['probe'][self.labels == l, :]
-            else:
-                zProbe = z[self.labels == l, :]
-            zSaccade = self.peths['saccade'][self.labels == l, :]
-            if plot == 'heatmap':
-                axs[i, 0].set_ylabel(f'C{int(i + 1)}', va='center', rotation=0, labelpad=15)
-                y = np.arange(zProbe.shape[0])
-                shuffledIndices = np.arange(zProbe.shape[0])
-                orderedIndices = np.argsort(np.array([np.argmax(np.abs(zi)) for zi in zProbe]))
-                np.random.shuffle(shuffledIndices)
-                axs[i, 0].pcolor(
-                    self.t,
-                    y,
-                    zProbe[orderedIndices, :],
-                    vmin=-0.7, vmax=0.7
-                )
-                axs[i, 1].pcolor(
-                    self.t,
-                    y,
-                    zSaccade[orderedIndices, :],
-                    vmin=-0.7, vmax=0.7
-                )
-                for ax in axs[i, :]:
-                    ax.set_xticklabels([])
-                axs[-1, 0].set_xlabel('Time from event (sec)')
-            elif plot == 'line':
-                axs[i].set_ylabel(f'C{int(i + 1)}', va='center', rotation=0, labelpad=15)
-                y = zProbe.mean(0)
-                e = zProbe.std(0)
-                axs[i].plot(self.t, y, color=color)
-                axs[i].plot(self.t, zSaccade.mean(0), color='k', alpha=0.5)
-                axs[i].set_xticklabels([])
-                axs[-1].set_xlabel('Time from event (sec)')
-        if plot == 'heatmap':
-            for ax in axs.flatten():
-                ax.set_yticks([])
-        elif plot == 'line':
-            for ax in axs.flatten():
-                ax.set_yticks([-1, 0, 1])
-                ax.set_yticklabels([])
+            uniqueLabels = uniqueLabels[order]
+            labelCounts = labelCounts[order]
+        fig, axs = plt.subplots(
+            nrows=uniqueLabels.size,
+            gridspec_kw={'height_ratios': labelCounts},
+        )
+        latency = self.measureLatency(
+            responseSigns=(-1, +1)
+        )
+        for i, label in enumerate(uniqueLabels):
+            m = labels == label
+            n = np.arange(m.sum())
+            fits = self.fits[m]
+            index = np.argsort(latency[m])
+            axs[i].pcolor(
+                self.te,
+                n,
+                fits[index],
+                vmin=vrange[0],
+                vmax=vrange[1],
+                cmap=cmap,
+                rasterized=True,
+            )
+            axs[i].vlines(0, 0, n.max(), color='k')
+        for ax in axs[:-1]:
+            ax.set_xticks([])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+        fig.subplots_adjust(hspace=0)
+
+        return fig, axs
+
+    def plotExampleCurves(
+        self,
+        figsize=(4, 5),
+        colormap='coolwarm',
+        alpha=0.7,
+        lineWeight=0.15,
+        ):
+        """
+        """
+
+        fig, axs = plt.subplots(nrows=3, ncols=2, sharey=True)
+        cmap = plt.get_cmap(colormap, 2)
+        for i, (u1, u2) in enumerate(exampleUnitIndices):
+            axs[i, 0].plot(
+                self.t,
+                self.peths['probe'][u1],
+                color='gray',
+                lw=lineWeight
+            )
+            axs[i, 0].plot(
+                self.te,
+                self.fits[u1],
+                color=cmap(1),
+                lw=lineWeight
+            )
+            axs[i, 1].plot(
+                self.t,
+                self.peths['probe'][u2],
+                color='gray',
+                lw=lineWeight
+            )
+            axs[i, 1].plot(
+                self.te,
+                self.fits[u2],
+                color=cmap(0),
+                alpha=alpha,
+                lw=lineWeight   
+            )
+        for ax in axs.flatten():
+            ax.set_ylim([-1, 1])
+        for ax in axs[:-1, :].flatten():
+            ax.set_xticks([])
+        for ax in axs[-1, :].flatten():
+            ax.set_xticks([-0.2, 0, 0.2, 0.4])
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
@@ -507,23 +589,3 @@ class ClusteringAnalysis():
 
         return fig, axs
 
-    def plotSubspace(
-        self,
-        xy=None,
-        **kwargs
-        ):
-        """
-        """
-
-        #
-        fig, ax = plt.subplots()
-        if xy is None:
-            xy = PCA(n_components=2).fit_transform(self.X)
-        for i, l in enumerate(np.unique(self.labels)):
-            indices = np.where(self.labels == l)[0]
-            ax.scatter(xy[indices, 0], xy[indices, 1], color=f'C{int(i)}', **kwargs)
-            xc, yc = xy[indices].mean(0)
-            ax.scatter(xc, yc, facecolor=f'C{int(i)}', edgecolor='k', marker='D', s=30, label=f'C{int(i + 1)}')
-        ax.legend()
-
-        return fig, ax
