@@ -397,7 +397,21 @@ class SaccadicModulationAnalysisRemixed():
 
     def __init__(self):
         self.peths = None
+        self.ukeys = None
         return
+    
+    def _lookupExampleUnit(self, ukey, tag='JH-DATA-', mount=None):
+        """
+        """
+        factory = SessionFactory(tag=tag, mount=mount)
+        date, animal, cluster = ukey
+        session = factory.produce(
+            dates=(date,),
+            animals=(animal,),
+        ).pop()
+        unit = session.population.indexByCluster(cluster)
+
+        return unit
 
     def loadPeths(
         self,
@@ -412,11 +426,15 @@ class SaccadicModulationAnalysisRemixed():
 
         # Load the PETHs
         self.peths = {}
+        self.ukeys = list()
         with h5py.File(hdf, 'r') as stream:
             for r in ('rProbe', 'rMixed', 'rSaccade'):
                 for d in ('left', 'right'):
                     self.peths[(r, d)] = np.array(stream[f'{r}/dg/{d}/fr'])
             self.t = np.array(stream['rProbe/dg/left/fr'].attrs['t'])
+            dates = np.array(stream['date'])
+            animals = np.array(stream['animal'])
+            clusters = np.array(stream['unitNumber'])
 
         # Define the baseline and response windows
         binIndicesForBaselineWindow = np.where(np.logical_and(
@@ -457,6 +475,15 @@ class SaccadicModulationAnalysisRemixed():
         self.include = np.invert(exclude)
         for k in self.peths.keys():
             self.peths[k] = np.delete(self.peths[k], np.where(exclude)[0], axis=0)
+
+        # Store unit keys
+        for i, f in enumerate(self.include):
+            if f:
+                self.ukeys.append((
+                    dates[i].item().decode(),
+                    animals[i].item().decode(),
+                    clusters[i].item()
+                ))
 
         return
 
