@@ -17,6 +17,7 @@ from myphdlib.pipeline.stimuli import StimuliProcessingMixin
 from myphdlib.analysis.basic import BasicResponseCharacterizationAnalysisMixin
 from myphdlib.pipeline.peths import TimeHistogramProcessingMixin
 from myphdlib.analysis.modulation import ModulationAnalysisMixin
+from myphdlib.pipeline.tuning import TuningProcessingMixin
 from myphdlib.extensions.matplotlib import placeVerticalLines
 from myphdlib.general.labjack import loadLabjackData, filterPulsesFromPhotologicDevice
 
@@ -998,6 +999,7 @@ class MlatiSession(
     BasicResponseCharacterizationAnalysisMixin,
     ModulationAnalysisMixin,
     TimeHistogramProcessingMixin,
+    TuningProcessingMixin,
     SessionBase):
     """
     """

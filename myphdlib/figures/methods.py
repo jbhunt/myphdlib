@@ -3,6 +3,7 @@ from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
 from myphdlib.general.toolkit import smooth
 from sklearn.decomposition import PCA
+from myphdlib.figures.analysis import AnalysisBase
 
 class DataAcqusitionSummaryFigure():
     """
@@ -494,3 +495,21 @@ class SaccadeClassificationPerformanceAnalysis():
         fig.tight_layout()
 
         return fig, ax
+
+class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
+    """
+    """
+
+    def __init__(self):
+        """
+        """
+        super().__init__()
+        return
+
+    def plotReceptiveFields(
+        self,
+        ):
+        """
+        """
+
+        return

@@ -1,7 +1,8 @@
 import h5py
+import pathlib as pl
 import numpy as np
 from matplotlib import pyplot as plt
-from myphdlib.general.toolkit import smooth, stretch
+from myphdlib.general.toolkit import smooth, stretch, psth2
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans, AgglomerativeClustering, Birch
 from sklearn.mixture import GaussianMixture
@@ -10,93 +11,12 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import silhouette_score
 from scipy.optimize import curve_fit as fitCurve
 from scipy.signal import find_peaks as findPeaks
+from scipy.signal import peak_prominences
 from scipy.ndimage import gaussian_filter1d as smooth2
+from scipy.ndimage import gaussian_filter as gaussianFilter
+from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g, findOverlappingUnits
 
-#
-exampleUnitIndices = (
-    [38, 1], # Mono-phasic, positive/negative
-    [3,  296], # Bi-phasic, positive/negative
-    [27, 80] # Multi-phasic, positive/negative
-)
-
-def g(x, a, mu, sigma, d):
-    """
-    """
-
-    return a * np.exp(-((x - mu) / 4 / sigma) ** 2) + d
-
-class GaussianMixturesModel():
-    """
-    """
-
-    def __init__(self, k=1, maxfev=1000000):
-        """
-        """
-        self._popt = None
-        self._k = k
-        self._maxfev = maxfev
-        return
-
-    def fit(self, x, y, p0=None, bounds=None):
-        """
-        """
-
-        nParams = self.k * 3 + 1
-        if p0 is not None and len(p0) != nParams:
-            raise Exception('Invalid number of initial parameter values')
-        if p0 is None:
-            p0 = np.ones(nParams)
-        if bounds is None:
-            bounds = np.vstack([
-                np.full(nParams, -np.inf),
-                np.full(nParams, +np.inf)
-            ])
-        self._popt, pcov = fitCurve(
-            self.f,
-            x,
-            y,
-            p0=p0,
-            bounds=bounds,
-            maxfev=self._maxfev
-        )
-
-        return
-
-    def predict(self, x):
-        """
-        """
-
-        if self._popt is None:
-            raise Exception('Optimal parameters undefined')
-
-        #
-        y = self.f(x, *self._popt)
-
-        return y
-
-    @property
-    def f(self):
-        def inner(x, d, *params):
-            if self.k == 1:
-                A, B, C = [params[0]], [params[1]], [params[2]]
-            else:
-                A, B, C = np.split(np.array(params), 3)
-            y = np.zeros(x.size)
-            for i in range(self.k):
-                a, b, c = A[i], B[i], C[i]
-                y += a * np.exp(-((x - b) / 4 / c) ** 2)
-            y += d
-            return y
-        return inner
-
-    @property
-    def k(self):
-        return self._k
-    @k.setter
-    def k(self, value):
-        self._k = value
-
-class ClusteringAnalysis():
+class GaussianMixturesFittingAnalysis(AnalysisBase):
     """
     """
 
@@ -104,488 +24,485 @@ class ClusteringAnalysis():
         """
         """
 
-        self.peths = None
-        self.labels = None
-        self.include = None
-        self.X = None
+        super().__init__()
+        self.peths = {
+            'raw': None,
+            'normalized': None,
+            'standardized': None
+        }
+        self.ambc = None
+        self.params = None
         self.t = None
-        self.te = None
-        self.fits = None
+        self.rss = None
+        self.labels = None
+        self.k = None
+
+        #
+        self.examples = (
+            ('2023-05-15', 'mlati7', 226),
+            ('2023-06-30', 'mlati9', 14),
+            ('2023-07-05', 'mlati9', 107),
+            ('2023-07-14', 'mlati9', 40),
+            ('2023-07-25', 'mlati10', 237)
+        )
 
         return
 
-    def loadPeths(
+    def saveNamespace(
         self,
         hdf,
-        normalize=True,
-        baselineWindow=(-0.2, 0),
-        responseWindow=(0, 0.3),
-        minimumBaselineLevel=0.5,
-        minimumResponseAmplitude=5,
-        smoothingKernelWidth=1.5,
         ):
         """
         """
 
-        # Load the PETHs
-        with h5py.File(hdf, 'r') as stream:
-            rProbe = {
-                'left': np.array(stream['rProbe/dg/left/fr']),
-                'right': np.array(stream['rProbe/dg/right/fr'])
-            }
-            np.array(stream['rProbe/dg/right'])
-            xProbe = np.array(stream['xProbe'])
-            xSaccade = np.array(stream['xSaccade'])
-            self.t = np.array(stream['rProbe/dg/left/fr'].attrs['t'])
-            dsi = np.array(stream['directionSelectivityIndex'])
+        if type(hdf) != pl.Path:
+            hdf = pl.Path(hdf)
+        if hdf.exists() == False:
+            raise Exception('Base table does not exist')
 
-        # Define the baseline and response windows
-        binIndicesForBaselineWindow = np.where(np.logical_and(
-            self.t >= baselineWindow[0],
-            self.t <= baselineWindow[1]
-        ))[0]
-        binIndicesForResponseWindow = np.where(np.logical_and(
-            self.t >= responseWindow[0],
-            self.t <= responseWindow[1]
-        ))[0]
-
-        # Initialize variables
-        nUnits = rProbe['left'].shape[0]
-        nBins = rProbe['left'].shape[1]
-        exclude = np.full(nUnits, False)
-        peths = {
-            'probe': np.full([nUnits, nBins], np.nan),
-            'saccade': np.full([nUnits, nBins], np.nan)
+        d = {
+            'rProbe/dg/preferred/raw/fr': self.peths['raw'],
+            'rProbe/dg/preferred/normalized/fr': self.peths['normalized'],
+            'rProbe/dg/preferred/standardized/fr': self.peths['standardized'],
+            'rProbe/dg/preferred/ambc': self.ambc,
+            'gmm/params': self.params,
+            'gmm/rss': self.rss,
+            'gmm/labels': self.labels,
+            'gmm/k': self.k
         }
+        m = findOverlappingUnits(self.ukeys, hdf)
+        nRows = m.size
+        with h5py.File(hdf, 'a') as stream:
+            for k, v in d.items():
+                if v is None:
+                    continue
+                nCols = 1 if len(v.shape) == 1 else v.shape[1]
+                data = np.full([m.size, nCols], np.nan)
+                data[m, :] = v.reshape(-1, nCols)
+                if k in stream:
+                    del stream[k]
+                ds = stream.create_dataset(
+                    k,
+                    data.shape,
+                    data.dtype,
+                    data=data
+                )
+                if k.endswith('fr'):
+                    ds.attrs['t'] = self.t
 
-        # Iterate over units
-        for iUnit in range(nUnits):
+        return
+
+    def loadNamespace(
+        self,
+        ):
+        """
+        """
+
+        return
+
+    def computePeths(
+        self,
+        responseWindow=(-0.2, 0.5),
+        baselineWindow=(-0.25, -0.05),
+        binsize=0.01,
+        smoothingKernelWidth=0.01,
+        ):
+        """
+        """
+
+        self.t, nTrials, nBins = psth2(
+            np.zeros(1),
+            np.zeros(1),
+            window=responseWindow,
+            binsize=binsize,
+            returnShape=True
+        )
+
+        #
+        nUnits = len(self.ukeys)
+        self.ambc = np.full([nUnits, 4], np.nan)
+        for k in self.peths.keys():
+            self.peths[k] = np.full([nUnits, nBins], np.nan)
+        for iUnit, ukey in enumerate(self.ukeys):
 
             #
-            lowestBaselineLevel = np.max([
-                rProbe['left'][iUnit, binIndicesForBaselineWindow].mean(),
-                rProbe['right'][iUnit, binIndicesForBaselineWindow].mean(),
-            ])
-            if lowestBaselineLevel < minimumBaselineLevel:
-                exclude[iUnit] = True
+            end = None if iUnit + 1 == nUnits else '\r'
+            print(f'Working on {iUnit + 1} out of {nUnits} units', end=end)
+            self.ukey = ukey
+
+            # Initialize parameters
+            x = np.full(nBins, np.nan)
+            a = 0 # Amplitude of preferred direction
+            m = None # Probe direction
+            b = None # Baseline
+            c = None # Scaling factor
+
+            # TODO: Exclude peri-saccadic trials
+            for probeMotion, probeDirection in zip([-1, 1], ['left', 'right']):
+                t, fr = self.unit.kde(
+                    self.session.probeTimestamps[self.session.gratingMotionDuringProbes == probeMotion],
+                    responseWindow=responseWindow,
+                    binsize=binsize,
+                    sigma=smoothingKernelWidth,
+                )
+                t, M = psth2(
+                    self.session.probeTimestamps[self.session.gratingMotionDuringProbes == probeMotion],
+                    self.unit.timestamps,
+                    window=baselineWindow,
+                    binsize=None
+                )
+                bl = M.flatten() / np.diff(baselineWindow).item()
+                if np.abs(fr - bl.mean()).max() > a:
+                    x = fr
+                    a = np.abs(fr - bl.mean()).max()
+                    m = probeMotion
+                    b = bl.mean()
+                    c = bl.std()
 
             #
-            greatestPeakAmplitude = np.max([
-                np.max(np.abs(rProbe['left'][iUnit, binIndicesForResponseWindow] - rProbe['left'][iUnit, binIndicesForBaselineWindow].mean())),
-                np.max(np.abs(rProbe['right'][iUnit, binIndicesForResponseWindow] - rProbe['right'][iUnit, binIndicesForBaselineWindow].mean())),
-            ])
-            if greatestPeakAmplitude < minimumResponseAmplitude:
-                exclude[iUnit] = True
+            if c == 0:
+                c = np.nan
+            self.ambc[iUnit] = np.array([a, m, b, c])
 
-            #
-            if normalize:
-                peths['probe'][iUnit, :] = xProbe[iUnit]
-                peths['saccade'][iUnit, :] = xSaccade[iUnit]
+            # Store the raw PSTH
+            self.peths['raw'][iUnit] = x
+
+            # Normalize
+            self.peths['normalized'][iUnit] = (x - b) / a
+
+            # Standardize
+            if np.isnan(c):
+                self.peths['standardized'][iUnit] = np.full(x.size, np.nan)
             else:
-                peths['probe'][iUnit, :] = rProbe[iUnit]
+                self.peths['standardized'][iUnit] = (x - b) / c
 
-        # Filter and smooth PETHs
-        self.include = np.invert(exclude)
-        self.peths = {
-            'probe': peths['probe'][self.include, :],
-            'saccade': peths['saccade'][self.include, :]
-        }
-        if smoothingKernelWidth is not None:
-            for k in self.peths.keys():
-                for i in range(self.peths[k].shape[0]):
-                    self.peths[k][i, :] = smooth2(self.peths[k][i, :], smoothingKernelWidth)
-
-        return dsi[self.include]
+        return
 
     def fitPeths(
         self,
-        event='probe',
-        sortby='amplitude',
-        minimumPeakHeight=0.15,
-        maximumPeakWidth=0.1,
-        responseWindow=(-0.1, 0.5),
-        nPoints=None,
-        fillValue=np.nan,
-        normalize=True,
-        returnFitCurves=False,
+        kmax=5,
+        **kwargs_
         ):
         """
+        Algorithm
+        ---------
+        1. Find peaks using the normalized PSTH
+        2. Discard all but the k largest peaks
+        3. Use peak positions and amplitudes from the standardized PSTHs to initialize the GMM
         """
 
-        peths = self.peths[event]
-        nUnits = peths.shape[0]
-        binIndices = np.where(np.logical_and(
-            self.t >= responseWindow[0],
-            self.t <= responseWindow[1]
-        ))[0]
-        if nPoints is None:
-            self.te = self.t
-        else:
-            self.te = np.linspace(self.t.min(), self.t.max(), nPoints)
-        fitCurves = list()
-        fitParams = list()
+        kwargs = {
+            'minimumPeakHeight': 0.15,
+            'maximumPeakHeight': 1,
+            'minimumPeakProminence': 0.05,
+            'minimumPeakWidth': 0.001,
+            'maximumPeakWidth': 0.02,
+            'minimumPeakLatency': 0,
+            'initialPeakWidth': 0.001,
+            'maximumLatencyShift': 0.003,
+            'maximumBaselineShift': 0.001,
+            'maximumAmplitudeShift': 0.001 
+        }
+        kwargs.update(kwargs_)
+
+        #
+        nUnits = len(self.ukeys)
+        self.k = np.full(nUnits, np.nan)
+        self.rss = np.full(nUnits, np.nan)
+        self.params = np.full([nUnits, int(3 * kmax + 1)], np.nan)
 
         #
         for iUnit in range(nUnits):
 
-            #
-            yTrue = peths[iUnit]
-            peakIndices = list()
-            for coef in (-1, 1):
-                ySigned = yTrue[binIndices] * coef
-                peakIndices_, peakProps = findPeaks(
-                    ySigned,
-                    height=minimumPeakHeight,
-                )
-                for binIndex in peakIndices_:
-                    peakIndices.append(binIndex)
+            end = None if iUnit + 1 == nUnits else '\r'
+            print(f'Fitting GMM for unit {iUnit + 1} out of {nUnits} units', end=end)
 
-            # Detect the peaks in the PSTHs
+            #
+            # yRaw = self.peths['raw'][iUnit]
+            yNormal = self.peths['normalized'][iUnit]
+            yStandard = self.peths['standardized'][iUnit]
+
+            #
+            peakIndices = list()
+            peakProminences = list()
+            for coef in (-1, 1):
+                peakIndices_, peakProperties = findPeaks(
+                    coef * yNormal,
+                    height=kwargs['minimumPeakHeight'],
+                    prominence=kwargs['minimumPeakProminence']
+                )
+                if peakIndices_.size == 0:
+                    continue
+                for iPeak in range(peakIndices_.size):
+
+                    # Exclude peaks detected before the stimulus  onset
+                    if self.t[peakIndices_[iPeak]] <= 0:
+                        continue
+
+                    #
+                    peakIndices.append(peakIndices_[iPeak])
+                    peakProminences.append(peakProperties['prominences'][iPeak])
+
+            # 
             peakIndices = np.array(peakIndices)
-            k = peakIndices.size
-            peakIndices += binIndices.min()
-            peakAmplitudes = yTrue[peakIndices]
+            if peakIndices.size == 0:
+                continue
+            peakProminences = np.array(peakProminences)
+            peakAmplitudes = yStandard[peakIndices]
             peakLatencies = self.t[peakIndices]
-            order = np.argsort(peakLatencies)
-            peakIndices = peakIndices[order]
-            peakAmplitudes = peakAmplitudes[order]
+
+            # Use only the k largest peaks
+            if peakIndices.size > kmax:
+                index = np.argsort(np.abs(peakAmplitudes))[::-1]
+                peakIndices = peakIndices[index][:kmax]
+                peakProminences = peakProminences[index][:kmax]
+                peakAmplitudes = peakAmplitudes[index][:kmax]
+                peakLatencies = peakLatencies[index][:kmax]
+            
+            #
+            k = peakIndices.size
+            self.k[iUnit] = k
 
             # Initialize the parameter space
             p0 = np.concatenate([
                 np.array([0]),
                 peakAmplitudes,
                 peakLatencies,
-                np.full(k, 0.03)
+                np.full(k, kwargs['initialPeakWidth'])
             ])
             bounds = np.vstack([
-                np.array([[-0.02, 0.02]]),
+                np.array([[
+                    -1 * kwargs['maximumBaselineShift'],
+                    kwargs['maximumBaselineShift']
+                ]]),
+                np.vstack([
+                    peakAmplitudes - kwargs['maximumAmplitudeShift'],
+                    peakAmplitudes + kwargs['maximumAmplitudeShift']
+                ]).T,
+                np.vstack([
+                    peakLatencies - kwargs['maximumLatencyShift'],
+                    peakLatencies + kwargs['maximumLatencyShift']
+                ]).T,
                 np.repeat([[
-                    -1.05 * np.abs(peakAmplitudes).max(),
-                    +1.05 * np.abs(peakAmplitudes).max()
-                ]], k, axis=0),
-                np.repeat([[responseWindow[0], responseWindow[1]]], k, axis=0),
-                np.repeat([[0.005, maximumPeakWidth]], k, axis=0)
+                    kwargs['minimumPeakWidth'],
+                    kwargs['maximumPeakWidth']
+                ]], k, axis=0)
             ]).T
 
-            # Fit psths
+            # Fit the GMM and compute the residual sum of squares (rss)
             gmm = GaussianMixturesModel(k)
             gmm.fit(
                 self.t,
-                yTrue,
+                yStandard,
                 p0=p0,
                 bounds=bounds
             )
-            yFit = gmm.predict(self.te)
-            fitCurves.append(yFit)
+            yFit = gmm.predict(self.t)
+            self.rss[iUnit] = np.sum(np.power(yFit - yStandard, 2)) / np.sum(np.power(yStandard, 2))
 
-            # Extract parameters
-            A, B, C = np.split(gmm._popt[1:], 3)
-
-            #
-            if k == 1:
-                sample = np.array([
-                    A[0], np.nan, np.nan,
-                    B[0], np.nan, np.nan,
-                    C[0], np.nan, np.nan,
-                ])
-            elif k == 2:
-                sample = np.array([
-                    A[0], A[1], np.nan,
-                    B[0], B[1], np.nan,
-                    C[0], C[1], np.nan,
-                ])
-            else:
-                sample = np.array([*A[:3], *B[:3], *C[:3]])
-
-            # Sort parameter sets
-            if sortby == 'latency':
-                sortingFeatures = sample[3:6]
-                reverseOrder = False
-            elif sortby == 'amplitude':
-                sortingFeatures = np.abs(sample[0:3])
-                reverseOrder = True
-            mask = np.invert(np.isnan(sortingFeatures))
-            order = np.argsort(sortingFeatures[mask])
-            order = np.concatenate([
-                np.where(np.isnan(sortingFeatures))[0],
-                order,
+            # Extract the parameters of the fit GMM
+            d, abc = gmm._popt[0], gmm._popt[1:]
+            A, B, C = np.split(abc, 3)
+            order = np.argsort(B)[::-1] # Sort by amplitude
+            params = np.concatenate([
+                A[order],
+                B[order],
+                C[order],
             ])
-            if reverseOrder:
-                order = order[::-1]
-
-            #
-            sample[0:3] = sample[0:3][order] # Amplitude (Signed)
-            sample[3:6] = sample[3:6][order] # Latency
-            sample[6:9] = sample[6:9][order] # Width
-
-            #
-            fitParams.append(sample)
-
-        #
-        self.X = np.array(fitParams)
-
-        # Normalize
-        if normalize:
-            for start in (0, 3, 6):
-                stop = start + 3
-                sample = self.X[:, start: stop]
-                fmin, fmax = np.nanmin(sample), np.nanmax(sample)
-                for j in range(3):
-                    self.X[:, start + j] = stretch(
-                        self.X[:, start + j],
-                        b=(fmin, fmax),
-                        c=(0, 1)
-                    )
-
-        # Impute
-        for j in range(self.X.shape[1]):
-            column = self.X[:, j]
-            if fillValue == 'mean':
-                fillValue_ = np.nanmean(column)
-            elif fillValue == 'median':
-                fillValue_ = np.nanmedian(column)
-            else:
-                fillValue_ = fillValue
-            self.X[np.isnan(column), j] = np.full(np.isnan(column).sum(), fillValue_)
-
-        #
-        self.fits = np.array(fitCurves)
-        if returnFitCurves:
-            return self.fits
-
-    def predictLabels(
-        self,
-        clustersByType=(2, 2, 2),
-        ):
-        """
-        """
-
-        # Mono-phasic PSTHs
-        iMonophasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 2)[0] # 2 NaNs indicates only one component
-        xMonophasic = self.X[iMonophasic, 0:9:3]
-
-        # Bi-phasic PSTHs
-        iBiphasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 1)[0]
-        xBiphasic = np.concatenate([
-            self.X[iBiphasic, 0:9:3],
-            self.X[iBiphasic, 1:9:3],
-        ], axis=1)
-
-        # Multi-phasic PSTHs
-        iMultiphasic = np.where(np.isnan(self.X[:, :3]).sum(1) == 0)[0]
-        xMultiphasic = np.concatenate([
-            self.X[iMultiphasic, 0:9:3],
-            self.X[iMultiphasic, 1:9:3],
-            self.X[iMultiphasic, 2:9:3],
-        ], axis=1)
-
-        #
-        xSet = (
-            xMonophasic,
-            xBiphasic,
-            xMultiphasic,
-        )
-        iSet = (
-            iMonophasic,
-            iBiphasic,
-            iMultiphasic,
-        )
-
-        #
-        nUnits = self.peths['probe'].shape[0]
-        labels = np.full(nUnits, np.nan)
-        c = 0
-        for X, i, k in zip(xSet, iSet, clustersByType):
-            labelsWithinType = AgglomerativeClustering(n_clusters=k).fit_predict(X)
-            labels[i] = labelsWithinType + c
-            c += labelsWithinType.max() + 1
-
-        self.labels = labels
-        return labels
-
-    def saveLabels(
-        self,
-        hdf,
-        name,
-        ):
-        """
-        """
-
-        with h5py.File(hdf, 'a') as stream:
-            nUnits = stream['rProbe/dg/left/fr'].shape[0]
-            labels = np.full(nUnits, np.nan)
-            labels[self.include] = self.labels
-            labels = labels.reshape(-1, 1)
-            if f'clusterLabels/{name}' in stream:
-                del stream[f'clusteringLabels/{name}']
-            ds = stream.create_dataset(
-                f'clusteringLabels/{name}',
-                shape=labels.shape,
-                dtype=labels.dtype,
-                data=labels
-            )
+            self.params[iUnit, :params.size] = params
+            self.params[iUnit, -1] = d
 
         return
 
-    def measureLatency(
+    def predictLabels(
         self,
-        alignment='peak',
-        minimumResponseAmplitude=0.3,
-        responseSigns=(-1, 1),
         ):
         """
         """
 
-        latency = list()
-        for y in self.fits:
-            l = np.inf
-            a = 0
-            for coef in responseSigns:
+        nUnits = len(self.ukeys)
+        self.labels = np.full(nUnits, np.nan)
+        for i, y in enumerate(self.peths['normalized']):
 
-                #
-                if alignment == 'onset':
-                    peakIndices, peakProps = findPeaks(coef * y, height=minimumResponseAmplitude)
-                    for peakIndex in peakIndices:
-                        if self.te[peakIndex] < l:
-                            l = self.te[peakIndex]
-                
-                #
-                elif alignment == 'peak':
-                    if np.max(coef * y) > a:
-                        a = np.max(coef * y)
-                        l = self.te[np.argmax(coef * y)]
-                    
-            #
-            latency.append(l)
+            # No peaks detected
+            if np.isnan(self.k[i]):
+                self.labels[i] = np.nan
+                continue
+
+            # Negative
+            if y[np.argmax(np.abs(y))] < 0:
+                self.labels[i] = -1
+
+            # Positive
+            else:
+                self.labels[i] = self.k[i]
+
+        return
+
+    def plotReceptiveFields(
+        self,
+        threshold=2,
+        vrange=(-5, 5),
+        cmap='binary_r',
+        figsize=(7, 2),
+        phase='on',
+        smoothingKernelWidth=0.5,
+        ):
+        """
+        """
+
+        fig, axs = plt.subplots(ncols=len(self.examples))
+        if len(self.examples) == 1:
+            axs = [axs,]
+        for i, ukey in enumerate(self.examples):
+            self.ukey = ukey
+            heatmaps = self.session.load(f'population/rf/{phase}')
+            if heatmaps is None:
+                continue
+            hm = heatmaps[self.unit.index]
+            if smoothingKernelWidth is not None:
+                hm = gaussianFilter(hm, smoothingKernelWidth)
+            X, Y = np.meshgrid(np.arange(hm.shape[1]), np.arange(hm.shape[0]))
+            mesh = axs[i].pcolor(X, Y, hm, vmin=vrange[0], vmax=vrange[1], cmap=cmap)
+            if hm.max() < threshold:
+                continue
+            lines = axs[i].contour(hm, np.array([threshold]), colors=['k'])
 
         #
-        latency =  np.array(latency)
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
 
-        return latency
+        return fig, axs
+
+    def plotFittingDemo(
+        self,
+        figsize=(3.5, 9),
+        ):
+        """
+        """
+
+        if len(self.examples) == 1:
+            fig, ax = plt.subplots()
+            axs = [ax,]
+        else:
+            fig, axs = plt.subplots(nrows=len(self.examples), sharey=False, sharex=True)
+        cmap = plt.get_cmap('rainbow', np.nanmax(self.k))
+        for i, ukey in enumerate(self.examples):
+
+            #
+            self.ukey = ukey
+
+            #
+            for j, (date, animal, cluster) in enumerate(self.ukeys):
+                if date == ukey[0] and animal == ukey[1] and cluster == ukey[2]:
+                    break
+
+            yRaw = self.peths['standardized'][j]
+            gmm = GaussianMixturesModel(k=int(self.k[j]))
+            params = self.params[j][np.invert(np.isnan(self.params[j]))]
+            paramsOrdered = np.concatenate([
+                np.array([params[-1],]),
+                params[:-1]
+            ])
+            gmm._popt = paramsOrdered
+            yFit = gmm.predict(self.t)
+
+            #
+            axs[i].plot(self.t, yRaw, color='k', alpha=0.3)
+
+            #
+            A, B, C = np.split(params[:-1], 3)
+            d = params[-1]
+            for ii in range(gmm.k):
+                t = np.linspace(-15 * C[ii], 15 * C[ii], 100) + B[ii]
+                yComponent = g(t, A[ii], B[ii], C[ii], d)
+                axs[i].plot(t, yComponent, color=cmap(ii), alpha=1)
+            axs[i].set_title(f'k={gmm.k}', fontsize=10)
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, axs
 
     def plotPeths(
         self,
-        figsize=(2, 8.5),
-        vrange=(-0.7, 0.7),
+        form='normalized',
+        order=None,
+        figsize=(4, 5),
+        vrange=(-1, 1),
         cmap='coolwarm',
         ):
         """
         """
 
-        fig, ax = plt.subplots()
-        n = np.arange(self.fits.shape[0])
-        latency = self.measureLatency()
-        index = np.argsort(latency)
-        ax.pcolor(
-            self.te,
-            n,
-            self.fits[index],
-            vmin=vrange[0],
-            vmax=vrange[1],
-            cmap=cmap,
-            rasterized=True,
-        )
-        ax.vlines(0, 0, n.max(), color='k')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, ax
-
-    def plotPethsWithClustering(
-        self,
-        order=None,
-        figsize=(2, 8.5),
-        vrange=(-0.7, 0.7),
-        cmap='Blues_r',
-        ):
-        """
-        """
-
-        labels = self.predictLabels([2, 2, 2])
-        uniqueLabels, labelCounts = np.unique(labels, return_counts=True)
+        if self.labels is None:
+            self.predictLabels()
+        uniqueLabels, labelCounts = np.unique(self.labels, return_counts=True)
+        labelCounts = np.delete(labelCounts, np.isnan(uniqueLabels))
+        uniqueLabels = np.delete(uniqueLabels, np.isnan(uniqueLabels))
         if order is not None:
             uniqueLabels = uniqueLabels[order]
             labelCounts = labelCounts[order]
         fig, axs = plt.subplots(
+            ncols=2,
             nrows=uniqueLabels.size,
             gridspec_kw={'height_ratios': labelCounts},
+            # sharey=True
         )
-        latency = self.measureLatency(
-            responseSigns=(-1, +1)
-        )
+        latency = np.array([np.argmax(np.abs(y)) for y in self.peths['normalized']])
+        pethsReverseLatencySorted = self.peths[form][np.argsort(latency)[::-1]]
+        start = 0
         for i, label in enumerate(uniqueLabels):
-            m = labels == label
+
+            #
+            m = self.labels == label
+
+            #
+            stop = start + m.sum()
+            y = np.arange(0, m.sum(), 1)[::-1]
+            axs[i, 0].pcolor(
+                self.t,
+                y,
+                pethsReverseLatencySorted[start: stop, :],
+                vmin=vrange[0],
+                vmax=vrange[1],
+                cmap=cmap,
+                rasterized=True
+            )
+            axs[i, 0].vlines(0, y.max() + 0.5, y.min() - 0.5, color='k')
+            start += m.sum()
+
+            #
             n = np.arange(m.sum())
-            fits = self.fits[m]
             index = np.argsort(latency[m])
-            axs[i].pcolor(
-                self.te,
+            axs[i, 1].pcolor(
+                self.t,
                 n,
-                fits[index],
+                self.peths[form][m][index],
                 vmin=vrange[0],
                 vmax=vrange[1],
                 cmap=cmap,
                 rasterized=True,
             )
-            axs[i].vlines(0, 0, n.max(), color='k')
-        for ax in axs[:-1]:
+            axs[i, 1].vlines(0, -0.5, n.max() + 0.5, color='k')
+
+        for ax in axs[:-1, :].flatten():
             ax.set_xticks([])
+        for ax in axs[:, 1].flatten():
+            ax.set_yticks([])
+        for ax in axs[:-1, 0].flatten():
+            ax.spines['bottom'].set_visible(False)
+        for ax in axs[1:, 0].flatten():
+            ax.spines['top'].set_visible(False)
+        for ax in axs[:, 0]:
+            ax.set_yticks([])
+        axs[-1, 0].set_yticks([0, 100])
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
         fig.subplots_adjust(hspace=0)
 
         return fig, axs
-
-    def plotExampleCurves(
-        self,
-        figsize=(4, 5),
-        colormap='coolwarm',
-        alpha=0.7,
-        lineWeight=0.15,
-        ):
-        """
-        """
-
-        fig, axs = plt.subplots(nrows=3, ncols=2, sharey=True)
-        cmap = plt.get_cmap(colormap, 2)
-        for i, (u1, u2) in enumerate(exampleUnitIndices):
-            axs[i, 0].plot(
-                self.t,
-                self.peths['probe'][u1],
-                color='gray',
-                lw=lineWeight
-            )
-            axs[i, 0].plot(
-                self.te,
-                self.fits[u1],
-                color=cmap(1),
-                lw=lineWeight
-            )
-            axs[i, 1].plot(
-                self.t,
-                self.peths['probe'][u2],
-                color='gray',
-                lw=lineWeight
-            )
-            axs[i, 1].plot(
-                self.te,
-                self.fits[u2],
-                color=cmap(0),
-                alpha=alpha,
-                lw=lineWeight   
-            )
-        for ax in axs.flatten():
-            ax.set_ylim([-1, 1])
-        for ax in axs[:-1, :].flatten():
-            ax.set_xticks([])
-        for ax in axs[-1, :].flatten():
-            ax.set_xticks([-0.2, 0, 0.2, 0.4])
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-        fig.subplots_adjust(hspace=0.15)
-
-        return fig, axs
-
