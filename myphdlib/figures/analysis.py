@@ -88,13 +88,17 @@ class AnalysisBase():
         self, 
         ukey=None,
         tag='JH-DATA-',
+        mount=True
         ):
         """
         """
 
         self._ukeys = None
         self._ukey = None
-        self._factory = SessionFactory(tag=tag)
+        if mount:
+            self._factory = SessionFactory(mount=tag)
+        else:
+            self._factory = SessionFactory(tag=tag)
         self._session = None
         self._unit = None
         if ukey is not None:
@@ -142,7 +146,12 @@ class AnalysisBase():
         """
 
         self._ukeys = list()
-        for session in self._factory.produce(experiment=experiments):
+        sessions = self._factory.produce(experiment=experiments)
+        n = len(sessions)
+        for i, session in enumerate(sessions):
+
+            end = '\r' if i + 1 == n else None
+            print(f'Filtering units from session {i + 1} out of {n}', end=end)
 
             #
             if session.probeTimestamps is None:

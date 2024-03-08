@@ -9,12 +9,13 @@ class SimpleSaccadicModulationAnalysis(AnalysisBase):
     """
 
     def __init__(
-        self, 
+        self,
+        **kwargs,
         ):
         """
         """
 
-        super().__init__()
+        super().__init__(**kwargs)
 
         self.peths = {
             'extrasaccadic': None,
@@ -82,6 +83,39 @@ class SimpleSaccadicModulationAnalysis(AnalysisBase):
             if path in stream:
                 ds = stream[path]
                 self.peths['extrasaccadic']= np.array(ds)[m]
+
+        return
+    
+    def saveNamespace(
+        self,
+        hdf
+        ):
+        """
+        """
+
+        d = {
+            'gmm/latencies': self.latencies,
+            'gmm/modulation': self.modulation,
+            'rSaccade/dg/preferred/nasal/fr': self.templates['nasal'],
+            'rSaccade/dg/preferred/temporal/fr': self.templates['temporal']
+        }
+        m = findOverlappingUnits(self.ukeys, hdf)
+        with h5py.File(hdf, 'a') as stream:
+            for k, v in d.items():
+                if v is None:
+                    continue
+                nCols = 1 if len(v.shape) == 1 else v.shape[1]
+                data = np.full([m.size, nCols], np.nan)
+                data[m, :] = v.reshape(-1, nCols)
+                if k in stream:
+                    del stream[k]
+                ds = stream.create_dataset(
+                    k,
+                    data.shape,
+                    data.dtype,
+                    data=data
+                )
+                ds.attrs['t'] = self.tSaccade
 
         return
 
