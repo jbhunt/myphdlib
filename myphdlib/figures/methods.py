@@ -3,6 +3,7 @@ from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
 from myphdlib.general.toolkit import smooth
 from sklearn.decomposition import PCA
+from scipy.ndimage import gaussian_filter as gaussianFilter
 from myphdlib.figures.analysis import AnalysisBase
 
 class DataAcqusitionSummaryFigure():
@@ -215,19 +216,24 @@ class PopulationHeatmapBeforeAndAfterFilteringFigure():
 
         return fig, (ax1, ax2)
 
-class SaccadeFrequencyAnalysis():
+class SaccadeByPerisaccadicTrialFrequencyAnalysis(AnalysisBase):
+    """
+    """
 
-    def __init__(self):
+    def __init__(self, **kwargs):
         """
         """
 
-        self.data = None
+        super().__init__(**kwargs)
+        self.saccadeFrequency = {
+            'left': None,
+            'right': None,
+        }
 
         return
 
     def measureSaccadeFrequency(
         self,
-        sessions,
         ):
         """
         """
@@ -237,7 +243,7 @@ class SaccadeFrequencyAnalysis():
             'right': list(),
         }
         for gm, k in zip([-1, 1], ['left', 'right']):
-            for session in sessions:
+            for session in self.sessions:
                 if session.probeTimestamps is None:
                     continue
                 motionOnsetTimestamps = session.load('stimuli/dg/motion/timestamps')
@@ -269,85 +275,22 @@ class SaccadeFrequencyAnalysis():
         for k in saccadeFrequency:
             saccadeFrequency[k] = np.array(saccadeFrequency[k])
 
-        self.data = saccadeFrequency
-
-        return
-
-    def plotFrequencyDistribution(
-        self,
-        gratingMotion='left',
-        fRange=(0, 1),
-        nBins=11,
-        plot='line',
-        figsize=(3, 2)
-        ):
-        """
-        """
-
-        fig, ax = plt.subplots()
-        sample = self.data[gratingMotion]
-        if plot == 'hist':
-            ax.hist(
-                sample,
-                range=fRange,
-                bins=nBins,
-                color='k',
-                alpha=0.1
-            )
-            ax.hist(
-                sample,
-                range=fRange,
-                bins=nBins,
-                color='k',
-                histtype='step'
-            )
-        elif plot == 'line':
-            counts, edges = np.histogram(
-                sample,
-                range=fRange,
-                bins=nBins
-            )
-            x = edges[:-1] + (edges[1] - edges[0]) / 2
-            ax.plot(x, counts, color='k', alpha=0.3)
-            ax.fill_between(
-                x,
-                0,
-                counts,
-                color='k',
-                alpha=0.1
-            )
-
-        ax.set_xlabel('Saccade frequency (Hz)')
-        ax.set_ylabel('Number of sessions')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, ax
-
-class TrialFrequencyAnalysis():
-
-    def __init__(self):
-        """
-        """
-
-        self.data = None
+        self.saccadeFrequency = saccadeFrequency
 
         return
 
     def measureTrialFrequency(
         self,
-        sessions,
         perisaccadicWindow=(-0.05, 0.1),
         ):
         """
         """
 
-        self.data = {
+        self.trialFrequency = {
             'f': list(),
             'n': list()
         }
-        for session in sessions:
+        for session in self.sessions:
             if session.probeTimestamps is None:
                 continue
             n = np.sum(np.logical_and(
@@ -355,48 +298,47 @@ class TrialFrequencyAnalysis():
                 session.probeLatencies <= perisaccadicWindow[1]
             ))
             f = n / session.probeTimestamps.size * 100
-            self.data['f'].append(f)
-            self.data['n'].append(n)
-        self.data = {
-            'f': np.array(self.data['f']),
-            'n': np.array(self.data['n'])
-        }
+            self.trialFrequency['f'].append(f)
+            self.trialFrequency['n'].append(n)
+        for k in self.trialFrequency.keys():
+            self.trialFrequency[k] = np.array(self.trialFrequency[k])
 
         return
 
-    def plotFrequencyDistribution(
+    def run(
         self,
-        plot='line',
-        fRange=(0, 15),
-        nBins=15,
-        figsize=(3, 2)
         ):
         """
         """
 
-        fig, ax = plt.subplots()
-        if plot == 'line':
-            counts, edges = np.histogram(
-                self.data['f'],
-                range=fRange,
-                bins=nBins
-            )
-            x = edges[:-1] + (edges[1] - edges[0]) / 2
-            ax.plot(x, counts, color='k', alpha=0.3)
-            ax.fill_between(
-                x,
-                0,
-                counts,
-                color='k',
-                alpha=0.1
-            )
+        self.measureSaccadeFrequency(),
+        self.measureTrialFrequency()
 
-        #
-        ax.set_xlabel('Peri-saccadic trial rate (%)')
-        ax.set_ylabel('Number of sessions')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
+        return
+
+    def plotSaccadeFrequencyByTrialFrequency(
+        self,
+        **kwargs_
+        ):
+        """
+        """
+
+        kwargs = {
+            'color': 'k',
+            'marker': 'o',
+            'alpha': 0.7,
+            's': 5
+        }
+        kwargs.update(kwargs_)
+
+        fig, ax = plt.subplots()
+        for i in range(len(self.sessions)):
+            x = np.mean([
+                self.saccadeFrequency['left'][i],
+                self.saccadeFrequency['right'][i]
+            ])
+            y = self.trialFrequency['n'][i]
+            ax.scatter(x, y, **kwargs)
 
         return fig, ax
 
@@ -500,16 +442,53 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
     """
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        date='2023-05-15'
+        ):
         """
         """
         super().__init__()
+        self.date = date
         return
 
     def plotReceptiveFields(
         self,
+        threshold=2,
+        figsize=(4, 3),
+        phase='on',
+        smoothingKernelWidth=0.5,
         ):
         """
         """
 
-        return
+        # Set the session by date
+        for ukey in self.ukeys:
+            if ukey[0] == self.date:
+                self.ukey = ukey
+                break
+        
+        #
+        fig, ax = plt.subplots()
+
+        #
+        heatmaps = self.session.load(f'population/rf/{phase}')
+        iUnit = 0
+        for ukey in self.ukeys:
+            if ukey[0] != self.date:
+                continue
+            self.ukey = ukey
+            hm = heatmaps[self.unit.index]
+            if smoothingKernelWidth is not None:
+                hm = gaussianFilter(hm, smoothingKernelWidth)
+            if hm.max() < threshold:
+                continue
+            lines = ax.contour(hm, np.array([threshold]), colors=['k'])
+            iUnit += 1
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax

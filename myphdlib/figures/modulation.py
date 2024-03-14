@@ -1,5 +1,6 @@
 import h5py
 import numpy as np
+from scipy.signal import find_peaks as findPeaks
 from matplotlib import pylab as plt
 from myphdlib.general.toolkit import psth2
 from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g, findOverlappingUnits
@@ -97,7 +98,8 @@ class SimpleSaccadicModulationAnalysis(AnalysisBase):
             'gmm/latencies': self.latencies,
             'gmm/modulation': self.modulation,
             'rSaccade/dg/preferred/nasal/fr': self.templates['nasal'],
-            'rSaccade/dg/preferred/temporal/fr': self.templates['temporal']
+            'rSaccade/dg/preferred/temporal/fr': self.templates['temporal'],
+            'rProbe/dg/preferred/perisaccadic/fr': self.peths['perisaccadic'],
         }
         m = findOverlappingUnits(self.ukeys, hdf)
         with h5py.File(hdf, 'a') as stream:
@@ -176,6 +178,151 @@ class SimpleSaccadicModulationAnalysis(AnalysisBase):
 
         return
 
+    def computeTerms(
+        self,
+        ukey=None,
+        responseWindow=(-0.2, 0.5),
+        baselineWindow=(-3.0, -2.0),
+        perisaccadicWindow=(-0.05, 0.1),
+        binsize=0.01,
+        smoothingKernelWidth=0.01,
+        ):
+        """
+        """
+
+        #
+        t, nTrials, nBins = psth2(
+            np.zeros(1),
+            np.zeros(1),
+            window=responseWindow,
+            binsize=binsize,
+            returnShape=True
+        )
+
+        #
+        if ukey is not None:
+            self.ukey = ukey
+
+        # Determine the unit index
+        nUnits = len(self.ukeys)
+        for iUnit in range(nUnits):
+            date, animal, cluster = self.ukeys[iUnit]
+            if date == self.ukey[0] and animal == self.ukey[1]:
+                break
+
+        # Compute peri-saccadic response
+        trialIndices = np.where(self.session.parseEvents(
+            eventName='probe',
+            coincident=True,
+            eventDirection=self.ambc[iUnit, 1],
+            coincidenceWindow=perisaccadicWindow,
+        ))[0]
+        if trialIndices.size < 3:
+            return (
+                np.full(nBins, np.nan),
+                np.full(nBins, np.nan),
+            )
+        t_, rMixed = self.unit.kde(
+            self.session.probeTimestamps[trialIndices],
+            responseWindow=responseWindow,
+            binsize=binsize,
+            sigma=smoothingKernelWidth
+        )
+
+        # Compute latency-shifted saccade response
+        saccadeLabels = self.session.load('stimuli/dg/probe/dos')
+        trialIndices = np.where(
+            self.session.parseEvents('probe', True, self.ambc[iUnit, 1], perisaccadicWindow)
+        )[0]
+        iterable = zip(
+            self.session.probeLatencies[trialIndices],
+            saccadeLabels[trialIndices]
+        )
+        rSaccade = list()
+        rBaseline = list()
+        for probeLatency, saccadeLabel in iterable:
+            saccadeDirection = 'temporal' if saccadeLabel == -1 else 'nasal'
+            fp = self.templates[saccadeDirection][iUnit]
+            x = t + probeLatency
+            fr = np.interp(x, self.tSaccade, fp, left=np.nan, right=np.nan)
+            rSaccade.append(fr)
+            bl = self.templates[saccadeDirection][iUnit][np.logical_and(self.tSaccade >= baselineWindow[0], self.tSaccade <= baselineWindow[1])].mean()
+            rBaseline.append(bl)
+
+        #
+        rSaccade = np.nanmean(np.array(rSaccade) - np.array(rBaseline).reshape(-1, 1), 0)
+
+        return rMixed, rSaccade
+
+    def measureModulation(
+        self,
+        ukey=None,
+        sortby='amplitude',
+        maximumAmplitudeShift=30,
+        peth=None
+        ):
+        """
+        """
+
+        #
+        if ukey is not None:
+            self.ukey = ukey
+
+        # Determine the unit index
+        nUnits = len(self.ukeys)
+        for iUnit in range(nUnits):
+            date, animal, cluster = self.ukeys[iUnit]
+            if date == self.ukey[0] and animal == self.ukey[1] and cluster == self.ukey[2]:
+                break
+
+        #
+        params = self.params[iUnit]
+        if np.isnan(params).all():
+            return
+        abcd = params[np.invert(np.isnan(params))]
+        abc, d = abcd[:-1], abcd[-1]
+        A1, B, C = np.split(abc, 3)
+        k = A1.size
+        if sortby == 'amplitude':
+            order = np.argsort(A1)[::-1]
+        elif sortby == 'latency':
+            order = np.argsort(B)
+
+        #
+        kmax = int(np.max(self.k))
+        dr = np.full(kmax, np.nan)
+        latencies = np.full(kmax, np.nan)
+        latencies[:k] = B[order]
+        if peth is None:
+            peth = self.peths['perisaccadic'][iUnit]
+
+        for i, iComp in enumerate(order):
+
+            # Refit
+            amplitudeBoundaries = np.vstack([A1 - 0.001, A1 + 0.001]).T
+            amplitudeBoundaries[iComp, 0] -= maximumAmplitudeShift
+            amplitudeBoundaries[iComp, 1] += maximumAmplitudeShift
+            bounds = np.vstack([
+                [[d - 0.001, d + 0.001]],
+                amplitudeBoundaries,
+                np.vstack([B - 0.001, B + 0.001]).T,
+                np.vstack([C - 0.001, C + 0.001]).T,
+            ]).T
+            p0 = np.concatenate([
+                np.array([d]),
+                A1,
+                B,
+                C
+            ])
+            gmm = GaussianMixturesModel(k)
+            gmm.fit(self.t, peth, p0, bounds)
+
+            #
+            A2 = np.split(gmm._popt[1:], 3)[0]
+            dr[i] = A2[iComp] - A1[iComp]
+
+        return np.array(dr), latencies, gmm._popt
+
     def computePeths(
         self,
         responseWindow=(-0.2, 0.5),
@@ -207,75 +354,42 @@ class SimpleSaccadicModulationAnalysis(AnalysisBase):
             #
             end = None if iUnit + 1 == nUnits else '\r'
             print(f'Copmuting peri-saccadic PSTHs for unit {iUnit + 1} out of {nUnits}', end=end)
-            
-            # Set the unit (and session)
-            self.ukey = self.ukeys[iUnit]
 
-            # Compute peri-saccadic response
-            trialIndices = np.where(self.session.parseEvents(
-                eventName='probe',
-                coincident=True,
-                eventDirection=self.ambc[iUnit, 1],
-                coincidenceWindow=perisaccadicWindow,
-            ))[0]
-            t_, rMixed = self.unit.kde(
-                self.session.probeTimestamps[trialIndices],
-                responseWindow=responseWindow,
-                binsize=binsize,
-                sigma=smoothingKernelWidth
+            #
+            rMixed, rSaccade = self.computeTerms(
+                self.ukeys[iUnit],
+                responseWindow,
+                baselineWindow,
+                perisaccadicWindow,
+                binsize,
+                smoothingKernelWidth,
             )
-            self.terms['rMixed'][iUnit] = rMixed
 
-            # Compute latency-shifted saccade response
-            saccadeLabels = self.session.load('stimuli/dg/probe/dos')
-            trialIndices = np.where(
-                self.session.parseEvents('probe', True, self.ambc[iUnit, 1], perisaccadicWindow)
-            )[0]
-            iterable = zip(
-                self.session.probeLatencies[trialIndices],
-                saccadeLabels[trialIndices]
-            )
-            rSaccade = list()
-            rBaseline = list()
-            for probeLatency, saccadeLabel in iterable:
-                saccadeDirection = 'temporal' if saccadeLabel == -1 else 'nasal'
-                fp = self.templates[saccadeDirection][iUnit]
-                x = t + probeLatency
-                fr = np.interp(x, self.tSaccade, fp, left=np.nan, right=np.nan)
-                rSaccade.append(fr)
-                bl = self.templates[saccadeDirection][iUnit][np.logical_and(self.tSaccade >= baselineWindow[0], self.tSaccade <= baselineWindow[1])].mean()
-                rBaseline.append(bl)
-
-            #
-            rSaccade = np.array(rSaccade)
-            rBaseline = np.array(rBaseline).reshape(-1, 1)
-            self.terms['rSaccade'][iUnit] = np.nanmean(rSaccade - rBaseline, axis=0)
-
-            #
-            yResidual = rMixed - np.mean(rSaccade - rBaseline, axis=0)
-            self.terms['rProbe']['perisaccadic'][iUnit] = yResidual
-
-            #
+            # Standardize the PETHs
             mu, sigma = self.ambc[iUnit, 2], self.ambc[iUnit, 3]
+            yResidual = rMixed - rSaccade
             yStandard = (yResidual - mu) / sigma
+
+            #
+            self.terms['rMixed'][iUnit] = rMixed
+            self.terms['rSaccade'][iUnit] = rSaccade
+            self.terms['rProbe']['perisaccadic'][iUnit] = yResidual
             self.peths['perisaccadic'][iUnit] = yStandard
 
         return
 
     def fitPeths(
         self,
-        sortby='latency',
-        maximumAmplitudeShift=10,
+        sortby='amplitude',
+        maximumAmplitudeShift=30,
         ):
         """
         """
 
         #
-        nBins = self.peths['extrasaccadic'].shape[1]
         nUnits = len(self.ukeys)
-        kmax = int(np.max(self.k))
+        kmax = int(np.max(self.k))        
         self.modulation = np.full([nUnits, kmax], np.nan)
-        self.refits = np.full([nUnits, nBins, kmax], np.nan)
         self.latencies = np.full([nUnits, kmax], np.nan)
 
         #
@@ -285,55 +399,15 @@ class SimpleSaccadicModulationAnalysis(AnalysisBase):
             print(f'Measuring modulation for unit {iUnit + 1} out of {nUnits}', end=end)
 
             #
-            params = self.params[iUnit]
-            if np.isnan(params).all():
-                continue
-            abcd = params[np.invert(np.isnan(params))]
-            abc, d = abcd[:-1], abcd[-1]
-            aFit, B, C = np.split(abc, 3)
-            k = aFit.size
-            if sortby == 'amplitude':
-                order = np.argsort(aFit)[::-1]
-            elif sortby == 'latency':
-                order = np.argsort(B)
-            self.latencies[iUnit, :B.size] = B[order]
+            dr, latencies, params = self.refitPerisaccadicPeth(
+                self.ukeys[iUnit],
+                sortby=sortby,
+                maximumAmplitudeShift=maximumAmplitudeShift
+            )
 
             #
-            for i, iComp in enumerate(order):
-
-                # Refit
-                amplitudeBoundaries = np.vstack([aFit - 0.001, aFit + 0.001]).T
-                amplitudeBoundaries[iComp, 0] -= maximumAmplitudeShift
-                amplitudeBoundaries[iComp, 1] += maximumAmplitudeShift
-                bounds = np.vstack([
-                    [[d - 0.001, d + 0.001]],
-                    amplitudeBoundaries,
-                    np.vstack([B - 0.001, B + 0.001]).T,
-                    np.vstack([C - 0.001, C + 0.001]).T,
-                ]).T
-                p0 = np.concatenate([
-                    np.array([d]),
-                    aFit,
-                    B,
-                    C
-                ])
-                gmm = GaussianMixturesModel(k)
-                gmm.fit(self.t, self.peths['perisaccadic'][iUnit], p0, bounds)
-
-                #
-                yFit = gmm.predict(self.t)
-                self.refits[iUnit, :, iComp] = yFit
-                aRefit = np.split(gmm._popt[1:], 3)[0]
-                mi = aRefit[iComp] - aFit[iComp]
-                self.modulation[iUnit, i] = mi
-
-        return
-
-    def computeProbabilityValues(
-        self
-        ):
-        """
-        """
+            self.modulation[iUnit, :] = dr
+            self.latencies[iUnit, :] = latencies
 
         return
 
@@ -469,7 +543,7 @@ class SimpleSaccadicModulationAnalysis(AnalysisBase):
 
         fig, ax = plt.subplots()
         for i, l in enumerate(np.unique(self.k)):
-            m = self.k == l
+            m = np.ravel(self.k) == l
             jitter = np.random.normal(loc=0, scale=scale, size=m.sum())
             ax.scatter(
                 self.modulation[m, 0],

@@ -88,7 +88,7 @@ class AnalysisBase():
         self, 
         ukey=None,
         tag='JH-DATA-',
-        mount=True
+        mount=False
         ):
         """
         """
@@ -99,6 +99,7 @@ class AnalysisBase():
             self._factory = SessionFactory(mount=tag)
         else:
             self._factory = SessionFactory(tag=tag)
+        self._sessions = None
         self._session = None
         self._unit = None
         if ukey is not None:
@@ -108,6 +109,10 @@ class AnalysisBase():
     @property
     def session(self):
         return self._session
+
+    @property
+    def sessions(self):
+        return self._sessions
     
     @property
     def unit(self):
@@ -120,12 +125,13 @@ class AnalysisBase():
     @ukey.setter
     def ukey(self, value):
         date, animal, cluster = value
-        if self._session is None or str(self._session.date) != date:
-            self._session = self._factory.produce(
-                dates=(date,),
-                animals=(animal,),
-            ).pop()
-        self._unit = self._session.population.indexByCluster(cluster)
+        if self.session is None or str(self.session.date) != date:
+            self._session = None
+            for session in self.sessions:
+                if str(session.date) == date and session.animal == animal:
+                    self._session = session
+                    break
+        self._unit = self.session.population.indexByCluster(cluster)
         self._ukey = value
         return
 
@@ -136,8 +142,8 @@ class AnalysisBase():
     def loadUnitKeys(
         self,
         experiments=('Mlati',),
-        minimumBaselineLevel=0.5,
-        minimumResponseAmplitude=5,
+        minimumBaselineLevel=1,
+        minimumResponseAmplitude=10,
         minimumPeakLatency=0.05,
         responseWindow=(0, 0.5),
         baselineWindow=(-0.2, 0),
@@ -146,11 +152,11 @@ class AnalysisBase():
         """
 
         self._ukeys = list()
-        sessions = self._factory.produce(experiment=experiments)
-        n = len(sessions)
-        for i, session in enumerate(sessions):
+        self._sessions = self._factory.produce(experiment=experiments)
+        n = len(self._sessions)
+        for i, session in enumerate(self._sessions):
 
-            end = '\r' if i + 1 == n else None
+            end = '\r' if i + 1 != n else None
             print(f'Filtering units from session {i + 1} out of {n}', end=end)
 
             #

@@ -214,13 +214,18 @@ class SingleUnit():
             responseWindow[0] - buffer,
             responseWindow[1] + buffer
         )
-        t_, M, sample = psth2(
+        t_, M, sample_ = psth2(
             eventTimestamps,
             self.timestamps,
             window=responseWindowBuffered,
             binsize=None,
             returnTimestamps=True
         )
+        sample = list()
+        for tr in sample_:
+            for ts in tr:
+                sample.append(ts)
+        sample = np.array(sample)
 
         #
         if sample.size < 3:

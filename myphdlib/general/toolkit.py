@@ -210,12 +210,13 @@ def psth2(event1, event2, window=(-1, 1), binsize=None, returnTimestamps=False, 
         )
         binCounts, binEdges = np.histogram(relative[withinWindowMask], bins=binEdges)
         M[rowIndex, :] = binCounts
-        for ts in relative[withinWindowMask]:
-            relativeTimestamps.append(ts)
+        relativeTimestamps.append(relative[withinWindowMask])
+        # for ts in relative[withinWindowMask]:
+        #     relativeTimestamps.append(ts)
 
     #
     if returnTimestamps:
-        return t, M, np.array(relativeTimestamps)
+        return t, M, relativeTimestamps
     else:
         return t, M
 

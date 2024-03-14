@@ -71,7 +71,6 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             'gmm/k': self.k
         }
         m = findOverlappingUnits(self.ukeys, hdf)
-        nRows = m.size
         with h5py.File(hdf, 'a') as stream:
             for k, v in d.items():
                 if v is None:
@@ -94,9 +93,36 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
     def loadNamespace(
         self,
+        hdf,
         ):
         """
         """
+
+        d = {
+            'rProbe/dg/preferred/ambc': 'ambc',
+            'gmm/params': 'params',
+            'gmm/rss': 'rss',
+            'gmm/labels': 'labels',
+            'gmm/k': 'k'
+        }
+        m = findOverlappingUnits(self.ukeys, hdf)
+        with h5py.File(hdf, 'r') as stream:
+            for k, v in d.items():
+                if k in stream:
+                    self.__setattr__(v, np.array(stream[k])[m])
+
+            path = 'rProbe/dg/preferred/raw/fr'
+            if path in stream:
+                ds = stream[path]
+                if 't' in ds.attrs.keys():
+                    self.t = ds.attrs['t']
+                self.peths['raw'] = np.array(ds)[m]
+            path = 'rProbe/dg/preferred/normalized/fr'
+            if path in stream:
+                self.peths['normalized'] = np.array(stream[path])[m]
+            path = 'rProbe/dg/preferred/standardized/fr'
+            if path in stream:
+                self.peths['standardized'] = np.array(stream[path])[m]
 
         return
 
@@ -303,7 +329,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             # Extract the parameters of the fit GMM
             d, abc = gmm._popt[0], gmm._popt[1:]
             A, B, C = np.split(abc, 3)
-            order = np.argsort(B)[::-1] # Sort by amplitude
+            order = np.argsort(np.abs(A))[::-1] # Sort by amplitude
             params = np.concatenate([
                 A[order],
                 B[order],
