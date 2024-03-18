@@ -6,7 +6,7 @@ from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g, fi
 from myphdlib.figures.modulation import SimpleSaccadicModulationAnalysis
 from myphdlib.general.toolkit import psth2
 
-class SimpleSaccadicModulationTimingAnalysis(SimpleSaccadicModulationAnalysis):
+class SaccadicModulationTimingAnalysis(SimpleSaccadicModulationAnalysis):
     """
     """
 
@@ -261,7 +261,7 @@ class SimpleSaccadicModulationTimingAnalysis(SimpleSaccadicModulationAnalysis):
 
         return fig, ax
 
-    def plotModulationByComponentLatency(
+    def plotModulationByPeakLatency(
         self,
         responseWindow=(-0.2, 0.5),
         binsize=0.05,
@@ -315,6 +315,41 @@ class SimpleSaccadicModulationTimingAnalysis(SimpleSaccadicModulationAnalysis):
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
+
+        return fig, ax
+    
+    def plotModulationByIntegratedLatency(
+        self,
+        **kwargs_
+        ):
+        """
+        """
+
+        #
+        kwargs = {
+            'color': 'k',
+            'marker': '.',
+            's': 15,
+            'alpha': 0.5,
+        }
+        kwargs.update(kwargs_)
+
+        #
+        nUnits, nBins, nWindows = self.peths['perisaccadic'].shape
+        binCenters = np.mean(self.windows, axis=1)
+        x = np.full(nUnits, np.nan)
+        y = np.full(nUnits, np.nan)
+        for iUnit in range(nUnits):
+            l = self.latencies[iUnit][0]
+            for iWin in range(nWindows):
+                dr = self.modulation[iUnit, 0, iWin]
+                lAdjusted = l + binCenters[iWin]
+                x[iUnit] = lAdjusted
+                y[iUnit] = dr
+
+        #
+        fig, ax = plt.subplots()
+        ax.scatter(x, y, **kwargs)
 
         return fig, ax
     
