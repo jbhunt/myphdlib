@@ -548,3 +548,36 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         fig.tight_layout()
 
         return fig, ax, r, p
+    
+    def plotSurvivalByAmplitudeThreshold(
+        self,
+        arange=np.arange(0, 3.1, 0.1)
+        ):
+        """
+        """
+
+        fig, axs = plt.subplots(nrows=3, sharex=True)
+        nUnitsTotal = list()
+        nUnitsSuppressed = list()
+        nUnitsEnhanced = list()
+
+        #
+        for a in arange:
+            nUnitsTotal.append(np.sum(self.params[:, 0] > a))
+            m = np.logical_and(
+                self.pvalues < 0.05,
+                self.params[:, 0] >= a
+            )
+            nUnitsSuppressed.append(np.sum(
+                self.modulation[m, 0, 5] < 0
+            ))
+            nUnitsEnhanced.append(np.sum(
+                self.modulation[m, 0, 5] > 0
+            ))
+
+        #
+        axs[0].plot(arange, nUnitsTotal)
+        axs[1].plot(arange, nUnitsSuppressed)
+        axs[1].plot(arange, nUnitsEnhanced)
+
+        return fig, axs

@@ -57,6 +57,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         ax=None,
         iComp=0,
         fill=False,
+        windowIndex=5,
         minimumResponseAmplitude=2,
         ):
         """
@@ -68,22 +69,46 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
 
         #
         nUnits, nBins, nWindows = self.peths['perisaccadic'].shape
+        binCenters = np.mean(self.windows[:-1], axis=1)
 
+        # Exclude small amplitude units
         m = self.params[:, 0] > minimumResponseAmplitude
+
+        # Determine the sign of modulation for each curve
+        labels = np.full(m.sum(), np.nan)
+        for iUnit in np.where(m)[0]:
+            yNormed = self.modulation[m, iComp, windowIndex] / self.params[iUnit, 0]
+            p = self.pvalues[iUnit, windowIndex, iComp]
+            if p < 0.05:
+                if yNormed < 0:
+                    labels[iUnit] = -1
+                else:
+                    labels[iUnit] = +1
+
+        # Define the color for each curve
+        colors = np.full([m.sum()], 'tab:gray')
+        for i, l in enumerate(labels):
+            if l == -1:
+                colors[i] = 'tab:blue'
+            elif l == 1:
+                colors[i] = 'tab:red'
+
+        # Collect all curves (normalized)
         samples = np.full([m.sum(), nWindows - 1], np.nan)
         for iWin in range(nWindows)[:-1]:
             yNormed = self.modulation[m, iComp, iWin] / self.params[m, 0]
             samples[:, iWin] = yNormed
-        binCenters = np.mean(self.windows[:-1], axis=1)
-        y = np.nanmean(samples, axis=0)
-        e = np.nanstd(samples, axis=0)
-        if fill:
-            ax.fill_between(binCenters, y - e, y + e, color='k', alpha=0.2)
-            ax.fill_between(binCenters, y + e, color='k', alpha=0.2)
-        else:
-            for ln in samples:
-                ax.plot(binCenters, np.clip(ln, -1, 1), color='0.5', alpha=0.3, lw=0.5)
-        ax.plot(binCenters, y, color='k')
+    
+        # Plot individual curves
+        for i, ln in enumerate(samples):
+            ax.plot(binCenters, np.clip(ln, -1, 1), color=colors[i], alpha=0.3, lw=0.5)
+
+        # Plot average curves per label
+        uniqueLabels = (-1, 0, 1)
+        uniqueColors = ('tab:blue', 'tab:gray', 'tab:red')
+        for i, l in enumerate(uniqueLabels):
+            y = np.nanmean(samples[labels == l], axis=0)
+            ax.plot(binCenters, y, color=uniqueColors[i])
 
         return
 

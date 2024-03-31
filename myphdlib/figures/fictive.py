@@ -106,6 +106,7 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
             'terms/fs/peri/rMixed': self.terms['rMixed'],
             
             #
+            'gmm/fs/extra/k': self.k.reshape(-1, 1),
             'gmm/fs/extra/params': self.params,
             'gmm/fs/peri/params': self.paramsRefit,
             'gmm/fs/extra/latencies': self.latencies,
@@ -177,7 +178,11 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
         with h5py.File(hdf, 'r') as stream:
             for tt, path in zip(self.peths.keys(), paths):
                 if path in stream:
-                    self.peths[tt] = np.array(stream[path][m])
+                    ds = stream[path]
+                    if 't' in ds.attrs.keys() and self.t is None:
+                        self.t = ds.attrs['t']
+                    self.peths[tt] = np.array(ds[m])
+
 
         #
         self.terms = {
@@ -226,6 +231,12 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
                 if path in stream:
                     data = np.array(stream[path][m])
                     self.__setattr__(name, data)
+
+        #
+        with h5py.File(hdf, 'r') as stream:
+            path = 'gmm/fs/extra/k'
+            if path in stream:
+                self.k = np.array(stream[path][m]).flatten()
 
         return
 
