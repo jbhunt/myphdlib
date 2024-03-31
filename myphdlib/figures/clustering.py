@@ -39,11 +39,10 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         #
         self.examples = (
-            ('2023-05-15', 'mlati7', 226),
-            ('2023-06-30', 'mlati9', 14),
-            ('2023-07-05', 'mlati9', 107),
-            ('2023-07-14', 'mlati9', 40),
-            ('2023-07-25', 'mlati10', 237)
+            ('2023-07-19', 'mlati10', 268),
+            ('2023-07-11', 'mlati10', 291),
+            ('2023-07-19', 'mlati10', 327),
+            ('2023-07-11', 'mlati10', 295)
         )
 
         return
@@ -61,14 +60,13 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             raise Exception('Base table does not exist')
 
         d = {
-            'rProbe/dg/preferred/raw/fr': self.peths['raw'],
-            'rProbe/dg/preferred/normalized/fr': self.peths['normalized'],
-            'rProbe/dg/preferred/standardized/fr': self.peths['standardized'],
-            'rProbe/dg/preferred/ambc': self.ambc,
-            'gmm/params': self.params,
-            'gmm/rss': self.rss,
-            'gmm/labels': self.labels,
-            'gmm/k': self.k
+            'peths/dg/extra/fr': self.peths['standardized'],
+            'peths/dg/extra/params': self.ambc,
+            'terms/dg/extra/rProbe': self.peths['raw'],
+            'gmm/dg/extra/params': self.params,
+            'gmm/dg/extra/rss': self.rss,
+            'gmm/dg/extra/labels': self.labels,
+            'gmm/dg/extra/k': self.k
         }
         m = findOverlappingUnits(self.ukeys, hdf)
         with h5py.File(hdf, 'a') as stream:
@@ -86,7 +84,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                     data.dtype,
                     data=data
                 )
-                if k.endswith('fr'):
+                if k.endswith('rProbe'):
                     ds.attrs['t'] = self.t
 
         return
@@ -111,22 +109,22 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 if k in stream:
                     self.__setattr__(v, np.array(stream[k])[m])
 
-            path = 'rProbe/dg/preferred/raw/fr'
+            path = 'terms/dg/extra/rProbe'
             if path in stream:
                 ds = stream[path]
                 if 't' in ds.attrs.keys():
                     self.t = ds.attrs['t']
                 self.peths['raw'] = np.array(ds)[m]
-            path = 'rProbe/dg/preferred/normalized/fr'
-            if path in stream:
-                self.peths['normalized'] = np.array(stream[path])[m]
-            path = 'rProbe/dg/preferred/standardized/fr'
+            # path = 'rProbe/dg/preferred/normalized/fr'
+            # if path in stream:
+            #     self.peths['normalized'] = np.array(stream[path])[m]
+            path = 'peths/dg/extra/fr'
             if path in stream:
                 self.peths['standardized'] = np.array(stream[path])[m]
 
         return
 
-    def computePeths(
+    def computeExtrasaccadicPeths(
         self,
         responseWindow=(-0.2, 0.5),
         baselineWindow=(-0.25, -0.05),
@@ -171,6 +169,13 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                     binsize=binsize,
                     sigma=smoothingKernelWidth,
                 )
+                # t, M = psth2(
+                #     self.session.probeTimestamps[self.session.gratingMotionDuringProbes == probeMotion],
+                #     self.unit.timestamps,
+                #     window=responseWindow,
+                #     binsize=binsize
+                # )
+                # fr = M.mean(0) / binsize
                 t, M = psth2(
                     self.session.probeTimestamps[self.session.gratingMotionDuringProbes == probeMotion],
                     self.unit.timestamps,
@@ -204,7 +209,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         return
 
-    def fitPeths(
+    def fitExtrasaccadicPeths(
         self,
         kmax=5,
         **kwargs_
@@ -227,7 +232,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             'initialPeakWidth': 0.001,
             'maximumLatencyShift': 0.003,
             'maximumBaselineShift': 0.001,
-            'maximumAmplitudeShift': 0.001 
+            'maximumAmplitudeShift': 0.01 
         }
         kwargs.update(kwargs_)
 
@@ -359,27 +364,31 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             if y[np.argmax(np.abs(y))] < 0:
                 self.labels[i] = -1
 
-            # Positive
+            # Positive (multiphasic)
+            elif self.k[i] >= 3:
+                self.labels[i] = 3
+
+            # Positive (Mono- or Biphasic)
             else:
                 self.labels[i] = self.k[i]
 
         return
 
-    def plotReceptiveFields(
+    def _plotReceptiveFields(
         self,
+        axs,
         threshold=2,
         vrange=(-5, 5),
         cmap='binary_r',
-        figsize=(7, 2),
         phase='on',
         smoothingKernelWidth=0.5,
         ):
         """
         """
 
-        fig, axs = plt.subplots(ncols=len(self.examples))
-        if len(self.examples) == 1:
-            axs = [axs,]
+        # fig, axs = plt.subplots(ncols=len(self.examples))
+        # if len(self.examples) == 1:
+        #     axs = [axs,]
         for i, ukey in enumerate(self.examples):
             self.ukey = ukey
             heatmaps = self.session.load(f'population/rf/{phase}')
@@ -393,26 +402,92 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             if hm.max() < threshold:
                 continue
             lines = axs[i].contour(hm, np.array([threshold]), colors=['k'])
+            # axs[i].set_aspect('equal')
 
         #
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
+        # fig.set_figwidth(figsize[0])
+        # fig.set_figheight(figsize[1])
+        # fig.tight_layout()
 
-        return fig, axs
+        return
 
-    def plotFittingDemo(
+    def _plotExampleRasterplots(
         self,
-        figsize=(3.5, 9),
+        axs,
+        nTrials=300,
+        responseWindow=(-0.2, 0.5),
+        perisaccadicWindow=(-0.05, 0.1),
+        **kwargs_,
         ):
         """
         """
 
-        if len(self.examples) == 1:
-            fig, ax = plt.subplots()
-            axs = [ax,]
-        else:
-            fig, axs = plt.subplots(nrows=len(self.examples), sharey=False, sharex=True)
+        kwargs = {
+            'marker': '.',
+            'color': 'k',
+            's': 3,
+            'alpha': 0.3
+        }
+        kwargs.update(kwargs_)
+
+        # if len(self.examples) == 1:
+        #     fig, ax = plt.subplots()
+        #     axs = [ax,]
+        # else:
+        #     fig, axs = plt.subplots(ncols=len(self.examples))
+        
+        for i in range(len(self.examples)):
+
+            #
+            self.ukey = self.examples[i]
+            gratingMotion = self.ambc[self.iUnit, 1]
+            trialIndices = np.where(self.session.parseEvents(
+                eventName='probe',
+                coincident=False,
+                eventDirection=gratingMotion,
+                coincidenceWindow=perisaccadicWindow
+            ))[0]
+            trialIndices = np.random.choice(trialIndices, size=nTrials, replace=False)
+            t, M, spikeTimestamps = psth2(
+                self.session.probeTimestamps[trialIndices],
+                self.unit.timestamps,
+                window=responseWindow,
+                binsize=None,
+                returnTimestamps=True
+            )
+            x, y = list(), list()
+            for iTrial, ts in enumerate(spikeTimestamps):
+                for iSpike in range(len(ts)):
+                    x.append(ts[iSpike])
+                    y.append(iTrial)
+            axs[i].scatter(
+                x,
+                y,
+                rasterized=True,
+                **kwargs
+            )
+            axs[i].set_ylim([-1, nTrials + 1])
+
+        #
+        # fig.set_figwidth(figsize[0])
+        # fig.set_figheight(figsize[1])
+        # fig.tight_layout()
+
+        return
+
+    def _plotFittingDemo(
+        self,
+        axs,
+        figsize=(5, 2),
+        ):
+        """
+        """
+
+        # if len(self.examples) == 1:
+        #     fig, ax = plt.subplots()
+        #     axs = [ax,]
+        # else:
+        #     fig, axs = plt.subplots(ncols=len(self.examples), sharey=False, sharex=True)
         cmap = plt.get_cmap('rainbow', np.nanmax(self.k))
         for i, ukey in enumerate(self.examples):
 
@@ -420,13 +495,9 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             self.ukey = ukey
 
             #
-            for j, (date, animal, cluster) in enumerate(self.ukeys):
-                if date == ukey[0] and animal == ukey[1] and cluster == ukey[2]:
-                    break
-
-            yRaw = self.peths['standardized'][j]
-            gmm = GaussianMixturesModel(k=int(self.k[j]))
-            params = self.params[j][np.invert(np.isnan(self.params[j]))]
+            yRaw = self.peths['standardized'][self.iUnit]
+            gmm = GaussianMixturesModel(k=int(self.k[self.iUnit]))
+            params = self.params[self.iUnit][np.invert(np.isnan(self.params[self.iUnit]))]
             paramsOrdered = np.concatenate([
                 np.array([params[-1],]),
                 params[:-1]
@@ -444,7 +515,59 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 t = np.linspace(-15 * C[ii], 15 * C[ii], 100) + B[ii]
                 yComponent = g(t, A[ii], B[ii], C[ii], d)
                 axs[i].plot(t, yComponent, color=cmap(ii), alpha=1)
-            axs[i].set_title(f'k={gmm.k}', fontsize=10)
+            # axs[i].set_title(f'k={gmm.k}', fontsize=10)
+
+        #
+        # fig.set_figwidth(figsize[0])
+        # fig.set_figheight(figsize[1])
+        # fig.tight_layout()
+
+        return
+
+    def plotExamples(
+        self,
+        responseWindow=(-0.2, 0.5),
+        figsize=(1.5, 4),
+        ):
+        """
+        """
+
+        fig, axs = plt.subplots(
+            nrows=3,
+            ncols=len(self.examples),
+            gridspec_kw={'height_ratios': (1, 1, 1)},
+        )
+        if len(self.examples) == 1:
+            axs = np.array([[axs[0],], [axs[1],], [axs[2],]])
+            figsize = (
+                figsize[0],
+                figsize[1]
+            )
+        else:
+            figsize = (
+                figsize[0] * len(self.examples),
+                figsize[1]
+            )
+
+        #
+        self._plotReceptiveFields(axs[0], phase='off')
+        self._plotExampleRasterplots(axs[1])
+        self._plotFittingDemo(axs[2])
+
+        #
+        # xlim = axs[1, 0].get_xlim()
+        for ax in axs[1:, :].flatten():
+            ax.set_xlim(responseWindow)
+        for ax in axs.flatten():
+            for sp in ('top', 'right', 'bottom', 'left'):
+                ax.spines[sp].set_visible(False)
+        for ax in axs[0, :].flatten():
+            ax.set_xticks([])
+            ax.set_yticks([])
+        for ax in axs[1, :]:
+            ax.set_yticks([0, 100])
+        # for ax in axs[2, :]:
+        #     ax.set_yticks([0, 1])
 
         #
         fig.set_figwidth(figsize[0])
@@ -484,7 +607,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         for i, label in enumerate(uniqueLabels):
 
             #
-            m = self.labels == label
+            m = self.labels.ravel() == label
 
             #
             stop = start + m.sum()
@@ -532,3 +655,16 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         fig.subplots_adjust(hspace=0)
 
         return fig, axs
+
+    def plotComplexityByAmplitude(
+        self,
+        ):
+        """
+        """
+
+        fig, ax = plt.subplots()
+        x = self.k.flatten()
+        y = self.params[:, 0]
+        ax.scatter(x, y)
+
+        return fig, ax

@@ -42,6 +42,8 @@ class SessionBase():
         self._gratingMotionDuringSaccades = None
         self._sampleIndicesRange = None
         self._tRange = None
+        self._barcodeValues = None
+        self._barcodeTimestamps = None
 
         #
         self._loadBasicMetadata()
@@ -495,8 +497,73 @@ class SessionBase():
             self._population = Population(self)
 
         return self._population
+
+    @property
+    def barcodeValues(self):
+        if self._barcodeValues is None:
+            self._barcodeValues = dict()
+            self._barcodeValues['labjack'] = self.load('barcodes/labjack/values')
+            self._barcodeValues['neuropixels'] = self.load('barcodes/neuropixels/values')
+        return self._barcodeValues
+
+    @property
+    def barcodeTimestamps(self):
+        if self._barcodeTimestamps is None:
+            self._barcodeTimestamps = dict()
+            self._barcodeTimestamps['labjack'] = self.load('barcodes/labjack/indices')
+            self._barcodeTimestamps['neuropixels'] = self.load('barcodes/neuropixels/indices')
+        return self._barcodeTimestamps
+
+    def computeTimestamps(
+        self,
+        eventIndices,
+        neuropixelsSamplingRate=30000,
+        useInterpolation=True,
+        returnSampleIndices=False
+        ):
+        """
+        """
+        
+        #
+        eventIndices = np.atleast_1d(eventIndices)
+        eventMask = np.invert(np.isnan(eventIndices))
+        eventTimestamps = np.full(eventIndices.size, np.nan)
+
+        barcodeValuesCommon, barcodeIndicesLabjack, barcodeIndicesNeuropixels = np.intersect1d(
+            self.barcodeValues['labjack'], self.barcodeValues['neuropixels'], return_indices=True
+        )
+
+        barcodeTimestampsLabjack = self.barcodeTimestamps['labjack'][barcodeIndicesLabjack]
+        barcodeTimestampsNeuropixels = self.barcodeTimestamps['neuropixels'][barcodeIndicesNeuropixels]
+        
+        #
+        if useInterpolation:
+            f = interp(
+                barcodeTimestampsLabjack,
+                barcodeTimestampsNeuropixels - self.referenceSampleNumber,
+                fill_value='extrapolate'
+            )
+            eventTimestamps[eventMask] = np.around(f(eventIndices), 0)
+
+        #
+        else:
+            m = (barcodeTimestampsNeuropixels[-1] - barcodeTimestampsNeuropixels[0]) / \
+                (barcodeTimestampsLabjack[-1] - barcodeTimestampsLabjack[0])
+            b = barcodeTimestampsNeuropixels[0] - barcodeTimestampsLabjack[0] * m
+            t = np.around(
+                (eventIndices[eventMask] * m + b) - self.referenceSampleNumber,
+                0
+            )
+            eventTimestamps[eventMask] = t
+
+        #
+        if returnSampleIndices:
+            return eventTimestamps
+        else:
+            return np.around(eventTimestamps / neuropixelsSamplingRate, 3)
     
-    def computeTimestamps(self, eventIndices):
+    # NOTE: This version of the method is deprecated
+    def computeTimestamps_(self, eventIndices):
         """
         Convert labjack indices to timestamps in the ephys recording
         """
@@ -720,10 +787,13 @@ class SessionBase():
 
         #
         if coincident:
-            f2 = np.logical_and(
-                eventLatencies >= coincidenceWindow[0],
-                eventLatencies <= coincidenceWindow[1]
-            )
+            try:
+                f2 = np.logical_and(
+                    eventLatencies >= coincidenceWindow[0],
+                    eventLatencies <= coincidenceWindow[1]
+                )
+            except:
+                import pdb; pdb.set_trace()
 
         #
         else:

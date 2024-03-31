@@ -3,10 +3,10 @@ import numpy as np
 from scipy.stats import sem
 from matplotlib import pyplot as plt
 from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g, findOverlappingUnits
-from myphdlib.figures.modulation import SimpleSaccadicModulationAnalysis
+from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
 from myphdlib.general.toolkit import psth2
 
-class SaccadicModulationTimingAnalysis(SimpleSaccadicModulationAnalysis):
+class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
     """
     """
 
@@ -20,7 +20,6 @@ class SaccadicModulationTimingAnalysis(SimpleSaccadicModulationAnalysis):
         super().__init__(**kwargs)
 
         self.latencies = None
-        self.templates = None
         self.peths = { # Standardized PSTHs
             'extrasaccadic': None,
             'perisaccadic': None
@@ -37,235 +36,68 @@ class SaccadicModulationTimingAnalysis(SimpleSaccadicModulationAnalysis):
 
         return
 
-    def loadNamespace(
-        self,
-        hdf,
-        ):
+    def loadNamespace(self, hdf):
         """
         """
-
-        #
-        super().loadNamespace(hdf)
         m = findOverlappingUnits(self.ukeys, hdf)
-
-        #
-        self.templates = {}
+        datasets = {
+            'boostrap/sign': 'msigns',
+            'boostrap/p': 'pvalues',
+        }
         with h5py.File(hdf, 'r') as stream:
-            for direction in ('nasal', 'temporal'):
-                path = f'rSaccade/dg/preferred/{direction}/fr'
+            for path, attribute in datasets.items():
                 if path in stream:
-                    ds = stream[path]
-                    self.templates[direction] = np.array(ds)[m, :]
-                    self.tSaccade = ds.attrs['t']
-
-            if 'gmm/latencies' in stream:
-                self.latencies_ = np.array(stream['gmm/latencies'])[m, :]
-            if 'rProbe/dg/preferred/raw/fr' in stream:
-                ds = stream['rProbe/dg/preferred/raw/fr']
-                self.t = ds.attrs['t']
-            if 'rProbe/dg/preferred/standardized/fr' in stream:
-                self.peths['extrasaccadic'] = np.array(stream['rProbe/dg/preferred/standardized/fr'])[m, :]
-            if 'gmm/modulation' in stream:
-                self.modulation_ = np.array(stream['gmm/modulation'])[m, :]
-
+                    ds = np.array(stream[path][m])
+                    self.__setattr__(attribute, ds)
+        super().loadNamespace(hdf)
         return
 
-    def saveNamespace(self, hdf):
-        """
-        """
-        return
-
-    def computePeths(
+    def _plotModulationByProbeLatency(
         self,
-        binsize=0.1,
-        trange=(-0.5, 0.5),
+        ax=None,
+        iComp=0,
+        fill=False,
+        minimumResponseAmplitude=2,
         ):
         """
         """
 
         #
-        leftEdges = np.arange(trange[0], trange[1], binsize)
-        rightEdges = leftEdges + binsize
-        self.windows = np.vstack([leftEdges, rightEdges]).T
-
-        #
-        nUnits = len(self.ukeys)
-        nBins = self.t.size
-        nWindows = self.windows.shape[0]
-        self.terms['rMixed'] = np.full([nUnits, nBins, nWindows], np.nan)
-        self.terms['rSaccade'] = np.full([nUnits, nBins, nWindows], np.nan)
-        self.terms['rProbe']['perisaccadic'] = np.full([nUnits, nBins, nWindows], np.nan)
-        self.peths['perisaccadic'] = np.full([nUnits, nBins, nWindows], np.nan)
-
-        #
-        for iUnit in range(nUnits):
-
-            #
-            end = '\r' if iUnit + 1 != nUnits else None
-            print(f'Computing PETHs for unit {iUnit + 1} out of {nUnits}', end=end)
-
-            #
-            for iWin, perisaccadicWindow in enumerate(self.windows):
-
-                #
-                rMixed, rSaccade = super().computeTerms(
-                    ukey=self.ukeys[iUnit],
-                    perisaccadicWindow=perisaccadicWindow,
-                )
-
-                # Standardize the PETHs
-                mu, sigma = self.ambc[iUnit, 2], self.ambc[iUnit, 3]
-                yResidual = rMixed - rSaccade
-                yStandard = (yResidual - mu) / sigma
-
-                #
-                self.terms['rMixed'][iUnit, :, iWin] = rMixed
-                self.terms['rSaccade'][iUnit, :, iWin] = rSaccade
-                self.peths['perisaccadic'][iUnit, :, iWin] = yStandard
-
-        return
-    
-    def fitPeths(
-        self,
-        ):
-        """
-        """
-
-        #
-        nUnits, nBins, nWindows = self.peths['perisaccadic'].shape
-        nComponents = int(np.max(self.k))
-        self.modulation = np.full([nUnits, nComponents, nWindows], np.nan)
-        self.latencies = np.full([nUnits, nComponents, nWindows], np.nan)
-
-        #
-        for iUnit in range(nUnits):
-
-            #
-            end = '\r' if iUnit + 1 != nUnits else None
-            print(f'Re-fitting peri-saccadic PETHs for unit {iUnit + 1} out of {nUnits}', end=end)
-
-            #
-            for iWin in range(nWindows):
-                peth = self.peths['perisaccadic'][iUnit, :, iWin]
-                dr, latencies, params = super().refitPeth(
-                    ukey=self.ukeys[iUnit],
-                    sortby='amplitude',
-                    peth=peth
-                )
-                self.modulation[iUnit, :, iWin] = dr
-                self.latencies[iUnit, :, iWin] = latencies
-
-        return
-
-    def plotExampleRasterplot(
-        self,
-        ukey=('2023-07-21', 'mlati10', 262),
-        responseWindow=(-0.5, 0.5),
-        perisaccadicWindow=(-0.8, 1.2),
-        figsize=(6, 6),
-        **kwargs_
-        ):
-
-        """
-        """
-
-        kwargs = {
-            'color': 'k',
-            'marker': '.',
-            'alpha': 0.5,
-            's': 5
-        }
-        kwargs.update(kwargs_)
-
-        iUnit = self.lookupUnitKey(ukey)
-        if iUnit is None:
-            raise Exception('Could not locate example unit')
-        self.ukey = self.ukeys[iUnit]
-        probeMotion = self.ambc[iUnit, 1]
-        trialIndices = np.where(np.vstack([
-            self.session.gratingMotionDuringProbes == probeMotion,
-            self.session.probeLatencies >= perisaccadicWindow[0],
-            self.session.probeLatencies <= perisaccadicWindow[1]
-        ]).all(0))[0]
-        latencySortedIndex = np.argsort(self.session.probeLatencies[trialIndices])
-        t, M, spikeTimestamps = psth2(
-            self.session.probeTimestamps[trialIndices],
-            self.unit.timestamps,
-            window=responseWindow,
-            binsize=None,
-            returnTimestamps=True
-        )
-        fig, axs = plt.subplots(ncols=2, sharey=True)
-        x = list()
-        y = list()
-        for i, trialIndex in enumerate(latencySortedIndex):
-            nSpikes = spikeTimestamps[trialIndex].size
-            for t in np.atleast_1d(spikeTimestamps[trialIndex]):
-                x.append(t)
-            for r in np.full(nSpikes, i):
-                y.append(r)
-        axs[0].scatter(x, y, rasterized=True, **kwargs)
-        axs[1].plot(self.session.probeLatencies[trialIndices][latencySortedIndex], np.arange(latencySortedIndex.size), color='k')
-        axs[0].set_xlabel('Time from probe onset (sec)')
-        axs[0].set_ylabel('Trial #')
-        axs[1].set_xlabel('Probe latency (sec)')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, axs
-
-    def plotModulationByProbeLatency(
-        self,
-        figsize=(3, 4),
-        **kwargs_
-        ):
-        """
-        """
-
-        kwargs = {
-            'color': '0.7',
-            'alpha': 0.5,
-            'marker': '.',
-            's': 5,
-        }
-        kwargs.update(kwargs_)
-
-        #
-        fig, ax = plt.subplots()
+        if ax is None:
+            fig, ax = plt.subplots()
 
         #
         nUnits, nBins, nWindows = self.peths['perisaccadic'].shape
 
-        #
-        y = list()
-        for iWin in range(nWindows):
-            leftEdge, rightEdge = self.windows[iWin]
-            windowCenter = rightEdge - ((rightEdge - leftEdge) / 2)
-            x = np.full(nUnits, windowCenter) + np.random.normal(loc=0, scale=0.01, size=nUnits)
-            ax.scatter(
-                x,
-                np.clip(self.modulation[:, 0, iWin], -5, 5),
-                **kwargs
-            )
-            y.append(np.nanmean(self.modulation[:, 0, iWin]))
-        binCenters = np.mean(self.windows, axis=1)
+        m = self.params[:, 0] > minimumResponseAmplitude
+        samples = np.full([m.sum(), nWindows - 1], np.nan)
+        for iWin in range(nWindows)[:-1]:
+            yNormed = self.modulation[m, iComp, iWin] / self.params[m, 0]
+            samples[:, iWin] = yNormed
+        binCenters = np.mean(self.windows[:-1], axis=1)
+        y = np.nanmean(samples, axis=0)
+        e = np.nanstd(samples, axis=0)
+        if fill:
+            ax.fill_between(binCenters, y - e, y + e, color='k', alpha=0.2)
+            ax.fill_between(binCenters, y + e, color='k', alpha=0.2)
+        else:
+            for ln in samples:
+                ax.plot(binCenters, np.clip(ln, -1, 1), color='0.5', alpha=0.3, lw=0.5)
         ax.plot(binCenters, y, color='k')
 
-        #
-        ax.set_xlabel('Time from saccade initiation (sec)')
-        ax.set_ylabel(r'Modulation ($\Delta R$)')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
+        return
 
-        return fig, ax
-
-    def plotModulationByPeakLatency(
+    def _plotModulationByPeakLatency(
         self,
+        ax=None,
+        a=0.05,
+        iWindow=5,
         responseWindow=(-0.2, 0.5),
-        binsize=0.05,
-        figsize=(3, 4),
+        runningWindowSize=0.02,
+        binsize=0.01,
+        minimumResponseAmplitude=2,
+        averagingWindow=(0.05, 0.2),
+        yrange=(-1, 1),
         **kwargs_
         ):
         """
@@ -273,57 +105,103 @@ class SaccadicModulationTimingAnalysis(SimpleSaccadicModulationAnalysis):
 
         # Keywords arguments for the scatter function
         kwargs = {
-            'color': '0.7',
+            'color': 'k',
             'marker': '.',
-            'alpha': 0.5,
+            'alpha': 0.7,
             's': 5,
         }
         kwargs.update(kwargs_)
 
         #
-        leftEdges = np.arange(responseWindow[0], responseWindow[1], binsize)
+        if ax is None:
+            fig, ax = plt.subplots()
+
+        #
+        leftEdges = np.arange(averagingWindow[0], averagingWindow[1], binsize)
         rightEdges = leftEdges + binsize
-        samples = [[] for i in range(leftEdges.shape[0])]
+        binCenters = np.vstack([leftEdges, rightEdges]).T.mean(1)
+        samples = [[] for iBin in range(binCenters.size)]
+        X, Y = list(), list()
 
         #
-        fig, ax = plt.subplots()
-        for l, m in zip(self.latencies_.flatten(), self.modulation_.flatten()):
-            mask = np.logical_and(
-                l > leftEdges,
-                l <= rightEdges
-            )
-            if mask.sum() != 1:
+        for iUnit in range(len(self.ukeys)):
+
+            #
+            if self.params[iUnit, 0] < minimumResponseAmplitude:
                 continue
-            iBin = np.where(mask)[0].item()
-            samples[iBin].append(m)
+            if np.isnan(self.modulation[iUnit, :, iWindow]).all():
+                continue
+            if np.nanmin(self.pvalues[iUnit, iWindow, :]) > a:
+                continue
+            
+            #
+            y = self.modulation[iUnit, :, iWindow] / self.params[iUnit, 0]
+            m = np.invert(np.isnan(y))
+            y = np.atleast_1d(y[m])
+            t = np.atleast_1d(self.latencies[iUnit, :y.size, iWindow])
+
+            #
+            for iComp, (dr, l) in enumerate(zip(y, t)):
+                X.append(l)
+                Y.append(dr)
+                indices = np.where(np.logical_and(
+                    l > leftEdges,
+                    l <= rightEdges
+                ))[0]
+                if len(indices) == 1:
+                    i = indices.item()
+                    samples[i].append(dr)
 
         #
-        binCenters = leftEdges + (binsize / 2)
+        X, Y = np.array(X), np.array(Y)
+        ax.scatter(X, np.clip(Y, -1, 1), color='0.5', alpha=0.5, s=10, marker='.')
+        m, b = np.polyfit(X, Y, 1)
+        x1, x2 = X.min(), X.max()
+        ln = np.array([x1, x2]) * m + b
+        ax.plot([x1, x2], ln, color='k')
+        # binned = np.array([np.nanmean(s) if len(s) != 0 else np.nan for s in samples])
+        # ax.plot(binCenters, binned, color='k')
+        ax.set_xlim(responseWindow)
+
+        return
+
         binMeans = list()
-        for i, sample in enumerate(samples):
-            if len(sample) == 0:
+        binCenters = list()
+        for leftEdge in np.arange(0, responseWindow[1], runningWindowSize):
+            rightEdge = leftEdge + runningWindowSize
+            binCenter = np.mean([leftEdge, rightEdge])
+            peakIndices = np.where(np.logical_and(
+                X > leftEdge,
+                X <= rightEdge
+            ))[0]
+            if len(peakIndices) < 1:
                 binMeans.append(np.nan)
-                continue
-            binMeans.append(np.mean(sample))
-            x = binCenters[i] + np.random.normal(loc=0, scale=0.007, size=len(sample))
-            ax.scatter(x, np.clip(sample, -5, 5), **kwargs)
+            else:
+                binMeans.append(np.mean(Y[peakIndices]))
+            binCenters.append(binCenter)
+
+        #
+        binCenters, binMeans = np.array(binCenters), np.array(binMeans)
         ax.plot(binCenters, binMeans, color='k')
 
-        #
-        ax.set_xlabel('Time from probe onset (sec)')
-        ax.set_ylabel(r'Modulation ($\Delta R$)')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, ax
+        return binCenters, binMeans
     
-    def plotModulationByIntegratedLatency(
+    def _plotModulationByIntegratedLatency(
         self,
+        ax=None,
+        perisaccadicWindow=(-0.5, 0.5),
+        interpolationWindow=(-0.35, 0.5),
+        binsize=0.1,
+        minimumResponseAmplitude=2,
+        a=0.05,
+        yrange=(-1, 1),
         **kwargs_
         ):
         """
         """
+
+        #
+        nt = int(round(np.diff(interpolationWindow).item(), 0) * 1000) + 1
 
         #
         kwargs = {
@@ -333,206 +211,115 @@ class SaccadicModulationTimingAnalysis(SimpleSaccadicModulationAnalysis):
             'alpha': 0.5,
         }
         kwargs.update(kwargs_)
+        if ax is None:
+            fig, ax = plt.subplots()
+
+        #
+        leftEdges = np.arange(perisaccadicWindow[0], perisaccadicWindow[1], binsize)
+        rightEdges = leftEdges + binsize
+        samples = [[] for i in range(leftEdges.shape[0])]
 
         #
         nUnits, nBins, nWindows = self.peths['perisaccadic'].shape
+        nComponents = int(np.nanmax(self.k.flatten()))
         binCenters = np.mean(self.windows, axis=1)
-        x = np.full(nUnits, np.nan)
-        y = np.full(nUnits, np.nan)
+        x = list()
+        y = list()
+        lines = list()
         for iUnit in range(nUnits):
-            l = self.latencies[iUnit][0]
-            for iWin in range(nWindows):
-                dr = self.modulation[iUnit, 0, iWin]
-                lAdjusted = l + binCenters[iWin]
-                x[iUnit] = lAdjusted
-                y[iUnit] = dr
-
-        #
-        fig, ax = plt.subplots()
-        ax.scatter(x, y, **kwargs)
-
-        return fig, ax
-    
-class IntegratedSaccadicModulationTimingAnalysis(SimpleSaccadicModulationAnalysis):
-    """
-    """
-
-    def __init__(self):
-        """
-        """
-
-        super().__init__()
-
-        return
-
-    def loadNamespace(
-        self,
-        hdf,
-        ):
-        """
-        """
-
-        #
-        super().loadNamespace(hdf)
-        m = findOverlappingUnits(self.ukeys, hdf)
-
-        #
-        self.templates = {}
-        with h5py.File(hdf, 'r') as stream:
-            for direction in ('nasal', 'temporal'):
-                path = f'rSaccade/dg/preferred/{direction}/fr'
-                if path in stream:
-                    ds = stream[path]
-                    self.templates[direction] = np.array(ds)[m, :]
-                    self.tSaccade = ds.attrs['t']
-
-            if 'gmm/latencies' in stream:
-                self.latencies_ = np.array(stream['gmm/latencies'])[m, :]
-            if 'rProbe/dg/preferred/raw/fr' in stream:
-                ds = stream['rProbe/dg/preferred/raw/fr']
-                self.t = ds.attrs['t']
-            if 'rProbe/dg/preferred/standardized/fr' in stream:
-                self.peths['extrasaccadic'] = np.array(stream['rProbe/dg/preferred/standardized/fr'])[m, :]
-            if 'gmm/modulation' in stream:
-                self.modulation_ = np.array(stream['gmm/modulation'])[m, :]
-
-        return
-    
-    def saveNamespace(self, hdf):
-        return
-    
-    def computePeths(
-        self,
-        binsize=0.1,
-        trange=(-0.5, 0.5),
-        ):
-        """
-        """
-
-        #
-        leftEdges = np.arange(trange[0], trange[1], binsize)
-        rightEdges = leftEdges + binsize
-        self.tWindowCenters = leftEdges + (binsize / 2)
-        nUnits = len(self.ukeys)
-        nWindows = len(leftEdges)
-        nBins = self.peths['extrasaccadic'].shape[1]
-        nComponents = int(self.k.max())
-        self.windows = np.full([nUnits, nComponents, nWindows, 2], np.nan)
-
-        #
-        self.terms['rMixed'] = np.full([nUnits, nBins, nWindows, nComponents], np.nan)
-        self.terms['rSaccade'] = np.full([nUnits, nBins, nWindows, nComponents], np.nan)
-        self.terms['rProbe']['perisaccadic'] = np.full([nUnits, nBins, nWindows, nComponents], np.nan)
-        self.peths['perisaccadic'] = np.full([nUnits, nBins, nWindows, nComponents], np.nan)
-
-        #
-        for iUnit in range(nUnits):
-
-            #
-            end = '\r' if iUnit + 1 != nUnits else None
-            print(f'computing PETHs for unit {iUnit + 1} out of {nUnits}', end=end)
-
-            #
-            self.ukey = self.ukeys[iUnit]
-            mu, sigma = self.ambc[iUnit, 2], self.ambc[iUnit, 3]
-
+            date, animal, cluster = self.ukeys[iUnit]
+            if self.params[iUnit, 0] < minimumResponseAmplitude:
+                continue
             for iComp in range(nComponents):
+                if date == '2023-05-12' and animal == 'mlati7' and cluster == 224 and False:
+                    color = 'r'
+                    alpha = 1
+                    lw = 1
+                    zorder = 3
+                else:
+                    color = '0.5'
+                    alpha = 0.2
+                    lw = 0.5
+                    zorder = -1
+                ln = list()
+                ps = list()
+                t = list()
+                for iWin in range(nWindows - 1):
+                    ps.append(self.pvalues[iUnit, iWin, iComp])
+                    l = self.latencies[iUnit, iComp, iWin] + binCenters[iWin]
+                    t.append(l)
+                    dr = self.modulation[iUnit, iComp, iWin]
+                    dr /= self.params[iUnit, 0]
+                    ln.append(dr)
+                if np.sum(np.array(ps) < a) < 1:
+                    continue
+                ax.plot(t, np.clip(ln, *yrange), color=color, alpha=alpha, lw=lw, zorder=zorder)
+                interpolated = np.interp(
+                    np.linspace(*interpolationWindow, nt),
+                    t,
+                    ln,
+                    left=np.nan,
+                    right=np.nan
+                )
+                lines.append(interpolated)
+                for dr, ti in zip(ln, t):
+                    binIndices = np.where(np.logical_and(
+                        ti > leftEdges,
+                        ti <= rightEdges
+                    ))[0]
+                    if len(binIndices) == 1:
+                        binIndex = binIndices.item()
+                        samples[binIndex].append(dr)
 
-                #
-                peakLatency = self.latencies_[iUnit, iComp]
-                
-                for iWin in range(nWindows):                
-
-                    # Shift the time bins by the 
-                    leftEdge = leftEdges[iWin] + peakLatency
-                    rightEdge = rightEdges[iWin] + peakLatency
-                    perisaccadicWindow = (leftEdge, rightEdge)
-                    self.windows[iUnit, iComp, iWin] = np.array(perisaccadicWindow)
-
-                    #
-                    rMixed, rSaccade = super().computeTerms(
-                        self.ukey,
-                        perisaccadicWindow=perisaccadicWindow,
-                    )
-                    if np.isnan(rMixed).all():
-                        continue
-
-                    # Standardize the PETHs
-                    yResidual = rMixed - rSaccade
-                    yStandard = (yResidual - mu) / sigma
-
-                    #
-                    self.terms['rMixed'][iUnit, :, iWin, iComp] = rMixed
-                    self.terms['rSaccade'][iUnit, :, iWin, iComp] = rSaccade
-                    self.peths['perisaccadic'][iUnit, :, iWin, iComp] = yStandard
+        #
+        binCenters = leftEdges + (binsize / 2)
+        binMeans = list()
+        for i, sample in enumerate(samples):
+            if len(sample) == 0:
+                binMeans.append(np.nan)
+                continue
+            binMeans.append(np.mean(sample))
+        # ax.plot(binCenters, binMeans, color='k')
+        ax.plot(
+            np.linspace(*interpolationWindow, nt),
+            np.nanmean(lines, axis=0),
+            color='k'
+        )
 
         return
 
-    def fitPeths(
+    def plotModulationByLatency(
         self,
+        figsize=(7, 3),
+        referenceWindow=5,
         ):
         """
         """
 
-        nUnits = len(self.ukeys)
-        nWindows = self.windows.shape[2]
-        nComponents = int(self.k.max())
-        self.modulation = np.full([nUnits, nWindows, nComponents], np.nan)
-        
-        #
-        for iUnit in range(nUnits):
-
-            #
-            end = '\r' if iUnit + 1 != nUnits else None
-            print(f'computing PETHs for unit {iUnit + 1} out of {nUnits}', end=end)
-
-            #
-            self.ukey = self.ukeys[iUnit]
-
-            for iComp in range(nComponents):
-                
-                for iWin in range(nWindows): 
-
-                    peth = self.peths['perisaccadic'][iUnit, :, iWin, iComp]
-                    if np.isnan(peth).all():
-                        continue
-                    dr, latencies, params = super().refitPeth(
-                        ukey=self.ukey,
-                        sortby='amplitude',
-                        peth=peth
-                    )
-                    self.modulation[iUnit, iWin, iComp] = dr[iComp]          
-
-        return
-
-    def plotModulationByResponseLatency(
-        self,
-        ymin=-5,
-        ymax=5,
-        figsize=(3, 4),
-        ):
-        """
-        """
-
-        fig, ax = plt.subplots()
-        nUnits, nWindows, nComponents = self.modulation.shape
-
-        curves = list()
-        for iUnit in range(nUnits):
-            for iComp in range(nComponents):
-                curves.append(self.modulation[iUnit, :, iComp])
-        curves = np.array(curves)
-        ax.plot(self.tWindowCenters, np.nanmean(curves, axis=0), color='k')
-        for i in range(curves.shape[1]):
-            x = self.tWindowCenters[i] + np.random.normal(loc=0, scale=0.01, size=curves.shape[0])
-            y = np.clip(curves[:, i], ymin, ymax)
-            ax.scatter(x, y, color='0.7', alpha=0.5, marker='.', s=5, rasterized=True)
-
-        #
-        ax.set_xlabel('Time from saccade onset (sec)')
-        ax.set_ylabel(r'Modulation ($\Delta R$)')
+        fig, axs = plt.subplots(ncols=3)
+        self._plotModulationByProbeLatency(ax=axs[0])
+        self._plotModulationByPeakLatency(ax=axs[1], iWindow=referenceWindow)
+        self._plotModulationByIntegratedLatency(ax=axs[2], binsize=0.05)
+        for ax in axs:
+            ax.set_ylim([-1.1, 1.1])
+        for ax in axs:
+            ylim = ax.get_ylim()
+            ax.vlines(0, *ylim, color='k', alpha=0.5)
+            ax.set_ylim(*ylim)
+            xlim = ax.get_xlim()
+            ax.hlines(0, *xlim, color='k', alpha=0.5)
+            ax.set_xlim(xlim)
+        for ax in axs:    
+            for sp in ('top', 'right'):
+                ax.spines[sp].set_visible(False)
+        axs[1].set_xticks([-0.2, 0, 0.5])
+        axs[0].set_xticks([-0.5, 0, 0.5])
+        axs[0].set_xlabel('Time from saccade (s)')
+        axs[1].set_xlabel('Time from probe (s)')
+        axs[2].set_xlabel('Time from saccade (s)')
+        axs[0].set_ylabel(r'Modulation ($\Delta R$)')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, ax
+        return fig, axs

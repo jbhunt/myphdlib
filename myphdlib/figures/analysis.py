@@ -139,21 +139,33 @@ class AnalysisBase():
     def ukeys(self):
         return self._ukeys
 
-    def loadUnitKeys(
+    def filterUnits(
         self,
         experiments=('Mlati',),
-        minimumBaselineLevel=1,
-        minimumResponseAmplitude=10,
-        minimumPeakLatency=0.05,
         responseWindow=(0, 0.5),
         baselineWindow=(-0.2, 0),
+        **kwargs_
         ):
         """
         """
 
+        kwargs = {
+            'minimumBaselineLevel': 0.5,
+            'minimumResponseAmplitude': 3,
+            'minimumPeakLatency': 0.01,
+            'maximumAmplitudeCutoff': 0.1,
+            'minimumPresenceRatio': 0.9,
+            'maximumIsiViolations': 0.5,
+            'maximumProbabilityValue': 0.01,
+        }
+        kwargs.update(kwargs_)
+
+        #
         self._ukeys = list()
         self._sessions = self._factory.produce(experiment=experiments)
         n = len(self._sessions)
+
+        #
         for i, session in enumerate(self._sessions):
 
             end = '\r' if i + 1 != n else None
@@ -170,8 +182,16 @@ class AnalysisBase():
             }
             peth, metadata = session.load('peths/rProbe/dg/left/fr', returnMetadata=True)
             clusterNumbers = session.load('population/clusters')
-            t = metadata['t']
+            if 't' in metadata.keys():
+                t = metadata['t']
+            else:
+                continue
 
+
+            #
+            amplitudeCutoff = session.load('population/metrics/ac')
+            presenceRatio = session.load('population/metrics/pr')
+            isiViolations = session.load('population/metrics/rpvr')
 
             # Define the baseline and response windows
             binIndicesForBaselineWindow = np.where(np.logical_and(
@@ -186,6 +206,14 @@ class AnalysisBase():
             #
             nUnits = peths[('rProbe', 'left')].shape[0]
 
+            #
+            pvalues = np.full(nUnits, np.nan)
+            for direction in ('left', 'right'):
+                pvalues_ = session.load(f'population/zeta/probe/{direction}/p')
+                for iUnit in range(nUnits):
+                    if pvalues[iUnit] < pvalues_[iUnit]:
+                        pvalues[iUnit] = pvalues_[iUnit]
+
             # Iterate over units
             for iUnit in range(nUnits):
 
@@ -194,7 +222,7 @@ class AnalysisBase():
                     peths[('rProbe', 'left')][iUnit, binIndicesForBaselineWindow].mean(),
                     peths[('rProbe', 'right')][iUnit, binIndicesForBaselineWindow].mean(),
                 ])
-                if lowestBaselineLevel < minimumBaselineLevel:
+                if kwargs['minimumBaselineLevel'] is not None and lowestBaselineLevel < kwargs['minimumBaselineLevel']:
                     continue
 
                 #
@@ -204,14 +232,29 @@ class AnalysisBase():
                     np.max(np.abs(peths[('rProbe', 'right')][iUnit, binIndicesForResponseWindow] - \
                         peths[('rProbe', 'right')][iUnit, binIndicesForBaselineWindow].mean())),
                 ])
-                if greatestPeakAmplitude < minimumResponseAmplitude:
+                if kwargs['minimumResponseAmplitude'] is not None and greatestPeakAmplitude < kwargs['minimumResponseAmplitude']:
                     continue
 
                 shortestPeakLatency = np.min([
                     t[np.argmax(np.abs(peths[('rProbe', 'left')][iUnit]))],
                     t[np.argmax(np.abs(peths[('rProbe', 'right')][iUnit]))],
                 ])
-                if shortestPeakLatency < minimumPeakLatency:
+                if kwargs['minimumPeakLatency'] is not None and shortestPeakLatency < kwargs['minimumPeakLatency']:
+                    continue
+
+                #
+                if kwargs['minimumPresenceRatio'] is not None and  presenceRatio[iUnit] < kwargs['minimumPresenceRatio']:
+                    continue
+
+                #
+                if kwargs['maximumAmplitudeCutoff'] is not None and amplitudeCutoff[iUnit] > kwargs['maximumAmplitudeCutoff']:
+                    continue
+
+                if kwargs['maximumIsiViolations'] is not None and isiViolations[iUnit] > kwargs['maximumIsiViolations']:
+                    continue
+
+                #
+                if kwargs['maximumProbabilityValue'] is not None and pvalues[iUnit] > kwargs['maximumProbabilityValue']:
                     continue
                 
                 #
@@ -236,6 +279,66 @@ class AnalysisBase():
                 break
 
         return unitIndex
+
+    def _saveLargeDataset(
+        self,
+        hdf,
+        path,
+        dataset,
+        nUnitsPerChunk=100
+        ):
+        """
+        """
+
+        m = findOverlappingUnits(self.ukeys, hdf)
+        shape = dataset.shape[1:]
+
+        with h5py.File(hdf, 'a') as stream:
+
+            # Re-sample PETHs
+            if path in stream:
+                del stream[path]
+            ds = stream.create_dataset(
+                path,
+                shape=[m.size, *shape],
+                dtype=np.float64,
+            )
+            for start in np.arange(0, m.size, nUnitsPerChunk):
+                stop = start + nUnitsPerChunk
+                if stop >= m.size:
+                    stop = m.size
+                    data = np.full([m.size - start, *shape], np.nan)
+                else:
+                    data = np.full([nUnitsPerChunk, *shape], np.nan)
+                # iUnit1 - Unit index for filtered units
+                # iUnit2 - Unit index for unfiltered units
+                # iUnit3 - Unit index for target unit within data chunk
+                for iUnit1, iUnit2 in enumerate(np.where(m)[0]):
+                    indices = np.where(np.arange(start, stop) == iUnit2)[0]
+                    if len(indices) == 1:
+                        iUnit3 = indices.item()
+                    else:
+                        continue
+                    data[iUnit3] = dataset[iUnit1]
+                ds[start: stop, :, :] = data
+
+        return
+
+    @property
+    def iUnit(self):
+        """
+        """
+
+        iUnit = None
+        for i, (date, animal, cluster) in enumerate(self.ukeys):
+            if date == self.ukey[0] and animal == self.ukey[1] and cluster == self.ukey[2]:
+                iUnit = i
+                break
+
+        if iUnit is None:
+            raise Exception('Could not determine unit index')
+
+        return iUnit
 
 def findOverlappingUnits(ukeys1, hdf):
     """

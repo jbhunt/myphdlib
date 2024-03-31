@@ -205,6 +205,8 @@ class SingleUnit():
         sigma=0.005,
         buffer=0.5,
         t=None,
+        sample=None,
+        nTrials=None
         ):
         """
         Estimate FR using kernel density estimation
@@ -214,18 +216,20 @@ class SingleUnit():
             responseWindow[0] - buffer,
             responseWindow[1] + buffer
         )
-        t_, M, sample_ = psth2(
-            eventTimestamps,
-            self.timestamps,
-            window=responseWindowBuffered,
-            binsize=None,
-            returnTimestamps=True
-        )
-        sample = list()
-        for tr in sample_:
-            for ts in tr:
-                sample.append(ts)
-        sample = np.array(sample)
+        if sample is None:
+            t_, M, sample_ = psth2(
+                eventTimestamps,
+                self.timestamps,
+                window=responseWindowBuffered,
+                binsize=None,
+                returnTimestamps=True
+            )
+            sample = list()
+            for tr in sample_:
+                for ts in tr:
+                    sample.append(ts)
+            sample = np.array(sample)
+            nTrials = M.shape[0]
 
         #
         if sample.size < 3:
@@ -240,7 +244,7 @@ class SingleUnit():
             t = np.around(leftEdges + (binsize / 2), 3)
 
         y = f(t)
-        fr = y * (sample.size * binsize) / M.shape[0] / binsize
+        fr = y * (sample.size * binsize) / nTrials / binsize
 
         return t, fr
 

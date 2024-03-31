@@ -645,9 +645,6 @@ class StimuliProcessingMixinMlati(StimuliProcessingMixin):
                 else:
                     gratingMotionDuringProbes.append(motionDirection)
                     gratingMotionDuringSaccades.append(motionDirection)
-        
-        #
-
 
         #
         gratingMotionDuringProbes = np.array(gratingMotionDuringProbes).astype(int)

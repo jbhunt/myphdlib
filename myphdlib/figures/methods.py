@@ -4,6 +4,12 @@ from matplotlib.gridspec import GridSpec
 from myphdlib.general.toolkit import smooth
 from sklearn.decomposition import PCA
 from scipy.ndimage import gaussian_filter as gaussianFilter
+from scipy.ndimage import zoom
+from scipy.interpolate import interp2d
+import cv2 as cv
+import pickle
+from skimage.measure import find_contours
+from scipy.signal import find_peaks
 from myphdlib.figures.analysis import AnalysisBase
 
 class DataAcqusitionSummaryFigure():
@@ -216,7 +222,7 @@ class PopulationHeatmapBeforeAndAfterFilteringFigure():
 
         return fig, (ax1, ax2)
 
-class SaccadeByPerisaccadicTrialFrequencyAnalysis(AnalysisBase):
+class PerisaccadicTrialFrequencyAnalysis(AnalysisBase):
     """
     """
 
@@ -228,6 +234,10 @@ class SaccadeByPerisaccadicTrialFrequencyAnalysis(AnalysisBase):
         self.saccadeFrequency = {
             'left': None,
             'right': None,
+        }
+        self.trialFrequency = {
+            'f': None,
+            'n': None
         }
 
         return
@@ -245,6 +255,8 @@ class SaccadeByPerisaccadicTrialFrequencyAnalysis(AnalysisBase):
         for gm, k in zip([-1, 1], ['left', 'right']):
             for session in self.sessions:
                 if session.probeTimestamps is None:
+                    saccadeFrequency['left'].append(np.nan)
+                    saccadeFrequency['right'].append(np.nan)
                     continue
                 motionOnsetTimestamps = session.load('stimuli/dg/motion/timestamps')
                 motionOffsetTimestamps = session.load('stimuli/dg/iti/timestamps')
@@ -292,6 +304,8 @@ class SaccadeByPerisaccadicTrialFrequencyAnalysis(AnalysisBase):
         }
         for session in self.sessions:
             if session.probeTimestamps is None:
+                self.trialFrequency['f'].append(np.nan)
+                self.trialFrequency['n'].append(np.nan)
                 continue
             n = np.sum(np.logical_and(
                 session.probeLatencies >= perisaccadicWindow[0],
@@ -318,16 +332,19 @@ class SaccadeByPerisaccadicTrialFrequencyAnalysis(AnalysisBase):
 
     def plotSaccadeFrequencyByTrialFrequency(
         self,
+        figsize=(3, 3),
         **kwargs_
         ):
         """
         """
 
         kwargs = {
-            'color': 'k',
+            'ec': 'none',
+            'fc': 'k',
             'marker': 'o',
-            'alpha': 0.7,
-            's': 5
+            'alpha': 1,
+            's': 15,
+            'lw': 1
         }
         kwargs.update(kwargs_)
 
@@ -339,6 +356,15 @@ class SaccadeByPerisaccadicTrialFrequencyAnalysis(AnalysisBase):
             ])
             y = self.trialFrequency['n'][i]
             ax.scatter(x, y, **kwargs)
+
+        #
+        ax.set_xlim([0, ax.get_xlim()[1]])
+        ax.set_ylim([0, ax.get_ylim()[1]])
+        ax.set_xlabel('Saccade frequency (Hz)')
+        ax.set_ylabel('# of peri-saccadic trials')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
 
         return fig, ax
 
@@ -444,36 +470,44 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
 
     def __init__(
         self,
-        date='2023-05-15'
+        date='2023-07-05'
         ):
         """
         """
         super().__init__()
+        self.x = None
+        self.y = None
         self.date = date
+        self.contours = None
+        self.heatmaps = None
         return
 
-    def plotReceptiveFields(
+    def extractContours(
         self,
         threshold=2,
-        figsize=(4, 3),
         phase='on',
         smoothingKernelWidth=0.5,
+        interpolationFactor=5,
+        minimumContourArea=200,
         ):
         """
         """
+
+        #
+        self.contours = list()
+        self.heatmaps = list()
 
         # Set the session by date
         for ukey in self.ukeys:
             if ukey[0] == self.date:
                 self.ukey = ukey
                 break
-        
-        #
-        fig, ax = plt.subplots()
 
         #
         heatmaps = self.session.load(f'population/rf/{phase}')
-        iUnit = 0
+        if heatmaps is None:
+            return
+        heatmapsFiltered = list()
         for ukey in self.ukeys:
             if ukey[0] != self.date:
                 continue
@@ -483,12 +517,256 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
                 hm = gaussianFilter(hm, smoothingKernelWidth)
             if hm.max() < threshold:
                 continue
-            lines = ax.contour(hm, np.array([threshold]), colors=['k'])
-            iUnit += 1
+            heatmapsFiltered.append(hm)
+
+        # Interpolate
+        heatmapsInterpolated = list()
+        for hm in heatmapsFiltered:
+            z = zoom(hm, interpolationFactor, grid_mode=False)
+            heatmapsInterpolated.append(z)
+
+        #
+        nRows, nCols = heatmaps[0].shape
+        self.xp = {
+            'x': np.linspace(
+                0.5,
+                nCols * interpolationFactor + 0.5,
+                nCols
+            ),
+            'y': np.linspace(
+                0.5,
+                nRows * interpolationFactor + 0.5,
+                nRows
+            ),
+        }
+
+        # Detect contours
+        self.contours = list()
+        for hm in heatmapsInterpolated:
+
+            #
+            grayscale = cv.threshold(hm, threshold, 255, cv.THRESH_BINARY)[-1].astype(np.uint8)
+            contours, hierarchy = cv.findContours(
+                grayscale,
+                mode=cv.RETR_TREE,
+                method=cv.CHAIN_APPROX_NONE
+            )
+            if len(contours) == 0:
+                continue
+            areas = np.array([cv.contourArea(contour) for contour in contours])
+            index = np.argmax(areas)
+            contour = contours[index]
+            if areas[index] < minimumContourArea:
+                continue
+            self.contours.append(contour)
+
+        #
+        self.heatmaps = np.array(heatmapsInterpolated)
+
+        return
+
+    def extractGrid(
+        self,
+        ):
+        """
+        """
+
+        folder = self.session.home.joinpath('stimuli', 'metadata')
+        metadata = None
+        for file in folder.iterdir():
+            if 'sparseNoise' in file.name:
+                with open(str(file), 'rb') as stream:
+                    metadata = pickle.load(stream)
+                break
+                
+        #
+        if metadata is None:
+            raise Exception('Could not locate sparse noise metadata file')
+
+        #
+        fieldCenters = np.unique(metadata['coords'], axis=0)
+        self.fp = {
+            'x': np.unique(fieldCenters[:, 0]),
+            'y': np.unique(fieldCenters[:, 1])
+        }
+
+        return
+
+    def plotReceptiveFields(
+        self,
+        figsize=(4, 3),
+        cmap='gist_rainbow',
+        fillContours=False
+        ):
+        """
+        """
+        
+        #
+        fig, ax = plt.subplots()
+        nFields = len(self.contours)
+        if nFields == 0:
+            return fig, ax
+        cm = plt.get_cmap(cmap, nFields)
+        colors = [cm(i) for i in range(nFields)]
+
+        #
+        for i, contour in enumerate(self.contours):
+            vertices = contour.reshape(-1, 2)
+            xy = list()
+            for iCol, letter in zip(range(2), ('x', 'y')):
+                x1 = np.concatenate([
+                    np.array([vertices[-1, iCol]]),
+                    vertices[:, iCol],
+                    np.array([vertices[0, iCol]])
+                ]).astype(float)
+                x2 = np.concatenate([x1[1:-1], np.array([x1[1]])])
+                x3 = gaussianFilter(x2, 0.7)
+                x4 = np.interp(
+                    np.concatenate([x3, np.array([x3[0]])]),
+                    self.xp[letter],
+                    self.fp[letter]
+                )
+                xy.append(x4)
+            xy = np.array(xy).T
+            ax.plot(xy[:, 0], xy[:, 1], color=colors[i], alpha=0.3, lw=2.5)
+            if fillContours:
+                ax.fill(xy[:, 0], xy[:, 1], color=colors[i], alpha=0.05)
+
+        #
+        ax.vlines(0, -10, 10, color='k')
+        ax.hlines(0, -10, 10, color='k')
+        for sp in ('top', 'bottom', 'left', 'right'):
+            ax.spines[sp].set_visible(False)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        ax.set_aspect('equal')
+        fig.tight_layout()
+
+        return fig, ax
+
+class SaccadeDetectionDemonstrationFigure(AnalysisBase):
+    """
+    """
+
+    def __init__(self, date='2023-07-05'):
+        """
+        """
+
+        super().__init__()
+        self.date = date
+        self.y = None
+        self.t = None
+        self.wfs = None
+        self.threshold = None
+        self.peakIndices = None
+
+        return
+
+    def extractSaccadeWaveforms(
+        self,
+        height=0.5,
+        distance=5,
+        n=40,
+        ):
+        """
+        """
+
+        #
+        self.peakIndices, peakProperties = find_peaks(np.diff(self.y), height=height, distance=distance)
+        self.wfs = list()
+        for peakIndex in self.peakIndices:
+            wf = self.y[peakIndex - n: peakIndex + n + 1]
+            self.wfs.append(wf)
+        self.wfs = np.array(self.wfs)
+        self.threshold = height
+
+        return
+
+    def extractEyePosition(
+        self,
+        blockIndex=32,
+        buffer=3,
+        window=None,
+        ):
+        """
+        """
+
+        # Set the session by date
+        for ukey in self.ukeys:
+            if ukey[0] == self.date:
+                self.ukey = ukey
+                break
+
+        #
+        gratingTimestamps = self.session.load('stimuli/dg/grating/timestamps')
+        motionTimestamps = self.session.load('stimuli/dg/motion/timestamps')
+        itiTimestamps = self.session.load('stimuli/dg/iti/timestamps')
+        eyePosition = self.session.load('pose/filtered')
+        t1 = motionTimestamps[blockIndex] - buffer
+        if window is None:
+            t2 = itiTimestamps[blockIndex] + buffer
+        else:
+            t2 = gratingTimestamps[blockIndex] + window
+
+        #
+        frameTimestamps = self.session.load(f'frames/{self.session.eye}/timestamps')
+        frameIndices = np.where(
+            np.logical_and(
+                frameTimestamps >= t1,
+                frameTimestamps <= t2
+            )
+        )[0]
+        self.y = smooth(eyePosition[frameIndices, 0], 15)
+        self.t = frameTimestamps[frameIndices]
+        self.t -= motionTimestamps[blockIndex] # Zero the timestamps
+
+        return
+
+    def plot(
+        self,
+        figsize=(3, 4),
+        ):
+        """
+        """
+
+        #
+        fig, axs = plt.subplots(nrows=3)
+        axs[0].plot(self.t, self.y, color='k')
+        dt = self.t[1] - self.t[0]
+        axs[1].plot(self.t[:-1] + (0.5 * dt), np.diff(self.y), color='k')
+        xlim = axs[0].get_xlim()
+        tlim = self.t.min(), self.t.max()
+        axs[1].scatter(self.t[self.peaksIndices], np.diff(self.y)[self.peakIndices], marker='x', color='r')
+        axs[1].hlines(self.threshold, *tlim, color='r')
+        axs[1].set_xlim(xlim)
+
+        #
+        dt = self.t[1] - self.t[0]
+        hw = int((self.wfs.shape[1] - 1) / 2)
+        t = (np.arange(self.wfs.shape[1]) - hw) * dt
+        bl = self.wfs[:, :25].mean()
+        for wf in self.wfs:
+            axs[2].plot(t, wf - bl, color='0.8')
+        axs[2].plot(t, self.wfs.mean(0) - bl, color='k')
+
+        #
+        axs[0].set_xticks([])
+        for ax in axs:
+            for sp in ('top', 'right'):
+                ax.spines[sp].set_visible(False)
+        axs[0].set_ylabel('Position (pix)')
+        axs[1].set_ylabel('Velocity (pix/s)')
+        axs[1].set_xlabel('Time from motion onset (sec)')
+        axs[2].set_ylabel('Position (pix)')
+        axs[2].set_xlabel('Time from peak velocity (sec)')
 
         #
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, ax
+        return fig, axs
