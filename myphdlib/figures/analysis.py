@@ -87,6 +87,7 @@ class AnalysisBase():
     def __init__(
         self, 
         ukey=None,
+        hdf=None,
         tag='JH-DATA-',
         mount=False
         ):
@@ -104,6 +105,8 @@ class AnalysisBase():
         self._unit = None
         if ukey is not None:
             self.ukey = ukey
+        if hdf is not None:
+            self._hdf = hdf
         return
     
     @property
@@ -138,6 +141,10 @@ class AnalysisBase():
     @property
     def ukeys(self):
         return self._ukeys
+    
+    @property
+    def hdf(self):
+        return self._hdf
 
     def filterUnits(
         self,
