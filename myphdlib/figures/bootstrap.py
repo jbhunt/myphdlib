@@ -551,12 +551,14 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
     
     def plotSurvivalByAmplitudeThreshold(
         self,
-        arange=np.arange(0, 3.1, 0.1)
+        arange=np.arange(0, 3.1, 0.1),
+        windowIndex=5,
+        figsize=(3, 6)
         ):
         """
         """
 
-        fig, axs = plt.subplots(nrows=3, sharex=True)
+        fig, axs = plt.subplots(nrows=3, sharex=True, sharey=True)
         nUnitsTotal = list()
         nUnitsSuppressed = list()
         nUnitsEnhanced = list()
@@ -565,7 +567,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         for a in arange:
             nUnitsTotal.append(np.sum(self.params[:, 0] > a))
             m = np.logical_and(
-                self.pvalues < 0.05,
+                self.pvalues[:, windowIndex, 0] < 0.05,
                 self.params[:, 0] >= a
             )
             nUnitsSuppressed.append(np.sum(
@@ -576,8 +578,21 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             ))
 
         #
-        axs[0].plot(arange, nUnitsTotal)
-        axs[1].plot(arange, nUnitsSuppressed)
-        axs[1].plot(arange, nUnitsEnhanced)
+        axs[0].plot(arange, nUnitsTotal, color='k')
+        axs[1].plot(arange, nUnitsSuppressed, color='k')
+        axs[2].plot(arange, nUnitsEnhanced, color='k')
+        titles = (
+            '# of total units',
+            '# of suppressed units',
+            '# of enhanced units'
+        )
+        for i, ax in enumerate(axs):
+            ax.set_title(titles[i], fontsize=10)
+            ax.set_ylabel('# of units')
+        axs[-1].set_xlabel('Amplitude threshold')
+
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
 
         return fig, axs

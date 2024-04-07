@@ -617,6 +617,19 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         #
         ax.scatter(x, y, rasterized=True, **kwargs)
 
+        #
+        x, y = list(), list()
+        for i, t in enumerate(self.session.probeLatencies[trialIndices][latencySortedIndex]):
+            x.append(-1 * t)
+            y.append(i)
+        kwargs['color'] = 'tab:green'
+        ax.scatter(
+            x,
+            y,
+            rasterized=True,
+            **kwargs
+        )
+
         return
 
     def _plotResponseTerms(
@@ -624,6 +637,10 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         ukey=None,
         axs=None,
         iWindow=0,
+        colors=(
+            'k',
+            'k'
+        ),
         ):
         """
         """
@@ -664,18 +681,17 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             fig, axs = plt.subplots(ncols=4, sharey=True)
         axs[0].plot(self.t, (rMixed - mu) / sigma, color='k')
         axs[1].plot(self.t, (rSaccade) / sigma, color='k')
-        axs[2].plot(self.t, rProbePeri, color='0.5')
-        axs[2].plot(self.t, rProbePeriFit, color='k')
-        axs[3].plot(self.t, rProbeExtra, color='0.5')
-        axs[3].plot(self.t, rProbeExtraFit, color='k')
+        # axs[2].plot(self.t, rProbeExtra, color=colors[0], alpha=0.7, linestyle=':')
+        axs[2].plot(self.t, rProbePeri, color=colors[1])
 
         return
 
     def plotAnalysisDemo(
         self,
-        ukey=('2023-07-11', 'mlati10', 291),
+        ukey=('2023-05-12', 'mlati7', 163),
         responseWindow=(-0.5, 0.5),
-        figsize=(6.5, 7),
+        windowIndices=(1, 2, 3, 4, 5, 6, 7, 8),
+        figsize=(5, 5),
         useTrueRatios=False,
         **kwargs_
         ):
@@ -689,6 +705,12 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         }
         kwargs.update(kwargs_)
 
+        #
+        if windowIndices is None:
+            windowIndices = np.arange(10)
+        elif type(windowIndices) in (list, tuple):
+            windowIndices = np.array(windowIndices)
+
         # Set the unit key
         self.ukey = ukey
         if self.iUnit is None:
@@ -697,7 +719,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         # Figure out how many trials are in each peri-saccadic time window
         if useTrueRatios:
             heightRatios = list()
-            for t1, t2 in self.windows[:-1, :]:
+            for t1, t2 in self.windows[windowIndices, :]:
                 trialIndices = np.where(self.session.parseEvents(
                     eventName='probe',
                     coincident=True,
@@ -707,18 +729,18 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                 heightRatios.append(trialIndices.size)
             heightRatios = np.array(heightRatios)
         else:
-            heightRatios = np.ones(len(self.windows) - 1)
+            heightRatios = np.ones(windowIndices.size)
 
         # Create the subplots
-        nWindows = len(self.windows) - 1
+        nWindows = len(windowIndices)
         fig, grid = plt.subplots(
             nrows=nWindows,
-            ncols=5,
+            ncols=4,
             gridspec_kw={'height_ratios': heightRatios}
         )
 
         # For each row, plot the raster and the trial-averages PSTHs for each term
-        for i, (axs, w) in enumerate(zip(grid, self.windows[:-1, :])):
+        for i, axs, w in zip(windowIndices, grid, self.windows[windowIndices, :]):
             self._plotLatencySortedRasterplot(
                 ukey=ukey,
                 ax=axs[0],
@@ -789,21 +811,37 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             grid = np.atleast_2d(grid)
         for i in range(len(self.examples)):
             self.ukey = self.examples[i]
-            rProbePeri = self.peths['perisaccadic'][self.iUnit, :, -1]
-            rProbeExtra = self.peths['extrasaccadic'][self.iUnit, :]
-            grid[i, 0].plot(self.t, rProbePeri, color='0.5')
-            grid[i, 1].plot(self.t, rProbeExtra, color='0.5')
-            paramsExtra = self.params[self.iUnit, :]
-            paramsPeri = self.paramsRefit[self.iUnit, 0, -1, :]
-            for j, params in enumerate([paramsPeri, paramsExtra]):
-                params = params[np.invert(np.isnan(params))]
-                if len(params) == 0:
-                    continue
-                abc, d = params[:-1], params[-1]
-                A, B, C = np.split(abc, 3)
-                a, b, c = A[0], B[0], C[0]
-                yFit = g(self.t, a, b, c, d)
-                grid[i, j].plot(self.t, yFit, color='k' )
+            rProbePeri = self.peths['peri'][self.iUnit, :, -1]
+            rProbeExtra = self.peths['extra'][self.iUnit, :]
+            grid[i, 0].plot(self.t, rProbePeri, 'k')
+            grid[i, 0].plot(self.t, rProbeExtra, color='k', linestyle=':')
+            grid[i, 0].fill_between(
+                self.t,
+                rProbeExtra,
+                rProbePeri,
+                where=rProbeExtra > rProbePeri,
+                color='b',
+                alpha=0.2,
+            )
+            grid[i, 0].fill_between(
+                self.t,
+                rProbeExtra,
+                rProbePeri,
+                where=rProbeExtra < rProbePeri,
+                color='r',
+                alpha=0.2,
+            )
+            # paramsExtra = self.params[self.iUnit, :]
+            # paramsPeri = self.paramsRefit[self.iUnit, 0, -1, :]
+            # for j, params in enumerate([paramsPeri, paramsExtra]):
+            #    params = params[np.invert(np.isnan(params))]
+            #     if len(params) == 0:
+            #         continue
+            #     abc, d = params[:-1], params[-1]
+            #     A, B, C = np.split(abc, 3)
+            #     a, b, c = A[0], B[0], C[0]
+            #     yFit = g(self.t, a, b, c, d)
+            #     grid[i, j].plot(self.t, yFit, color='k' )
 
         #
         for axs in grid:

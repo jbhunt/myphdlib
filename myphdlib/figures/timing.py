@@ -1,6 +1,7 @@
 import h5py
 import numpy as np
-from scipy.stats import sem
+from scipy import stats
+from scipy.interpolate import interp1d
 from matplotlib import pyplot as plt
 from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g, findOverlappingUnits
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
@@ -33,6 +34,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             'rSaccade': None,
         }
         self.windows = None
+        self.utypes = None
 
         return
 
@@ -49,80 +51,171 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
                 if path in stream:
                     ds = np.array(stream[path][m])
                     self.__setattr__(attribute, ds)
+
+        #
         super().loadNamespace(hdf)
+
         return
 
-    def _plotModulationByProbeLatency(
+    def sortUnitsByResponseLatency(
         self,
-        ax=None,
-        iComp=0,
-        fill=False,
-        windowIndex=5,
-        minimumResponseAmplitude=2,
+        threshold=0.1,
         ):
         """
         """
 
-        #
-        if ax is None:
-            fig, ax = plt.subplots()
+        nUnits = len(self.ukeys)
+        latencies = np.full(nUnits, np.nan)
+        for iUnit in range(nUnits):
+            m = np.invert(np.isnan(self.params[iUnit, :]))
+            if m.sum() == 0:
+                continue
+            abcd = self.params[iUnit, m]
+            abc, d = abcd[:-1], abcd[-1]
+            A, B, C = np.split(abc, 3)
+            latencies[iUnit] = B[0]
 
         #
-        nUnits, nBins, nWindows = self.peths['perisaccadic'].shape
-        binCenters = np.mean(self.windows[:-1], axis=1)
-
-        # Exclude small amplitude units
-        m = self.params[:, 0] > minimumResponseAmplitude
-
-        # Determine the sign of modulation for each curve
-        labels = np.full(m.sum(), np.nan)
-        for iUnit in np.where(m)[0]:
-            yNormed = self.modulation[m, iComp, windowIndex] / self.params[iUnit, 0]
-            p = self.pvalues[iUnit, windowIndex, iComp]
-            if p < 0.05:
-                if yNormed < 0:
-                    labels[iUnit] = -1
-                else:
-                    labels[iUnit] = +1
-
-        # Define the color for each curve
-        colors = np.full([m.sum()], 'tab:gray')
-        for i, l in enumerate(labels):
-            if l == -1:
-                colors[i] = 'tab:blue'
-            elif l == 1:
-                colors[i] = 'tab:red'
-
-        # Collect all curves (normalized)
-        samples = np.full([m.sum(), nWindows - 1], np.nan)
-        for iWin in range(nWindows)[:-1]:
-            yNormed = self.modulation[m, iComp, iWin] / self.params[m, 0]
-            samples[:, iWin] = yNormed
-    
-        # Plot individual curves
-        for i, ln in enumerate(samples):
-            ax.plot(binCenters, np.clip(ln, -1, 1), color=colors[i], alpha=0.3, lw=0.5)
-
-        # Plot average curves per label
-        uniqueLabels = (-1, 0, 1)
-        uniqueColors = ('tab:blue', 'tab:gray', 'tab:red')
-        for i, l in enumerate(uniqueLabels):
-            y = np.nanmean(samples[labels == l], axis=0)
-            ax.plot(binCenters, y, color=uniqueColors[i])
+        self.utypes = np.full(nUnits, np.nan)
+        self.utypes[latencies <  threshold] = -1
+        self.utypes[latencies >= threshold] =  1
 
         return
 
-    def _plotModulationByPeakLatency(
+    def plotHeatmap(
         self,
-        ax=None,
+        minimumResponseAmplitude=1,
+        figsize=(3, 3),
+        nBins=7,
+        cmap='coolwarm',
+        transform=True,
+        ):
+        """
+        """
+
+        fig, ax = plt.subplots()
+
+        windowIndices = np.arange(10)
+        # leftEdges = np.arange(0, 0.5, binsize)
+        # rightEdges = leftEdges + binsize
+        # binEdges = np.vstack([
+        #     leftEdges,
+        #     rightEdges
+        # ]).T
+
+        l = np.full(len(self.ukeys), np.nan)
+        for iUnit in range(len(self.ukeys)):
+            params = self.params[iUnit, :]
+            abcd = params[np.invert(np.isnan(params))]
+            if len(abcd) == 0:
+                continue
+            abc, d = abcd[:-1], abcd[-1]
+            A, B, C = np.split(abc, 3)
+            l[iUnit] = B[0]
+        l = np.array(l)
+
+        leftEdges = np.array([np.nanpercentile(l, i / nBins * 100) for i in range(nBins)])
+        rightEdges = np.concatenate([leftEdges[1:], [np.nanmax(l)]])
+        binEdges = np.vstack([leftEdges, rightEdges]).T
+        
+        Z = np.full([10, binEdges.shape[0]], np.nan)
+        m1 = self.params[:, 0] >= minimumResponseAmplitude
+        for i in windowIndices:
+            mi = self.modulation[:, 0, i] / self.params[:, 0]
+            for j in range(binEdges.shape[0]):
+                leftEdge, rightEdge = binEdges[j]
+                m2 = np.vstack([
+                    m1,
+                    np.logical_and(
+                        l >= leftEdge,
+                        l <  rightEdge
+                    )
+                ]).all(0)
+                Z[i, j] = np.nanmean(mi[m2])
+
+        #
+        x = np.concatenate([leftEdges, [rightEdges[-1]]])
+        y = np.concatenate([self.windows[:-1, 0], [self.windows[-2, 1]]])
+        if transform:
+            f = interp1d(x, np.arange(leftEdges.size + 1), kind='linear')
+        else:
+            f = lambda x: x
+        X, Y = np.meshgrid(f(x), y)
+        mesh = ax.pcolormesh(X, Y, Z, vmin=-0.7, vmax=0.7, cmap=cmap)
+
+        #
+        ax.plot(
+            f(np.linspace(np.nanmin(l), np.nanmax(l), 10)),
+            np.linspace(-1 * np.nanmin(l), -1 * np.nanmax(l), 10),
+            color='k'
+        )
+        ax.hlines(0, f(np.nanmin(l)), f(np.nanmax(l)), color='k')
+
+        #
+        ax.set_xticks(
+            f([0.1, 0.2, 0.3])
+        )
+        ax.set_xticklabels([0.1, 0.2, 0.3], rotation=45)
+
+        #
+        ax.set_xlabel('Peak latency')
+        ax.set_ylabel('ProbeLatency')
+        fig.colorbar(mesh)
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax
+
+    def plotUnitSurvivalByUnitType(
+        self,
+        arange=(0, 3),
+        figsize=(4, 7)
+        ):
+        """
+        """
+
+        fig, axs = plt.subplots(nrows=2, sharey=True, sharex=True)
+        utypes = (-1, 1)
+        for i, ax in enumerate(axs):
+            utype = utypes[i]
+            curves = ([], [], [], [])
+            for a in np.arange(*arange, 0.1):
+                for j, label in enumerate([-1, 1, 2, 3]):
+                    m = np.vstack([
+                        self.params[:, 0] >= a,
+                        self.utypes == utype,
+                        self.labels.flatten() == label
+                    ]).all(0)
+                    n = m.sum()
+                    curves[j].append(n)
+            for j in range(len(curves)):
+                ax.plot(np.arange(*arange, 0.1), curves[j])
+        
+        #
+        axs[-1].legend(['Neg.', 'Mono.', 'Bi.', 'Multi.'])
+        axs[-1].set_xlabel('Amplitude threshold')
+        axs[-1].set_ylabel('# of units')
+        axs[0].set_title('Slow-type', fontsize=10)
+        axs[1].set_title('Fast-type', fontsize=10)
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[0])
+        fig.tight_layout()
+
+        return fig, axs
+
+    def plotModulationByPeakLatency(
+        self,
         a=0.05,
-        iWindow=5,
+        windowIndices=None,
         responseWindow=(-0.2, 0.5),
-        runningWindowSize=0.02,
-        binsize=0.01,
-        minimumResponseAmplitude=2,
-        averagingWindow=(0.05, 0.2),
-        yrange=(-1, 1),
+        minimumResponseAmplitude=1,
+        ylim=(-1.7, 1.7),
+        figsize=(4, 3),
+        examples=(
+            ('2023-05-24', 'mlati7', 337),
+            ('2023-05-17', 'mlati7', 237),
+        ),
         **kwargs_
         ):
         """
@@ -130,86 +223,207 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
 
         # Keywords arguments for the scatter function
         kwargs = {
-            'color': 'k',
             'marker': '.',
-            'alpha': 0.7,
+            'alpha': 0.3,
             's': 5,
         }
         kwargs.update(kwargs_)
 
         #
-        if ax is None:
+        if True:
             fig, ax = plt.subplots()
+            axs = [ax,]
+            windowIndices = np.arange(10)
+        elif windowIndices is None:
+            fig, axs = plt.subplots(
+                ncols=len(self.windows[:-1]),
+                sharey=False,
+                sharex=True
+            )
+            windowIndices = np.arange(10)
+        else:
+            fig, axs = plt.subplots(
+                ncols=len(self.windows[np.array(windowIndices)]),
+                sharey=False,
+                sharex=True
+            )
 
         #
-        leftEdges = np.arange(averagingWindow[0], averagingWindow[1], binsize)
-        rightEdges = leftEdges + binsize
-        binCenters = np.vstack([leftEdges, rightEdges]).T.mean(1)
-        samples = [[] for iBin in range(binCenters.size)]
-        X, Y = list(), list()
-
-        #
-        for iUnit in range(len(self.ukeys)):
+        samples = {
+            'fast': list(),
+            'slow': list()
+        }
+        exampleCurves = [list(), list()]
+        for i, windowIndex in enumerate(windowIndices):
 
             #
-            if self.params[iUnit, 0] < minimumResponseAmplitude:
-                continue
-            if np.isnan(self.modulation[iUnit, :, iWindow]).all():
-                continue
-            if np.nanmin(self.pvalues[iUnit, iWindow, :]) > a:
-                continue
-            
-            #
-            y = self.modulation[iUnit, :, iWindow] / self.params[iUnit, 0]
-            m = np.invert(np.isnan(y))
-            y = np.atleast_1d(y[m])
-            t = np.atleast_1d(self.latencies[iUnit, :y.size, iWindow])
+            X, Y, C, U = list(), list(), list(), list()
 
             #
-            for iComp, (dr, l) in enumerate(zip(y, t)):
-                X.append(l)
-                Y.append(dr)
-                indices = np.where(np.logical_and(
-                    l > leftEdges,
-                    l <= rightEdges
-                ))[0]
-                if len(indices) == 1:
-                    i = indices.item()
-                    samples[i].append(dr)
+            for j, (x, c, utype) in enumerate(zip([-0.1, 0.1], [plt.cm.Dark2(1), plt.cm.Dark2(2)], [-1, 1])):
+                
+                #
+                m1 = np.vstack([
+                    self.utypes == utype,
+                    self.params[:, 0] >= minimumResponseAmplitude,
+                    # self.pvalues[:, windowIndex, 0] < a,
+                ]).all(0)
+                
+                #
+                for iUnit in np.where(m1)[0]:
+                    y = self.modulation[iUnit, 0, windowIndex] / self.params[iUnit, 0]
+                    m2 = np.invert(np.isnan(self.params[iUnit]))
+                    abcd = self.params[iUnit, m2]
+                    abc, d = abcd[:-1], abcd[-1]
+                    A, B, C_ = np.split(abc, 3)
+                    l = B[0]
+                    # X.append(B[0])
+                    X.append(x + i)
+                    Y.append(y)
+                    C.append(c)
+                    U.append(utype)
+
+                    #
+                    ukey = self.ukeys[iUnit]
+                    for date, animal, cluster in examples:
+                        if ukey[0] == date and ukey[1] == animal and ukey[2] == cluster:
+                            exampleCurves[j].append(y)
+
+            #
+            X = np.array(X)
+            Y = np.clip(np.array(Y), *ylim)
+            U = np.array(U)
+            # axs[0].scatter(
+            #     Y,
+            #     X,
+            #     c=C,
+            #     alpha=0.15,
+            #     marker='.',
+            #     s=5,
+            # )
+
+            #
+            samples['fast'].append(np.vstack([X[U == -1], Y[U == -1]]).T)
+            samples['slow'].append(np.vstack([X[U ==  1], Y[U ==  1]]).T)
 
         #
-        X, Y = np.array(X), np.array(Y)
-        ax.scatter(X, np.clip(Y, -1, 1), color='0.5', alpha=0.5, s=10, marker='.')
-        m, b = np.polyfit(X, Y, 1)
-        x1, x2 = X.min(), X.max()
-        ln = np.array([x1, x2]) * m + b
-        ax.plot([x1, x2], ln, color='k')
-        # binned = np.array([np.nanmean(s) if len(s) != 0 else np.nan for s in samples])
-        # ax.plot(binCenters, binned, color='k')
-        ax.set_xlim(responseWindow)
-
-        return
-
-        binMeans = list()
-        binCenters = list()
-        for leftEdge in np.arange(0, responseWindow[1], runningWindowSize):
-            rightEdge = leftEdge + runningWindowSize
-            binCenter = np.mean([leftEdge, rightEdge])
-            peakIndices = np.where(np.logical_and(
-                X > leftEdge,
-                X <= rightEdge
-            ))[0]
-            if len(peakIndices) < 1:
-                binMeans.append(np.nan)
-            else:
-                binMeans.append(np.mean(Y[peakIndices]))
-            binCenters.append(binCenter)
+        y1, y2 = list(), list()
+        for i in windowIndices:
+            y1.append(np.mean(np.array(samples['fast'][i]), axis=0)[1])
+            y2.append(np.mean(np.array(samples['slow'][i]), axis=0)[1])
+        axs[0].plot(
+            windowIndices - 0.1,
+            y1,
+            color=plt.cm.Dark2(1),
+            marker='D',
+            markerfacecolor=plt.cm.Dark2(1),
+            markeredgecolor='k',
+            markersize=4,
+            label='Fast',
+        )
+        axs[0].plot(
+            windowIndices + 0.1,
+            y2,
+            color=plt.cm.Dark2(2),
+            marker='D',
+            markerfacecolor=plt.cm.Dark2(2),
+            markeredgecolor='k',
+            markersize=4,
+            label='Slow',
+        )
+        colors = (
+            plt.cm.Dark2(1),
+            plt.cm.Dark2(2),
+        )
+        for i, (k, o) in enumerate(zip(['fast', 'slow'], [-0.1, 0.1])):
+            for j in range(10):
+                sample = samples[k][j][:, 1]
+                y1, y2 = stats.t.interval(0.95, len(sample) - 1, loc=np.mean(sample), scale=stats.sem(sample))
+                x = j + o
+                axs[0].vlines(x, y1, y2, color=colors[i], zorder=-1)
 
         #
-        binCenters, binMeans = np.array(binCenters), np.array(binMeans)
-        ax.plot(binCenters, binMeans, color='k')
+        for i, (y, o) in enumerate(zip(exampleCurves, [-0.1, 0.1])):
+            if len(y) != 0:
+                axs[0].plot(windowIndices[2:-2] + o, y[2:-2], color=colors[i], alpha=0.5)
 
-        return binCenters, binMeans
+        #
+        axs[0].set_xlabel('Probe latency (sec)')
+        axs[0].set_ylabel('MI')
+        axs[0].legend()
+        axs[0].set_xticks(windowIndices)
+        axs[0].set_xticklabels(
+            np.around(np.mean(self.windows[:-1], axis=1), 2),
+            rotation=45
+        )
+        ylim = axs[0].get_ylim()
+        ymax = np.max(np.abs(ylim))
+        ylim = (-ymax, ymax)
+        axs[0].set_ylim(ylim)
+        xlim = axs[0].get_xlim()
+        axs[0].vlines(4.5, *ylim, color='k', alpha=0.5, zorder=-1)
+        axs[0].hlines(0, *xlim, color='k', alpha=0.5, zorder=-1)
+        axs[0].set_xlim(xlim)
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+        return fig, axs
+
+    def plotPerisaccadicResponsesForExamples(
+        self,
+        ukeys=(
+            ('2023-05-24', 'mlati7', 337),
+            ('2023-05-17', 'mlati7', 237),
+        ),
+        colors=(
+            plt.cm.Dark2(1),
+            plt.cm.Dark2(2),
+        ),
+        figsize=(7, 2)
+        ):
+        """
+        """
+
+        fig, axs = plt.subplots(nrows=len(ukeys), ncols=len(self.windows) - 1, sharex=True)
+        if len(ukeys) == 1:
+            axs = axs.reshape(-1, 1)
+        for j in np.arange(len(ukeys)):
+            self.ukey = ukeys[j]
+            for i in np.arange(len(self.windows) - 1):
+                # axs[j, 9 - i].plot(
+                #     self.t,
+                #     self.peths['extra'][self.iUnit],
+                #     color=colors[j],
+                #     alpha=0.5
+                #)
+                axs[j, i].plot(
+                    self.t,
+                    self.peths['peri'][self.iUnit, :, i],
+                    color=colors[j]
+                )
+
+        #
+        for i in range(len(ukeys)):
+            ylim = [np.inf, -np.inf]
+            for j in range(axs.shape[1]):
+                y1, y2 = axs[i, j].get_ylim()
+                if y1 < ylim[0]:
+                    ylim[0] = y1
+                if y2 > ylim[1]:
+                    ylim[1] = y2
+            for j in range(axs.shape[1]):
+                axs[i, j].set_ylim(ylim)
+        for ax in axs.flatten():
+            for sp in ('top', 'right', 'bottom', 'left'):
+                ax.spines[sp].set_visible(False)
+        for ax in axs[:, 1:].flatten():
+            ax.set_yticks([])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+        fig.subplots_adjust(hspace=0.15)
+        return fig, axs
+
     
     def _plotModulationByIntegratedLatency(
         self,
@@ -312,39 +526,3 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         )
 
         return
-
-    def plotModulationByLatency(
-        self,
-        figsize=(7, 3),
-        referenceWindow=5,
-        ):
-        """
-        """
-
-        fig, axs = plt.subplots(ncols=3)
-        self._plotModulationByProbeLatency(ax=axs[0])
-        self._plotModulationByPeakLatency(ax=axs[1], iWindow=referenceWindow)
-        self._plotModulationByIntegratedLatency(ax=axs[2], binsize=0.05)
-        for ax in axs:
-            ax.set_ylim([-1.1, 1.1])
-        for ax in axs:
-            ylim = ax.get_ylim()
-            ax.vlines(0, *ylim, color='k', alpha=0.5)
-            ax.set_ylim(*ylim)
-            xlim = ax.get_xlim()
-            ax.hlines(0, *xlim, color='k', alpha=0.5)
-            ax.set_xlim(xlim)
-        for ax in axs:    
-            for sp in ('top', 'right'):
-                ax.spines[sp].set_visible(False)
-        axs[1].set_xticks([-0.2, 0, 0.5])
-        axs[0].set_xticks([-0.5, 0, 0.5])
-        axs[0].set_xlabel('Time from saccade (s)')
-        axs[1].set_xlabel('Time from probe (s)')
-        axs[2].set_xlabel('Time from saccade (s)')
-        axs[0].set_ylabel(r'Modulation ($\Delta R$)')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, axs
