@@ -112,6 +112,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         binsize=0.01,
         smoothingKernelWidth=0.01,
         buffer=1,
+        rate=None,
         ):
         """
         """
@@ -128,14 +129,6 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             self.ukey = self.ukeys[iUnit]
             mu, sigma = self.ambc[iUnit, 2], self.ambc[iUnit, 3]
 
-            #
-            trialIndicesPerisaccadic, probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes(
-                perisaccadicWindow
-            )
-            nTrialsForResampling = trialIndicesPerisaccadic.size
-            if nTrialsForResampling == 0:
-                continue
-
             # Extra-saccadic trial indices
             trialIndicesExtrasaccadic = np.where(np.vstack([
                 gratingMotion == self.ambc[self.iUnit, 1],
@@ -146,6 +139,18 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             ]).all(0))[0]
             if trialIndicesExtrasaccadic.size == 0:
                 continue
+
+            #
+            if rate is None:
+                trialIndicesPerisaccadic, probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes(
+                    perisaccadicWindow
+                )
+                nTrialsForResampling = trialIndicesPerisaccadic.size
+                if nTrialsForResampling == 0:
+                    continue
+        
+            else:
+                nTrialsForResampling = round(trialIndicesExtrasaccadic * rate, 0)
 
             # Compute relative spike timestamps
             responseWindowBuffered = (
@@ -168,11 +173,15 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                     np.arange(trialIndicesExtrasaccadic.size),
                     size=nTrialsForResampling
                 )
+
+                # Use raw PSTH
                 # sample = list()
                 # for iTrial in trialIndices:
                 #     for ts in spikeTimestamps[iTrial]:
                 #         sample.append(ts)
                 # sample = np.array(sample)
+
+                # Use KDE
                 sample = np.concatenate([spikeTimestamps[i] for i in trialIndices])
                 try:
                     t, fr = self.unit.kde(
@@ -190,156 +199,6 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 self.pethsResampled[iUnit, :, iRun] = (fr - mu) / sigma
 
         return
-
-    def refitExtrasaccadicPeth(
-        self,
-        ukey=None,
-        iRun=0,
-        **kwargs_
-        ):
-        """
-        Re-fit the resampled extra-saccadic PETHs
-        """
-
-        #
-        kwargs = {
-            'minimumPeakHeight': 0.15,
-            'maximumPeakHeight': 1,
-            'minimumPeakProminence': 0.05,
-            'minimumPeakWidth': 0.001,
-            'maximumPeakWidth': 0.02,
-            'minimumPeakLatency': 0,
-            'initialPeakWidth': 0.001,
-            'maximumLatencyShift': 0.003,
-            'maximumBaselineShift': 0.001,
-            'maximumAmplitudeShift': 0.001 
-        }
-        kwargs.update(kwargs_)
-
-        #
-        if ukey is None:
-            self.ukey = ukey
-        for iUnit in range(len(self.ukeys)):
-            date, animal, cluster = self.ukeys[iUnit]
-            if date == self.ukey[0] and animal == self.ukey[1] and cluster == self.ukey[2]:
-                break
-
-        #
-        y = self.pethsResampled[iUnit ,:, iRun]
-
-        # Load parameters estimated for extra-saccadic PSTH
-        params = self.params[iUnit]
-        if np.isnan(params).all():
-            return
-        abcd = params[np.invert(np.isnan(params))]
-        abc, d = abcd[:-1], abcd[-1]
-        A1, B1, C1 = np.split(abc, 3)
-        k = A1.size
-        order = np.argsort(np.abs(A1))[::-1]
-        A1 = A1[order]
-        B1 = B1[order]
-        C1 = C1[order]
-
-        #
-        peakIndices = list()
-        for coef in (-1, 1):
-            peakIndices_, peakProperties = findPeaks(
-                coef * y,
-                height=kwargs['minimumPeakHeight'],
-                prominence=kwargs['minimumPeakProminence']
-            )
-            if peakIndices_.size == 0:
-                continue
-            for iPeak in range(peakIndices_.size):
-
-                # Exclude peaks detected before the stimulus  onset
-                if self.t[peakIndices_[iPeak]] <= 0:
-                    continue
-
-                #
-                peakIndices.append(peakIndices_[iPeak])
-        peakIndices = np.array(peakIndices)
-
-        # Find the peak most similar to the original largest peak
-        peakIndex = peakIndices[np.argmin(np.abs(self.t[peakIndices] - B1[0]))]
-
-        # Compute peak properties
-        peakAmplitude = y[peakIndex]
-        peakLatency = self.t[peakIndex]
-        peakAmplitudes = A1
-        peakAmplitudes[0] = peakAmplitude
-        peakLatencies = B1
-        peakLatencies[0] = peakLatency
-        peakWidths = C1
-        peakWidths[0] = kwargs['initialPeakWidth']
-
-        # Define the parameter boundaries
-        amplitudeBoundaries = np.vstack([
-            peakAmplitudes - 0.001,
-            peakAmplitudes + 0.001
-        ]).T
-        amplitudeBoundaries[0, :] = np.array([
-            peakAmplitude - kwargs['maximumAmplitudeShift'],
-            peakAmplitude + kwargs['maximumAmplitudeShift']
-        ])
-        latencyBoundaries = np.vstack([
-            peakLatencies - 0.001,
-            peakLatencies + 0.001
-        ]).T
-        latencyBoundaries[0, :] = np.array([
-            peakLatency - kwargs['maximumLatencyShift'],
-            peakLatency + kwargs['maximumLatencyShift']
-        ])
-        widthBoundaries = np.vstack([
-            peakWidths - 0.001,
-            peakWidths + 0.001
-        ]).T
-        widthBoundaries[0, :] = np.array([
-            kwargs['minimumPeakWidth'],
-            kwargs['maximumPeakWidth']
-        ])
-
-        # Initialize the parameter space and bounds
-        p0 = np.concatenate([
-            np.array([d]),
-            peakAmplitudes,
-            peakLatencies,
-            peakWidths
-        ])
-        bounds = np.vstack([
-            np.array([[
-                d - 0.001,
-                d + 0.001
-            ]]),
-            amplitudeBoundaries,
-            latencyBoundaries,
-            widthBoundaries
-        ]).T
-
-        # Fit the GMM and compute the residual sum of squares (rss)
-        gmm = GaussianMixturesModel(k)
-        gmm.fit(
-            self.t,
-            y,
-            p0=p0,
-            bounds=bounds
-        )
-        yFit = gmm.predict(self.t)
-
-        # Extract the parameters of the fit GMM
-        d, abc = gmm._popt[0], gmm._popt[1:]
-        A2, B2, C2 = np.split(abc, 3)
-        order = np.argsort(np.abs(A1))[::-1] # Sort by amplitude
-        params = np.concatenate([
-            A2[order],
-            B2[order],
-            C2[order],
-        ])
-        paramsPadded = np.full(self.params.shape[1], np.nan)
-        paramsPadded[:params.size] = params
-        paramsPadded[-1] = d
-
-        return yFit, paramsPadded
 
     def generateNullSamples(
         self,
@@ -417,7 +276,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         nBins=20,
         labels=(1, 2, 3, -1),
         normalize=True,
-        xrange=(-1, 1),
+        xrange=(-2, 2),
         iWindow=-1,
         ):
         """
@@ -487,7 +346,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         iWindow=5,
         minimumResponseAmplitude=2,
         binsize=None,
-        xrange=(-1, 1),
+        xrange=(-2, 2),
         a=0.05,
         figsize=(4, 2.5),
         ):

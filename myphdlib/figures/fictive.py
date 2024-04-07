@@ -1,6 +1,7 @@
 import h5py
 import numpy as np
 from scipy.signal import find_peaks as findPeaks
+from scipy.stats import pearsonr
 from matplotlib import pyplot as plt
 from myphdlib.figures.analysis import AnalysisBase, findOverlappingUnits, GaussianMixturesModel, g
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
@@ -591,13 +592,21 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
         """
 
         # Load datasets
-        
+        m = self.findOverlappingUnits(self.ukeys, self.hdf)
+        with h5py.File(self.hdf, 'r') as stream:
+            # probeMotion = np.array(stream['peths/dg/extra/params'][m, 1])
+            pethsFromDriftingGrating = np.array(stream['peths/dg/extra/fr'][m, :])
 
         nUnits = len(self.ukeys)
         self.similarity = np.full(nUnits, np.nan)
-        for ukey in self.ukeys:
+        for i, ukey in enumerate(self.ukeys):
             self.ukey = ukey
-
+            peth = self.peths['extra'][self.iUnit, :]
+            r, p = pearsonr(
+                peth,
+                pethsFromDriftingGrating[self.iUnit, :]
+            )
+            self.similarity[i] = r
 
         return
 
