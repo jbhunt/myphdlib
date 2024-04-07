@@ -582,11 +582,22 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
 
         return
 
-    def run(
+    def measureResponseCorrelation(
         self,
         ):
         """
+        Measure the correlation between responses to the probe presented during
+        the fictive saccades protocol and the drifting grating protocol
         """
+
+        # Load datasets
+        
+
+        nUnits = len(self.ukeys)
+        self.similarity = np.full(nUnits, np.nan)
+        for ukey in self.ukeys:
+            self.ukey = ukey
+
 
         return
 
