@@ -251,7 +251,8 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         #
         samples = {
             'fast': list(),
-            'slow': list()
+            'slow': list(),
+            'all': list()
         }
         exampleCurves = [list(), list()]
         for i, windowIndex in enumerate(windowIndices):
@@ -305,12 +306,25 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             #
             samples['fast'].append(np.vstack([X[U == -1], Y[U == -1]]).T)
             samples['slow'].append(np.vstack([X[U ==  1], Y[U ==  1]]).T)
+            samples['all'].append(np.vstack([U, Y]).T)
 
         #
-        y1, y2 = list(), list()
+        y1, y2, y3 = list(), list(), list()
         for i in windowIndices:
             y1.append(np.mean(np.array(samples['fast'][i]), axis=0)[1])
             y2.append(np.mean(np.array(samples['slow'][i]), axis=0)[1])
+            y3.append(np.mean(np.array(samples['all'][i]), axis=0)[1])
+
+        axs[0].plot(
+            windowIndices,
+            y3,
+            color='k',
+            marker='D',
+            markerfacecolor='w',
+            markeredgecolor='k',
+            markersize=4,
+            label='Uncategorized'
+        )
         axs[0].plot(
             windowIndices - 0.1,
             y1,
