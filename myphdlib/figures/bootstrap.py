@@ -37,8 +37,8 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         """
 
         datasets = {
-            'bootstrap/p': self.pvalues,
-            'bootstrap/sign': self.msign,
+            'bootstrap/dg/p': self.pvalues,
+            'bootstrap/dg/sign': self.msign,
         }
 
         #
@@ -64,7 +64,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         #
         self._saveLargeDataset(
             hdf,
-            path='bootstrap/peths',
+            path='bootstrap/dg/peths',
             dataset=self.pethsResampled,
             nUnitsPerChunk=nUnitsPerChunk,
         )
@@ -72,7 +72,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         #
         self._saveLargeDataset(
             hdf,
-            path='bootstrap/samples',
+            path='bootstrap/dg/samples',
             dataset=self.samples,
             nUnitsPerChunk=nUnitsPerChunk
         )
@@ -113,6 +113,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         smoothingKernelWidth=0.01,
         buffer=1,
         rate=None,
+        minimumTrialCount=1,
         ):
         """
         """
@@ -129,6 +130,11 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             self.ukey = self.ukeys[iUnit]
             mu, sigma = self.ambc[iUnit, 2], self.ambc[iUnit, 3]
 
+            #
+            trialIndicesPerisaccadic, probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes(
+                perisaccadicWindow
+            )
+
             # Extra-saccadic trial indices
             trialIndicesExtrasaccadic = np.where(np.vstack([
                 gratingMotion == self.ambc[self.iUnit, 1],
@@ -142,15 +148,16 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
             #
             if rate is None:
-                trialIndicesPerisaccadic, probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes(
-                    perisaccadicWindow
-                )
                 nTrialsForResampling = trialIndicesPerisaccadic.size
                 if nTrialsForResampling == 0:
                     continue
         
             else:
-                nTrialsForResampling = round(trialIndicesExtrasaccadic * rate, 0)
+                nTrialsForResampling = int(round(trialIndicesExtrasaccadic.size * rate, 0))
+            
+            #
+            if minimumTrialCount is not None and nTrialsForResampling < minimumTrialCount:
+                nTrialsForResampling = minimumTrialCount
 
             # Compute relative spike timestamps
             responseWindowBuffered = (
@@ -158,7 +165,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 responseWindow[1] + buffer
             )
             t, M, spikeTimestamps = psth2(
-                self.session.probeTimestamps[trialIndicesExtrasaccadic],
+                probeTimestamps[trialIndicesExtrasaccadic],
                 self.unit.timestamps,
                 window=responseWindowBuffered,
                 binsize=binsize,
@@ -171,8 +178,13 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 # Use kernel density estimation (takes a long time)
                 trialIndices = np.random.choice(
                     np.arange(trialIndicesExtrasaccadic.size),
-                    size=nTrialsForResampling
+                    size=nTrialsForResampling,
+                    replace=False
                 )
+
+                #
+                # if iUnit == 500:
+                #   import pdb; pdb.set_trace()
 
                 # Use raw PSTH
                 # sample = list()
@@ -185,7 +197,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 sample = np.concatenate([spikeTimestamps[i] for i in trialIndices])
                 try:
                     t, fr = self.unit.kde(
-                        self.session.probeTimestamps[trialIndices],
+                        probeTimestamps[trialIndices],
                         responseWindow=responseWindow,
                         binsize=binsize,
                         sigma=smoothingKernelWidth,

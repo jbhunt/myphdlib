@@ -216,6 +216,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             ('2023-05-24', 'mlati7', 337),
             ('2023-05-17', 'mlati7', 237),
         ),
+        plotExamples=False,
         **kwargs_
         ):
         """
@@ -320,7 +321,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             y3,
             color='k',
             marker='D',
-            markerfacecolor='w',
+            markerfacecolor='k',
             markeredgecolor='k',
             markersize=4,
             label='Uncategorized'
@@ -348,8 +349,9 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         colors = (
             plt.cm.Dark2(1),
             plt.cm.Dark2(2),
+            'k',
         )
-        for i, (k, o) in enumerate(zip(['fast', 'slow'], [-0.1, 0.1])):
+        for i, (k, o) in enumerate(zip(['fast', 'slow', 'all'], [-0.1, 0.1, 0])):
             for j in range(10):
                 sample = samples[k][j][:, 1]
                 y1, y2 = stats.t.interval(0.95, len(sample) - 1, loc=np.mean(sample), scale=stats.sem(sample))
@@ -357,9 +359,10 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
                 axs[0].vlines(x, y1, y2, color=colors[i], zorder=-1)
 
         #
-        for i, (y, o) in enumerate(zip(exampleCurves, [-0.1, 0.1])):
-            if len(y) != 0:
-                axs[0].plot(windowIndices[2:-2] + o, y[2:-2], color=colors[i], alpha=0.5)
+        if plotExamples:
+            for i, (y, o) in enumerate(zip(exampleCurves, [-0.1, 0.1])):
+                if len(y) != 0:
+                    axs[0].plot(windowIndices[2:-2] + o, y[2:-2], color=colors[i], alpha=0.5)
 
         #
         axs[0].set_xlabel('Probe latency (sec)')

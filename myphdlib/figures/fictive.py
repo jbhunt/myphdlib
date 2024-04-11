@@ -75,13 +75,19 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
         self.samples = None
         self.msign = None
 
+        #
+        self.windows = np.array([
+            [0, 0.1]
+        ])
+
         super().__init__()
 
         return
 
     def saveNamespace(
         self,
-        hdf
+        hdf,
+        nUnitsPerChunk=100,
         ):
         """
         """
@@ -114,7 +120,10 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
             'gmm/fs/extra/modulation': self.modulation,
 
             #
-            'peths/fs/extra/params': self.ambc
+            'peths/fs/extra/params': self.ambc,
+
+            #
+            'bootstrap/fs/p': self.pvalues,
 
         }
 
@@ -134,6 +143,22 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
                 )
                 if 'temps' in path.split('/'):
                     ds.attrs['t'] = self.tSaccade
+
+        #
+        self._saveLargeDataset(
+            hdf,
+            path='bootstrap/fs/peths',
+            dataset=self.pethsResampled,
+            nUnitsPerChunk=nUnitsPerChunk,
+        )
+
+        #
+        self._saveLargeDataset(
+            hdf,
+            path='bootstrap/fs/samples',
+            dataset=self.samples,
+            nUnitsPerChunk=nUnitsPerChunk
+        )
 
         return
 
@@ -184,7 +209,6 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
                         self.t = ds.attrs['t']
                     self.peths[tt] = np.array(ds[m])
 
-
         #
         self.terms = {
             'rProbe': {
@@ -226,6 +250,9 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
             'bootstrap/p': 'pvaluesActual',
             'peths/fs/extra/params': 'ambc',
             'gmm/dg/extra/k': 'k',
+            'bootstrap/fs/samples': 'samples',
+            'bootstrap/fs/p': 'pvalues',
+            'bootstrap/fs/peths': 'pethsResampled',
         }
         with h5py.File(hdf, 'r') as stream:
             for path, name in datasets.items():
@@ -365,15 +392,19 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
                 continue
 
             #
-            probeTimestamps = session.load('stimuli/fs/probe/timestamps')
-            gratingMotion = session.load('stimuli/fs/probe/motion')
-            saccadeTimestamps = session.load('stimuli/fs/saccade/timestamps')
+            # probeTimestamps = session.load('stimuli/fs/probe/timestamps')
+            # gratingMotion = session.load('stimuli/fs/probe/motion')
+            # saccadeTimestamps = session.load('stimuli/fs/saccade/timestamps')
 
             #
-            probeLatencies = np.full(probeTimestamps.size, np.nan)
-            for iTrial in range(probeTimestamps.size):
-                iSaccade = np.argmin(np.abs(probeTimestamps[iTrial] - saccadeTimestamps))
-                probeLatencies[iTrial] = probeTimestamps[iTrial] - saccadeTimestamps[iSaccade]
+            # probeLatencies = np.full(probeTimestamps.size, np.nan)
+            # for iTrial in range(probeTimestamps.size):
+            #     iSaccade = np.argmin(np.abs(probeTimestamps[iTrial] - saccadeTimestamps))
+            #    probeLatencies[iTrial] = probeTimestamps[iTrial] - saccadeTimestamps[iSaccade]
+
+            #
+            self._session = session # NOTE: This is ugly
+            trialIndices_, probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes()
 
             #
             for ukey in self.ukeys:
@@ -381,6 +412,10 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
                     self.ukey = ukey
                 else:
                     continue
+
+                #
+                # if self.iUnit == 500:
+                #     import pdb; pdb.set_trace()
 
                 #
                 end = None if self.iUnit + 1 == nUnits else '\r'
@@ -397,8 +432,8 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
                 for gm in np.unique(gratingMotion):
                     trialIndices = np.where(np.vstack([
                         np.logical_or(
-                            probeLatencies >= perisaccadicWindow[1],
-                            probeLatencies <= perisaccadicWindow[0],
+                            probeLatencies > perisaccadicWindow[1],
+                            probeLatencies < perisaccadicWindow[0],
                         ),
                         gratingMotion == gm
                     ]).all(0))[0]
@@ -610,6 +645,23 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
 
         return
 
+    def downsampleExtrasaccadicPeths(
+        self,
+        perisaccadicWindow=(-0.5, 0.5),
+        minimumTrialCount=10,
+        rate=0.05,
+        **kwargs
+        ):
+        """
+        """
+        kwargs.update({
+            'perisaccadicWindow': perisaccadicWindow,
+            'minimumTrialCount': minimumTrialCount,
+            'rate': rate,
+        })
+        super().downsampleExtrasaccadicPeths(**kwargs)
+        return
+
     def plotAnalysisDemo(
         self,
         examples=(
@@ -798,6 +850,7 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
     def plotModulationBySaccadeType(
         self,
         minimumResponseAmplitude=1,
+        alphaLevel=0.05,
         bounds=(-1.7, 1.7),
         colors=('tab:red', 'tab:purple', 'tab:blue'),
         windowIndex=5,
@@ -812,18 +865,14 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
             self.params[:, 0] >= minimumResponseAmplitude,
             self.paramsActual[:, 0] >= minimumResponseAmplitude,
             np.logical_or(
-                self.pvaluesActual[:, windowIndex, 0] < 0.05,
-                self.pvalues[:, 0, 0] < 0.05
+                self.pvaluesActual[:, windowIndex, 0] < alphaLevel,
+                self.pvalues[:, 0, 0] < alphaLevel
             )
         ]).all(0)
         x = np.clip(self.modulation[m, 0, 0] / self.params[m, 0], *bounds)
         y = np.clip(self.modulationActual[m, 0, windowIndex] / self.paramsActual[m, 0], *bounds)
-        c = np.full(x.size, colors[1])
-        for i in range(x.size):
-            if x[i] < 0 and y[i] < 0:
-                c[i] = colors[2]
-            if x[i] > 0 and y[i] > 0:
-                c[i] = colors[0]
+        c = np.full(x.size, '0.5')
+        
         ax.scatter(
             x,
             y,
