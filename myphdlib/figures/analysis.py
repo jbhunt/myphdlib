@@ -89,7 +89,8 @@ class AnalysisBase():
         ukey=None,
         hdf=None,
         tag='JH-DATA-',
-        mount=False
+        mount=False,
+        experiments=('Mlati',),
         ):
         """
         """
@@ -100,13 +101,100 @@ class AnalysisBase():
             self._factory = SessionFactory(mount=tag)
         else:
             self._factory = SessionFactory(tag=tag)
-        self._sessions = None
         self._session = None
         self._unit = None
         if ukey is not None:
             self.ukey = ukey
         if hdf is not None:
             self._hdf = hdf
+
+        #
+        self._loadSessions(experiments)
+        self._loadUnitKeys()
+
+        return
+    
+    def _loadSessions(
+        self,
+        experiments
+        ):
+        """
+        """
+
+        self._sessions = self._factory.produce(experiment=experiments)
+
+        return
+    
+    def _loadUnitKeys(
+        self,
+        **kwargs_,
+        ):
+        """
+        """
+
+        kwargs = {
+            'maximumAmplitudeCutoff': 0.1,
+            'minimumPresenceRatio': 0.9,
+            'maximumIsiViolations': 0.5,
+            'maximumProbabilityValue': 0.01,
+        }
+        kwargs.update(kwargs_)
+
+        #
+        self._ukeys = list()
+        nSessions = len(self._sessions)
+
+        #
+        for i, session in enumerate(self._sessions):
+
+            end = '\r' if i + 1 != n else None
+            print(f'Filtering units from session {i + 1} out of {nSessions}', end=end)
+
+            #
+            if session.probeTimestamps is None:
+                continue
+
+            #
+            amplitudeCutoff = session.load('metrics/ac')
+            presenceRatio = session.load('metrics/pr')
+            isiViolations = session.load('metrics/rpvr')
+            probabilityValues = np.nanmin(np.vstack([
+                session.load('zeta/probe/left/p'),
+                session.load('zeta/probe/right/p')
+            ]), axis=0)
+
+            #
+            nUnits = len(session.population)
+            clusterNumbers = np.unique(session.load('spikes/clusters'))
+            qualityLabels = session.load('metrics/ql')
+            for iUnit in range(nUnits):
+
+                # First check if the unit has a low p-value from the ZETA test
+                if kwargs['maximumProbabilityValue'] is not None and probabilityValues[iUnit] > kwargs['maximumProbabilityValue']:
+                    continue
+
+                # Check if unit was labeled as "good"
+                if qualityLabels[iUnit] == 0:
+
+                    #
+                    if kwargs['minimumPresenceRatio'] is not None and  presenceRatio[iUnit] < kwargs['minimumPresenceRatio']:
+                        continue
+
+                    #
+                    if kwargs['maximumAmplitudeCutoff'] is not None and amplitudeCutoff[iUnit] > kwargs['maximumAmplitudeCutoff']:
+                        continue
+
+                    if kwargs['maximumIsiViolations'] is not None and isiViolations[iUnit] > kwargs['maximumIsiViolations']:
+                        continue
+                
+                #
+                ukey = (
+                    str(session.date),
+                    session.animal,
+                    clusterNumbers[iUnit]
+                )
+                self._ukeys.append(ukey)
+
         return
     
     @property
@@ -145,134 +233,6 @@ class AnalysisBase():
     @property
     def hdf(self):
         return self._hdf
-
-    def filterUnits(
-        self,
-        experiments=('Mlati',),
-        responseWindow=(0, 0.5),
-        baselineWindow=(-0.2, 0),
-        **kwargs_
-        ):
-        """
-        """
-
-        kwargs = {
-            'minimumBaselineLevel': 0.5,
-            'minimumResponseAmplitude': 3,
-            'minimumPeakLatency': 0.01,
-            'maximumAmplitudeCutoff': 0.1,
-            'minimumPresenceRatio': 0.9,
-            'maximumIsiViolations': 0.5,
-            'maximumProbabilityValue': 0.01,
-        }
-        kwargs.update(kwargs_)
-
-        #
-        self._ukeys = list()
-        self._sessions = self._factory.produce(experiment=experiments)
-        n = len(self._sessions)
-
-        #
-        for i, session in enumerate(self._sessions):
-
-            end = '\r' if i + 1 != n else None
-            print(f'Filtering units from session {i + 1} out of {n}', end=end)
-
-            #
-            if session.probeTimestamps is None:
-                continue
-
-            #
-            peths = {
-                ('rProbe', 'left'): session.load('peths/rProbe/dg/left/fr'),
-                ('rProbe', 'right'): session.load('peths/rProbe/dg/right/fr'),
-            }
-            peth, metadata = session.load('peths/rProbe/dg/left/fr', returnMetadata=True)
-            clusterNumbers = session.load('population/clusters')
-            if 't' in metadata.keys():
-                t = metadata['t']
-            else:
-                continue
-
-
-            #
-            amplitudeCutoff = session.load('population/metrics/ac')
-            presenceRatio = session.load('population/metrics/pr')
-            isiViolations = session.load('population/metrics/rpvr')
-
-            # Define the baseline and response windows
-            binIndicesForBaselineWindow = np.where(np.logical_and(
-                t >= baselineWindow[0],
-                t <= baselineWindow[1]
-            ))[0]
-            binIndicesForResponseWindow = np.where(np.logical_and(
-                t >= responseWindow[0],
-                t <= responseWindow[1]
-            ))[0]
-
-            #
-            nUnits = peths[('rProbe', 'left')].shape[0]
-
-            #
-            pvalues = np.full(nUnits, np.nan)
-            for direction in ('left', 'right'):
-                pvalues_ = session.load(f'population/zeta/probe/{direction}/p')
-                for iUnit in range(nUnits):
-                    if pvalues[iUnit] < pvalues_[iUnit]:
-                        pvalues[iUnit] = pvalues_[iUnit]
-
-            # Iterate over units
-            for iUnit in range(nUnits):
-
-                #
-                lowestBaselineLevel = np.max([
-                    peths[('rProbe', 'left')][iUnit, binIndicesForBaselineWindow].mean(),
-                    peths[('rProbe', 'right')][iUnit, binIndicesForBaselineWindow].mean(),
-                ])
-                if kwargs['minimumBaselineLevel'] is not None and lowestBaselineLevel < kwargs['minimumBaselineLevel']:
-                    continue
-
-                #
-                greatestPeakAmplitude = np.max([
-                    np.max(np.abs(peths[('rProbe', 'left')][iUnit, binIndicesForResponseWindow] - \
-                        peths[('rProbe', 'left')][iUnit, binIndicesForBaselineWindow].mean())),
-                    np.max(np.abs(peths[('rProbe', 'right')][iUnit, binIndicesForResponseWindow] - \
-                        peths[('rProbe', 'right')][iUnit, binIndicesForBaselineWindow].mean())),
-                ])
-                if kwargs['minimumResponseAmplitude'] is not None and greatestPeakAmplitude < kwargs['minimumResponseAmplitude']:
-                    continue
-
-                shortestPeakLatency = np.min([
-                    t[np.argmax(np.abs(peths[('rProbe', 'left')][iUnit]))],
-                    t[np.argmax(np.abs(peths[('rProbe', 'right')][iUnit]))],
-                ])
-                if kwargs['minimumPeakLatency'] is not None and shortestPeakLatency < kwargs['minimumPeakLatency']:
-                    continue
-
-                #
-                if kwargs['minimumPresenceRatio'] is not None and  presenceRatio[iUnit] < kwargs['minimumPresenceRatio']:
-                    continue
-
-                #
-                if kwargs['maximumAmplitudeCutoff'] is not None and amplitudeCutoff[iUnit] > kwargs['maximumAmplitudeCutoff']:
-                    continue
-
-                if kwargs['maximumIsiViolations'] is not None and isiViolations[iUnit] > kwargs['maximumIsiViolations']:
-                    continue
-
-                #
-                if kwargs['maximumProbabilityValue'] is not None and pvalues[iUnit] > kwargs['maximumProbabilityValue']:
-                    continue
-                
-                #
-                ukey = (
-                    str(session.date),
-                    session.animal,
-                    clusterNumbers[iUnit]
-                )
-                self._ukeys.append(ukey)
-
-        return
 
     def lookupUnitKey(self, ukey):
         """
