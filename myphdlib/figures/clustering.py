@@ -27,15 +27,22 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         super().__init__()
         self.peths = {
             'raw': None,
-            'normalized': None,
-            'standardized': None
+            'normal': None,
+            'standard': None
         }
-        self.ambc = None
-        self.params = None
+        self.model = {
+            'params': None,
+            'labels': None,
+            'rss': None,
+            'k': None
+        }
+        self.descriptions = {
+            'a': None,
+            'd': None,
+            'm': None,
+            's': None,
+        }
         self.t = None
-        self.rss = None
-        self.labels = None
-        self.k = None
 
         #
         self.examples = (
@@ -49,33 +56,39 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
     def saveNamespace(
         self,
-        hdf,
         ):
         """
         """
 
-        if type(hdf) != pl.Path:
-            hdf = pl.Path(hdf)
-        if hdf.exists() == False:
-            raise Exception('Base table does not exist')
+        if pl.Path(self.hdf).exists() == False:
+            raise Exception('Data store does not exist')
 
+        #
         d = {
-            'peths/dg/extra/fr': self.peths['standardized'],
-            'peths/dg/extra/params': self.ambc,
-            'terms/dg/extra/rProbe': self.peths['raw'],
-            'gmm/dg/extra/params': self.params,
-            'gmm/dg/extra/rss': self.rss,
-            'gmm/dg/extra/labels': self.labels,
-            'gmm/dg/extra/k': self.k
+            'clustering/peths/raw': self.peths['raw'],
+            'clustering/peths/normal': self.peths['normal'],
+            'clustering/peths/standard': self.peths['standard'],
+            'clustering/model/params': self.model['params'],
+            'clustering/model/labels': self.model['labels'],
+            'clustering/model/rss': self.model['rss'],
+            'clustering/model/k': self.model['k'],
+            'clustering/description/a': self.descriptions['a'],
+            'clustering/description/d': self.descriptions['d'],
+            'clustering/description/m': self.descriptions['m'],
+            'clustering/description/s': self.descriptions['s'],
         }
-        m = findOverlappingUnits(self.ukeys, hdf)
-        with h5py.File(hdf, 'a') as stream:
+
+        #
+        unitMask = findOverlappingUnits(self.ukeys, self.hdf)
+
+        # TODO: Standardize saving a dictionary like this (above)
+        with h5py.File(self.hdf, 'a') as stream:
             for k, v in d.items():
                 if v is None:
                     continue
                 nCols = 1 if len(v.shape) == 1 else v.shape[1]
-                data = np.full([m.size, nCols], np.nan)
-                data[m, :] = v.reshape(-1, nCols)
+                data = np.full([unitMask.size, nCols], np.nan)
+                data[unitMask, :] = v.reshape(-1, nCols)
                 if k in stream:
                     del stream[k]
                 ds = stream.create_dataset(
@@ -84,7 +97,9 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                     data.dtype,
                     data=data
                 )
-                if k.endswith('rProbe'):
+
+                # Save the bin centers for all PETH datasets
+                if 'peth' in pl.Path(k).parts:
                     ds.attrs['t'] = self.t
 
         return
@@ -96,31 +111,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         """
         """
 
-        d = {
-            'rProbe/dg/preferred/ambc': 'ambc',
-            'gmm/params': 'params',
-            'gmm/rss': 'rss',
-            'gmm/labels': 'labels',
-            'gmm/k': 'k'
-        }
-        m = findOverlappingUnits(self.ukeys, hdf)
-        with h5py.File(hdf, 'r') as stream:
-            for k, v in d.items():
-                if k in stream:
-                    self.__setattr__(v, np.array(stream[k])[m])
-
-            path = 'terms/dg/extra/rProbe'
-            if path in stream:
-                ds = stream[path]
-                if 't' in ds.attrs.keys():
-                    self.t = ds.attrs['t']
-                self.peths['raw'] = np.array(ds)[m]
-            # path = 'rProbe/dg/preferred/normalized/fr'
-            # if path in stream:
-            #     self.peths['normalized'] = np.array(stream[path])[m]
-            path = 'peths/dg/extra/fr'
-            if path in stream:
-                self.peths['standardized'] = np.array(stream[path])[m]
+        # TODO: Code this
 
         return
 
@@ -130,6 +121,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         baselineWindow=(-0.25, -0.05),
         binsize=0.01,
         smoothingKernelWidth=0.01,
+        perisaccadicWindow=(-0.1, 0.1),
         ):
         """
         """
@@ -144,7 +136,10 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         #
         nUnits = len(self.ukeys)
-        self.ambc = np.full([nUnits, 4], np.nan)
+        self.a = np.full(nUnits, np.nan)
+        self.d = np.full(nUnits, np.nan)
+        self.m = np.full(nUnits, np.nan)
+        self.s = np.full(nUnits, np.nan)
         for k in self.peths.keys():
             self.peths[k] = np.full([nUnits, nBins], np.nan)
         for iUnit, ukey in enumerate(self.ukeys):
@@ -155,57 +150,58 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             self.ukey = ukey
 
             # Initialize parameters
-            x = np.full(nBins, np.nan)
-            a = 0 # Amplitude of preferred direction
-            m = None # Probe direction
-            b = None # Baseline
-            c = None # Scaling factor
+            y = np.full(nBins, np.nan)
+            a = 0 # Amplitude
+            d = None # Probe direction
+            m = None # Mean FR
+            s = None # Standard deviation
 
-            # TODO: Exclude peri-saccadic trials
-            for probeMotion, probeDirection in zip([-1, 1], ['left', 'right']):
+            #
+            for gratingMotion in (-1, 1):
+                trialIndices = np.where(np.vstack([
+                    self.session.gratingMotionDuringProbes == gratingMotion,
+                    np.logical_or(
+                        self.session.probeLatency > perisaccadicWindow[1],
+                        self.session.probeLatency < perisaccadicWindow[0]
+                    )
+                ]).all(0))[0]
                 t, fr = self.unit.kde(
-                    self.session.probeTimestamps[self.session.gratingMotionDuringProbes == probeMotion],
+                    self.session.probeTimestamps[trialIndices],
                     responseWindow=responseWindow,
                     binsize=binsize,
                     sigma=smoothingKernelWidth,
                 )
-                # t, M = psth2(
-                #     self.session.probeTimestamps[self.session.gratingMotionDuringProbes == probeMotion],
-                #     self.unit.timestamps,
-                #     window=responseWindow,
-                #     binsize=binsize
-                # )
-                # fr = M.mean(0) / binsize
                 t, M = psth2(
-                    self.session.probeTimestamps[self.session.gratingMotionDuringProbes == probeMotion],
+                    self.session.probeTimestamps[trialIndices],
                     self.unit.timestamps,
                     window=baselineWindow,
                     binsize=None
                 )
                 bl = M.flatten() / np.diff(baselineWindow).item()
                 if np.abs(fr - bl.mean()).max() > a:
-                    x = fr
+                    y = fr
                     a = np.abs(fr - bl.mean()).max()
-                    m = probeMotion
-                    b = bl.mean()
-                    c = bl.std()
+                    d = gratingMotion
+                    m = bl.mean()
+                    s = bl.std()
 
             #
-            if c == 0:
-                c = np.nan
-            self.ambc[iUnit] = np.array([a, m, b, c])
+            self.descriptions['a'][iUnit] = a
+            self.descriptions['d'][iUnit] = d
+            self.descriptions['m'][iUnit] = m
+            self.descriptions['s'][iUnit] = s if s != 0 else np.nan
 
             # Store the raw PSTH
-            self.peths['raw'][iUnit] = x
+            self.peths['raw'][iUnit] = y
 
             # Normalize
-            self.peths['normalized'][iUnit] = (x - b) / a
+            self.peths['normal'][iUnit] = (fr - m) / a
 
             # Standardize
-            if np.isnan(c):
-                self.peths['standardized'][iUnit] = np.full(x.size, np.nan)
+            if np.isnan(s):
+                self.peths['standard'][iUnit] = np.full(y.size, np.nan)
             else:
-                self.peths['standardized'][iUnit] = (x - b) / c
+                self.peths['standard'][iUnit] = (fr - m) / s
 
         return
 
@@ -238,9 +234,9 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         #
         nUnits = len(self.ukeys)
-        self.k = np.full(nUnits, np.nan)
-        self.rss = np.full(nUnits, np.nan)
-        self.params = np.full([nUnits, int(3 * kmax + 1)], np.nan)
+        self.model['k'] = np.full(nUnits, np.nan)
+        self.model['rss'] = np.full(nUnits, np.nan)
+        self.model['params'] = np.full([nUnits, int(3 * kmax + 1)], np.nan)
 
         #
         for iUnit in range(nUnits):
@@ -329,7 +325,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 bounds=bounds
             )
             yFit = gmm.predict(self.t)
-            self.rss[iUnit] = np.sum(np.power(yFit - yStandard, 2)) / np.sum(np.power(yStandard, 2))
+            self.model['rss'][iUnit] = np.sum(np.power(yFit - yStandard, 2)) / np.sum(np.power(yStandard, 2))
 
             # Extract the parameters of the fit GMM
             d, abc = gmm._popt[0], gmm._popt[1:]
@@ -340,8 +336,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 B[order],
                 C[order],
             ])
-            self.params[iUnit, :params.size] = params
-            self.params[iUnit, -1] = d
+            self.model['params'][iUnit, :params.size] = params
+            self.model['params'][iUnit, -1] = d
 
         return
 
@@ -353,24 +349,24 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         nUnits = len(self.ukeys)
         self.labels = np.full(nUnits, np.nan)
-        for i, y in enumerate(self.peths['normalized']):
+        for i, y in enumerate(self.peths['normal']):
 
             # No peaks detected
-            if np.isnan(self.k[i]):
-                self.labels[i] = np.nan
+            if np.isnan(self.model['k'][i]):
+                self.model['labels'][i] = np.nan
                 continue
 
             # Negative
             if y[np.argmax(np.abs(y))] < 0:
-                self.labels[i] = -1
+                self.model['labels'] = -1
 
             # Positive (multiphasic)
             elif self.k[i] >= 3:
-                self.labels[i] = 3
+                self.model['labels'] = 3
 
             # Positive (Mono- or Biphasic)
             else:
-                self.labels[i] = self.k[i]
+                self.model['labels'][i] = self.k[i]
 
         return
 
