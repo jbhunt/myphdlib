@@ -266,6 +266,8 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
             if path in stream:
                 self.k = np.array(stream[path][m]).flatten()
 
+        # TODO: Define "t" attribute
+
         return
 
     def _loadEventDataForSaccades(self):
@@ -864,27 +866,30 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
         m = np.vstack([
             self.params[:, 0] >= minimumResponseAmplitude,
             self.paramsActual[:, 0] >= minimumResponseAmplitude,
-            np.logical_or(
-                self.pvaluesActual[:, windowIndex, 0] < alphaLevel,
-                self.pvalues[:, 0, 0] < alphaLevel
-            )
+            self.pvaluesActual[:, windowIndex, 0] < alphaLevel,
+            # np.logical_or(
+            #     self.pvaluesActual[:, windowIndex, 0] < alphaLevel,
+            #     self.pvalues[:, 0, 0] < alphaLevel
+            # )
         ]).all(0)
         x = np.clip(self.modulation[m, 0, 0] / self.params[m, 0], *bounds)
         y = np.clip(self.modulationActual[m, 0, windowIndex] / self.paramsActual[m, 0], *bounds)
-        c = np.full(x.size, '0.5')
+        c = np.full(x.size, 'k')
         
         ax.scatter(
             x,
             y,
             marker='.',
-            s=5,
+            s=10,
             c=c,
             alpha=0.7
         )
         ax.vlines(0, *bounds, color='k', alpha=0.5)
         ax.hlines(0, *bounds, color='k', alpha=0.5)
-        ax.set_xlabel('MI (Fictive)')
-        ax.set_ylabel('MI (Actual)')
+        ax.set_ylim(bounds)
+        ax.set_xlim(bounds)
+        ax.set_xlabel('Modulation (Fictive)')
+        ax.set_ylabel('Modulation (Actual)')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()

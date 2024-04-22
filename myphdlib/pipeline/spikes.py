@@ -34,16 +34,19 @@ class SpikesProcessingMixin(object):
     """
     """
 
-    def _extractSpikeDatasets(self):
+    def _extractSpikeDatasets(
+        self,
+        sorting='manual',
+        ):
         """
         """
 
-        if self.hasDataset('population/spikes/clusters') and self.hasDataset('population/spikes/timestamps'):
+        if self.hasDataset('spikes/clusters') and self.hasDataset('spikes/timestamps'):
             return
         self.log(f'Extracting spike clusters and timestamps', level='info')
 
         spikeTimestamps = np.array([])
-        result = list(self.folders.ephys.joinpath('sorting').glob('spike_times.npy'))
+        result = list(self.folders.ephys.joinpath('sorting', sorting).glob('spike_times.npy'))
         if len(result) != 1:
             raise Exception('Could not locate the spike times data')
         else:
@@ -54,7 +57,7 @@ class SpikesProcessingMixin(object):
         
         #
         spikeClusters = np.array([])
-        result = list(self.folders.ephys.joinpath('sorting').glob('spike_clusters.npy'))
+        result = list(self.folders.ephys.joinpath('sorting', sorting).glob('spike_clusters.npy'))
         if len(result) != 1:
             raise Exception('Could not locate the cluster ID data')
         else:
@@ -69,20 +72,64 @@ class SpikesProcessingMixin(object):
 
         return
 
+    def _extractQualityLabels(
+        self,
+        ):
+        """
+
+        """
+
+        clusterInfoFile = self.home.joinpath('ephys', 'sorting', 'manual', 'cluster_info.tsv')
+        if clusterInfoFile.exists() == False:
+            self.log('Could not locate cluster info file', level='warning')
+            nUnits = len(self.population)
+            self.save('metrics/ql', np.full(nUnits, np.nan))
+            return
+
+        #
+        with open(clusterInfoFile, 'r') as stream:
+            lines = stream.readlines()
+        columnNames = lines[0].split('\t')
+        j = columnNames.index('KSLabel')
+        kilosortLabels = np.array([
+            row.split('\t')[j] for row in lines[1:]
+        ])
+        j = columnNames.index('group')
+        userLabels = np.array([
+            row.split('\t')[j] for row in lines[1:]
+        ])
+        nUnits = len(kilosortLabels)
+        qualityLabels = list()
+        for iUnit in range(nUnits):
+            if userLabels[iUnit] == '':
+                ql = kilosortLabels[iUnit]
+            else:
+                ql = userLabels[iUnit]
+            qualityLabels.append(ql)
+        qualityLabels = np.array(qualityLabels)
+        qualityLabelsCoded = np.array([
+            0 if ql == 'mua' else 1
+                for ql in qualityLabels
+        ])
+        self.save('metrics/ql', qualityLabelsCoded)
+
+        return
+
     def _extractKilosortLabels(
         self,
+        sorting='manual',
         overwrite=True,
         ):
         """
         """
 
         #
-        if self.hasDataset('population/metrics/ksl') and overwrite == False:
+        if self.hasDataset('metrics/ksl') and overwrite == False:
             return
 
         #
         spikeClusters = np.array([])
-        result = list(self.folders.ephys.joinpath('sorting').glob('spike_clusters.npy'))
+        result = list(self.folders.ephys.joinpath('sorting', sorting).glob('spike_clusters.npy'))
         if len(result) != 1:
             raise Exception('Could not locate the cluster ID data')
         else:
@@ -98,7 +145,7 @@ class SpikesProcessingMixin(object):
         # Extract the label assigned to each unit by Kilosort
         clusterLabels = list()
         clusterNumbers2 = list()
-        result = list(self.folders.ephys.joinpath('sorting').glob('cluster_KSLabel.tsv'))
+        result = list(self.folders.ephys.joinpath('sorting', sorting).glob('cluster_KSLabel.tsv'))
         if len(result) != 1:
             self.log(f'Could not locate Kilosort labels', level='warning')
             clusterLabels = np.full(nUnits, np.nan)
@@ -122,12 +169,13 @@ class SpikesProcessingMixin(object):
             clusterLabels = np.delete(clusterLabels, missingClusterIndices)
         
         #
-        self.save('population/metrics/ksl', clusterLabels)
+        self.save('metrics/ksl', clusterLabels)
 
         return
 
     def _extractSpikeWaveforms(
         self,
+        sorting='manual',
         nWaveforms=50,
         nBestChannels=1,
         nogui=True,
@@ -136,7 +184,7 @@ class SpikesProcessingMixin(object):
         ):
 
         #
-        # if self.hasDataset('population/metrics/bsw'):
+        # if self.hasDataset('metrics/bsw'):
         #     return
 
         self.log(f'Extrcting best average spike waveforms')
@@ -144,6 +192,7 @@ class SpikesProcessingMixin(object):
         #
         partsFromEphysFolder = (
             'sorting',
+             sorting
         )
         spikeWaveformsFile = self.folders.ephys.joinpath(*partsFromEphysFolder, 'spike_waveforms.npy')
 
@@ -203,25 +252,28 @@ class SpikesProcessingMixin(object):
             bestSpikeWaveforms[iUnit :] = bestSpikeWaveform - bestSpikeWaveform[baselineWindowInSamples[0]: baselineWindowInSamples[1]].mean()
 
         #
-        self.save(f'population/metrics/bsw', bestSpikeWaveforms)
+        self.save(f'metrics/bsw', bestSpikeWaveforms)
 
         return
 
-    def _extractUnitPositions(self):
+    def _extractUnitPositions(
+        self,
+        sorting='manual',
+        ):
         """
         """
 
         self.log(f'Extracting spatial coordinates for each unit')
 
         #
-        if self.hasDataset('population/metrics/msp'):
+        if self.hasDataset('metrics/msp'):
             return
 
         #
-        kilosortResultsFile = self.folders.ephys.joinpath('sorting', 'rez.mat')
+        kilosortResultsFile = self.folders.ephys.joinpath('sorting', sorting, 'rez.mat')
         kilosortResults = mat73.loadmat(kilosortResultsFile)['rez']
         spikeCoordinates = kilosortResults['xy']
-        spikeClustersFile = self.folders.ephys.joinpath('sorting', 'spike_clusters.npy')
+        spikeClustersFile = self.folders.ephys.joinpath('sorting', sorting, 'spike_clusters.npy')
         spikeClusters = np.load(spikeClustersFile)
         
         #
@@ -235,13 +287,14 @@ class SpikesProcessingMixin(object):
 
         # Need to swap x and y coordinates
         meanSpikePositions = np.fliplr(meanSpikePositions)
-        self.save('population/metrics/msp', meanSpikePositions)
+        self.save('metrics/msp', meanSpikePositions)
 
 
         return
 
     def _measureSpikeSortingQuality(
         self,
+        sorting='manual',
         **kwargs
         ):
         """
@@ -269,7 +322,7 @@ class SpikesProcessingMixin(object):
         params_.update(kwargs)
 
         #
-        sortingResultsFolder = self.folders.ephys.joinpath('sorting')
+        sortingResultsFolder = self.folders.ephys.joinpath('sorting', sorting)
         metrics = run_quality_metrics(
             str(sortingResultsFolder),
             30000.0,
@@ -281,18 +334,21 @@ class SpikesProcessingMixin(object):
         amplitudeCutoffs = np.array(list(metrics['amplitude_cutoff'].values())).astype(float)
 
         #
-        self.save('population/metrics/pr', presenceRatios)
-        self.save('population/metrics/rpvr', isiViolationRates)
-        self.save('population/metrics/ac', amplitudeCutoffs)
+        self.save('metrics/pr', presenceRatios)
+        self.save('metrics/rpvr', isiViolationRates)
+        self.save('metrics/ac', amplitudeCutoffs)
 
         return
 
-    def _runSpikesModule(self):
+    def _runSpikesModule(
+        self,
+        sorting='manual',
+        ):
         """
         """
 
-        self._extractSpikeDatasets()
-        self._extractKilosortLabels()
-        self._measureSpikeSortingQuality()
+        self._extractSpikeDatasets(sorting)
+        self._extractQualityLabels()
+        self._measureSpikeSortingQuality(sorting)
 
         return

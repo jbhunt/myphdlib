@@ -251,7 +251,7 @@ class SessionBase():
 
         return
 
-    def listAllPaths(self):
+    def listAllDatasets(self, returnPaths=False):
         """
         """
 
@@ -259,12 +259,19 @@ class SessionBase():
         with h5py.File(self.hdf, 'r') as file:
             file.visit(lambda name: pathsInFile.append(name))
 
+        datasetsInFile = list()
         with h5py.File(self.hdf, 'r') as file:
             for path in pathsInFile:
                 if type(file[path]) == h5py.Dataset:
-                    print(path) 
+                    datasetsInFile.append(path)
 
-        return
+        #
+        for path in datasetsInFile:
+            print(path)
+            
+
+        if returnPaths:
+            return datasetsInFile
 
     def _makeOutputFile(
         self,
@@ -543,7 +550,10 @@ class SessionBase():
                 barcodeTimestampsNeuropixels - self.referenceSampleNumber,
                 fill_value='extrapolate'
             )
-            eventTimestamps[eventMask] = np.around(f(eventIndices), 0)
+            try:
+                eventTimestamps[eventMask] = np.around(f(eventIndices[eventMask]), 0)
+            except:
+                import pdb; pdb.set_trace()
 
         #
         else:

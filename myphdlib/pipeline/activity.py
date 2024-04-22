@@ -1,4 +1,4 @@
-from zetapy import getZeta
+from zetapy import getZeta, zetatest
 from joblib import Parallel, delayed
 from myphdlib.general.toolkit import psth2
 # from myphdlib.pipeline.main import ModuleBase
@@ -28,28 +28,27 @@ def _runZetaTestForBatch(
     responseWindowAdjusted = np.array(responseWindow) + tOffset
 
     #
-    result = list()
-    for unit in units:
+    result = np.full([len(units), 3], np.nan)
+    for i, unit in enumerate(units):
         if unit.timestamps.size < minimumSpikeCount:
             p, tLatency = np.nan, np.nan
         else:
-            p, (tZenith, tInverse, tPeak), dZeta = getZeta(
+            p, dZeta, dRate = zetatest(
                 unit.timestamps,
                 eventTimestamps - tOffset,
-                intLatencyPeaks=3,
                 dblUseMaxDur=np.max(responseWindowAdjusted),
                 tplRestrictRange=responseWindowAdjusted,
-                boolReturnZETA=True
             )
+
             if latencyMetric == 'zenith':
-                tLatency = tZenith - tOffset
+                tLatency = dZeta['vecLatencies'][0].item() - tOffset
             elif latencyMetric == 'peak':
-                tLatency = tPeak - tOffset
+                tLatency = dZeta['vecLatencies'][2].item() - tOffset
             else:
                 tLatency = np.nan
-        result.append([unit.index, p, tLatency])
+        result[i, :] = np.array([unit.index, p, tLatency])
 
-    return np.array(result)
+    return result
 
 class ActivityProcessingMixin(object):
     """
@@ -57,7 +56,7 @@ class ActivityProcessingMixin(object):
 
     def _runZetaTests(
         self,
-        responseWindow=(-1, 1),
+        responseWindow=(-0.2, 0.5),
         parallelize=True,
         nUnitsPerBatch=10,
         latencyMetric='peak',
@@ -85,23 +84,23 @@ class ActivityProcessingMixin(object):
             self.log('No probe stimuli detected: skipping ZETA test', level='warning')
             nUnits = len(self.population)
             for n, d in zip(eventNames, eventDirections):
-                self.save(f'population/zeta/{n}/{d}/p', np.full(nUnits, np.nan))
-                self.save(f'population/zeta/{n}/{d}/latency', np.full(nUnits, np.nan))
+                self.save(f'zeta/{n}/{d}/p', np.full(nUnits, np.nan))
+                self.save(f'zeta/{n}/{d}/latency', np.full(nUnits, np.nan))
             return
 
         #
         eventTimestamps = (
             self.probeTimestamps[self.filterProbes(trialType='es', probeDirections=(-1,))],
             self.probeTimestamps[self.filterProbes(trialType='es', probeDirections=(+1,))],
-            self.saccadeTimestamps[self.saccadeDirections == 'n'],
-            self.saccadeTimestamps[self.saccadeDirections == 't']
+            self.saccadeTimestamps[self.saccadeLabels ==  1, 0],
+            self.saccadeTimestamps[self.saccadeLabels == -1, 0]
         )
 
         #
         for ev, n, d in zip(eventTimestamps, eventNames, eventDirections):
 
             # Check if dataset already exists
-            if self.hasDataset(f'population/zeta/{n}/{d}/p') and overwrite == False:
+            if self.hasDataset(f'zeta/{n}/{d}/p') and overwrite == False:
                 self.log(f'Skipping ZETA test for activity related to {n}s (direction={d}, window=[{responseWindow[0]}, {responseWindow[1]}] sec)', level='info')
                 continue
 
@@ -135,7 +134,7 @@ class ActivityProcessingMixin(object):
                 for iBatch, batch in enumerate(batches):
                     result = _runZetaTestForBatch(
                         batch,
-                        self.probeTimestamps[self.filterProbes(trialType='es', probeDirections=(-1, ))],
+                        ev,
                         responseWindow=responseWindow,
                         latencyMetric=latencyMetric,
                         minimumSpikeCount=minimumSpikeCount,
@@ -150,21 +149,22 @@ class ActivityProcessingMixin(object):
             results = results[np.argsort(unitIndices), :]
 
             # Save p-values and latencies
-            self.save(f'population/zeta/{n}/{d}/p', results[:, 1])
-            self.save(f'population/zeta/{n}/{d}/latency', results[:, 2])
+            self.save(f'zeta/{n}/{d}/p', results[:, 1])
+            self.save(f'zeta/{n}/{d}/latency', results[:, 2])
 
         return
 
     def _runActivityModule(
         self,
         zeta=False,
-        redo=False
+        redo=False,
+        parallelize=True,
         ):
         """
         """
 
         if zeta:
-            if self.hasDataset('population/zeta/probe/left/p') == False or redo:
-                self._runZetaTests()
+            if self.hasDataset('zeta/probe/left/p') == False or redo:
+                self._runZetaTests(overwrite=True, parallelize=parallelize)
 
         return

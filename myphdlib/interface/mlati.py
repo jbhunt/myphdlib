@@ -12,9 +12,7 @@ from myphdlib.pipeline.spikes import SpikesProcessingMixin
 from myphdlib.pipeline.activity import ActivityProcessingMixin
 from myphdlib.pipeline.prediction import PredictionProcessingMixin
 from myphdlib.pipeline.cleanup import CleanupProccessingMixin
-from myphdlib.pipeline.clustering import ClusterProcessingMixin
 from myphdlib.pipeline.stimuli import StimuliProcessingMixin
-from myphdlib.analysis.basic import BasicResponseCharacterizationAnalysisMixin
 from myphdlib.pipeline.peths import TimeHistogramProcessingMixin
 from myphdlib.analysis.modulation import ModulationAnalysisMixin
 from myphdlib.pipeline.tuning import TuningProcessingMixin
@@ -991,9 +989,7 @@ class MlatiSession(
     ActivityProcessingMixin,
     PredictionProcessingMixin,
     CleanupProccessingMixin,
-    ClusterProcessingMixin,
     StimuliProcessingMixin,
-    BasicResponseCharacterizationAnalysisMixin,
     ModulationAnalysisMixin,
     TimeHistogramProcessingMixin,
     TuningProcessingMixin,

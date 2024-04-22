@@ -5,6 +5,152 @@ class TuningProcessingMixin(object):
     """
     """
 
+    def _measureLuminancePolarity(
+        self,
+        responseWindow=(0, 0.3),
+        baselineWindow=(-0.2, 0),
+        minimumFiringRate=0.5,
+        ):
+        """
+        """
+
+        #
+        spotTimestamps = list()
+        spotPolarities = list()
+        for phase in ('pre', 'post'):
+            spotTimestamps_ = self.load(f'stimuli/sn/{phase}/timestamps')
+            spotPolarities_ = self.load(f'stimuli/sn/{phase}/signs')
+            if spotTimestamps_ is None:
+                continue
+            for t in spotTimestamps_:
+                spotTimestamps.append(t)
+            for p in spotPolarities_:
+                spotPolarities.append(p)
+        spotTimestamps = np.array(spotTimestamps)
+        spotPolarities = np.array(spotPolarities)
+
+        #
+        nUnits = self.population.count()
+        polarityIndices = np.full(nUnits, np.nan)
+        for iUnit, unit in enumerate(self.population):
+
+            #
+            if unit.timestamps.size / self.tRange[-1] < minimumFiringRate:
+                continue
+
+            # Measure ON response
+            trialIndices = np.where(spotPolarities == True)
+            t, M = psth2(
+                spotTimestamps[trialIndices],
+                unit.timestamps,
+                window=responseWindow,
+                binsize=None
+            )
+            fr = M.mean(0).item() / np.diff(responseWindow).item()
+            t, M = psth2(
+                spotTimestamps[trialIndices],
+                unit.timestamps,
+                window=baselineWindow,
+                binsize=None
+            )
+            bl = M.mean(0).item() / np.diff(baselineWindow).item()
+            rOn = np.clip(fr - bl, 0, np.inf)
+
+            # Measure OFF response
+            trialIndices = np.where(spotPolarities == False)
+            t, M = psth2(
+                spotTimestamps[trialIndices],
+                unit.timestamps,
+                window=responseWindow,
+                binsize=None
+            )
+            fr = M.mean(0).item() / np.diff(responseWindow).item()
+            t, M = psth2(
+                spotTimestamps[trialIndices],
+                unit.timestamps,
+                window=baselineWindow,
+                binsize=None
+            )
+            bl = M.mean(0).item() / np.diff(baselineWindow).item()
+            rOff = np.clip(fr - bl, 0, np.inf)
+
+            # Compute polarity index
+            if rOn + rOff == 0:
+                continue
+            else:
+                polarityIndex = (rOn - rOff) / (rOn + rOff)
+                polarityIndices[iUnit] = round(polarityIndex, 2)
+
+        #
+        self.save(f'metrics/lpi', polarityIndices)
+
+        return
+
+    def _measureDirectionSelectivity(
+        self,
+        ):
+        """
+        """
+
+        # Load stimulus metadata
+        movingBarOrientations = self.load('stimuli/mb/orientation')
+        barOnsetTimestamps = self.load('stimuli/mb/onset/timestamps')
+        barOffsetTimestamps = self.load('stimuli/mb/offset/timestamps')
+        movingBarTimestamps = np.hstack([
+            barOnsetTimestamps.reshape(-1, 1),
+            barOffsetTimestamps.reshape(-1, 1)
+        ])
+
+        #
+        uniqueOrientations = np.unique(movingBarOrientations)
+        uniqueOrientations.sort()
+
+        #
+        nUnits = self.population.count()
+        directionSelectivityIndices = np.full(nUnits, np.nan).astype(float)
+
+        #
+        for unitIndex, unit in enumerate(self.population):
+
+            #
+            vectors = np.full([uniqueOrientations.size, 2], np.nan)
+            for rowIndex, orientation in enumerate(uniqueOrientations):
+
+                #
+                trialIndices = np.where(movingBarOrientations == orientation)[0]
+                amplitudes = list()
+                for trialIndex in trialIndices:
+                    t1, t2 = movingBarTimestamps[trialIndex, :]
+                    dt = t2 - t1
+                    t, M = psth2(
+                        np.array([t1]),
+                        unit.timestamps,
+                        window=(0, dt),
+                        binsize=None
+                    )
+                    fr = M.item() / dt
+                    amplitudes.append(fr)
+
+                #
+                vectors[rowIndex, 0] = np.mean(amplitudes)
+                vectors[rowIndex, 1] = np.deg2rad(orientation)
+
+            # Compute the coordinates of the polar plot vertices
+            vertices = np.vstack([
+                vectors[:, 0] * np.cos(vectors[:, 1]),
+                vectors[:, 0] * np.sin(vectors[:, 1])
+            ]).T
+
+            # Compute direction selectivity index
+            a, b = vertices.sum(0) / vectors[:, 0].sum()
+            dsi = np.sqrt(np.power(a, 2) + np.power(b, 2))
+            directionSelectivityIndices[unitIndex] = dsi
+
+        #
+        self.save('metrics/dsi', directionSelectivityIndices)
+
+        return
+
     def _extractReceptiveFields(
         self,
         responseWindow=(0, 0.2),
@@ -15,10 +161,6 @@ class TuningProcessingMixin(object):
 
         #
         self.log(f'Extracting sparse noise responses')
-
-        #
-        if self.hasDataset('stimuli/sn/pre') == False:
-            return
 
         # Load the event timestamps
         spotTimestamps = {
@@ -91,7 +233,7 @@ class TuningProcessingMixin(object):
 
         #
         for block in heatmaps.keys():
-            self.save(f'population/rf/{block}', heatmaps[block])
+            self.save(f'metrics/rf/{block}', heatmaps[block])
 
         return
 
@@ -100,5 +242,9 @@ class TuningProcessingMixin(object):
         ):
         """
         """
+
+        self._measureDirectionSelectivity()
+        self._measureLuminancePolarity()
+        # self._extractReceptiveFields()
 
         return

@@ -1,4 +1,5 @@
 import h5py
+import pathlib as pl
 
 pathsToKeep = {
 
@@ -342,3 +343,40 @@ class CleanupProccessingMixin(object):
         self._removeObsoleteDatasets(dryrun)
 
         return
+
+def filterDatasets(
+    sessions,
+    filter,
+    dryrun=True
+    ):
+    """
+    """
+
+    pathsToKeep = list()
+    with open(filter, 'r') as stream:
+        for ln in stream.readlines():
+            if ln == '\n':
+                continue
+            path = pl.Path(ln.strip('\n'))
+            if str(path) not in pathsToKeep:
+                pathsToKeep.append(str(path))
+            pathsToKeep.append(str(path))
+            root = path.parts[0]
+            while True:
+                path = path.parent
+                if str(path) not in pathsToKeep:
+                    pathsToKeep.append(str(path))
+                if str(path) == root:
+                    break
+
+    pathsToRemove = list()
+    for session in sessions:
+        pathsToFilter = session.listAllDatasets(returnPaths=True)
+        for path in pathsToFilter:
+            if path not in pathsToKeep:
+                if path not in pathsToRemove:
+                    pathsToRemove.append(path)
+                if dryrun == False:
+                    session.remove(path)
+
+    return pathsToRemove

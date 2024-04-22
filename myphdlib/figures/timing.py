@@ -2,6 +2,7 @@ import h5py
 import numpy as np
 from scipy import stats
 from scipy.interpolate import interp1d
+from scipy.optimize import fmin
 from matplotlib import pyplot as plt
 from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g, findOverlappingUnits
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
@@ -89,20 +90,15 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         nBins=7,
         cmap='coolwarm',
         transform=True,
+        yIntercepts=(0, 0.1, 0.2, 0.3, 0.4, 0.5),
+        vrange=(-0.5, 0.5),
+        xticks=np.array([0.05, 0.1, 0.2])
         ):
         """
         """
 
         fig, ax = plt.subplots()
-
         windowIndices = np.arange(10)
-        # leftEdges = np.arange(0, 0.5, binsize)
-        # rightEdges = leftEdges + binsize
-        # binEdges = np.vstack([
-        #     leftEdges,
-        #     rightEdges
-        # ]).T
-
         l = np.full(len(self.ukeys), np.nan)
         for iUnit in range(len(self.ukeys)):
             params = self.params[iUnit, :]
@@ -114,10 +110,12 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             l[iUnit] = B[0]
         l = np.array(l)
 
+        #
         leftEdges = np.array([np.nanpercentile(l, i / nBins * 100) for i in range(nBins)])
         rightEdges = np.concatenate([leftEdges[1:], [np.nanmax(l)]])
         binEdges = np.vstack([leftEdges, rightEdges]).T
         
+        #
         Z = np.full([10, binEdges.shape[0]], np.nan)
         m1 = self.params[:, 0] >= minimumResponseAmplitude
         for i in windowIndices:
@@ -141,31 +139,55 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         else:
             f = lambda x: x
         X, Y = np.meshgrid(f(x), y)
-        mesh = ax.pcolormesh(X, Y, Z, vmin=-0.7, vmax=0.7, cmap=cmap)
+        mesh = ax.pcolormesh(X, Y, Z, vmin=vrange[0], vmax=vrange[1], cmap=cmap)
 
         #
+        # x_ = np.mean(binEdges, axis=1)
+        x_ = np.linspace(np.nanmin(l), np.nanmax(l), nBins + 1)
+        xt = f(x_)
+        for yIntercept in yIntercepts:
+            ax.plot(
+                xt,
+                -1 * x_ + yIntercept,
+                color='k',
+                lw=0.5
+            )
+        # ax.hlines(peakModulationOffset, f(np.nanmin(l)), f(np.nanmax(l)), color='k')
+
+        #
+        fit = list()
+        for j in range(Z.shape[1]):
+            y = Z[:, j]
+            x = np.mean(self.windows[:-1], axis=1)
+            p = np.polyfit(x, y, deg=9)
+            f_ = np.poly1d(p)
+            t = fmin(f_, 0)
+            fit.append(t)
+        x = f(np.mean(binEdges, axis=1))
         ax.plot(
-            f(np.linspace(np.nanmin(l), np.nanmax(l), 10)),
-            np.linspace(-1 * np.nanmin(l), -1 * np.nanmax(l), 10),
-            color='k'
+            x,
+            fit,
+            color='w',
+            linestyle='-',
+            marker='o',
+            markersize=5,
         )
-        ax.hlines(0, f(np.nanmin(l)), f(np.nanmax(l)), color='k')
 
         #
         ax.set_xticks(
-            f([0.1, 0.2, 0.3])
+            f(xticks)
         )
-        ax.set_xticklabels([0.1, 0.2, 0.3], rotation=45)
+        ax.set_xticklabels(xticks, rotation=45)
 
         #
-        ax.set_xlabel('Peak latency')
-        ax.set_ylabel('ProbeLatency')
+        ax.set_xlabel('Response latency (s)')
+        ax.set_ylabel('Saccade to probe latency (s)')
         fig.colorbar(mesh)
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, ax
+        return fig, ax, Z
 
     def plotUnitSurvivalByUnitType(
         self,
