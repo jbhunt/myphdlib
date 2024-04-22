@@ -306,6 +306,42 @@ class AnalysisBase():
             raise Exception('Could not determine unit index')
 
         return iUnit
+    
+    def initializeStore(
+        self,
+        filename
+        ):
+        """
+        """
+
+        #
+        with h5py.File(filename, 'w') as stream:
+            date = np.array([
+                ukey[0] for ukey in self.ukeys
+            ], dtype='S').reshape(-1, 1)
+            animal = np.array([
+                ukey[1] for ukey in self.ukeys
+            ], dtype='S').reshape(-1, 1)
+            cluster = np.array([
+                ukey[2] for ukey in self.ukeys
+            ], dtype='S').reshape(-1, 1)
+            datasets = {
+                'ukeys/date': date,
+                'ukeys/animal': animal,
+                'ukeys/cluster': cluster
+            }
+            for path, data in datasets.items():
+                stream.create_dataset(
+                    path,
+                    shape=data.shape,
+                    dtype=data.dtype,
+                    data=data
+                )
+
+        #
+        self.hdf = filename
+
+        return
 
 def findOverlappingUnits(ukeys1, hdf):
     """
