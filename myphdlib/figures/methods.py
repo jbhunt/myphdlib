@@ -770,3 +770,77 @@ class SaccadeDetectionDemonstrationFigure(AnalysisBase):
         fig.tight_layout()
 
         return fig, axs
+    
+class EyeVelocityDistribution(AnalysisBase):
+    """
+    """
+
+    def __init__(
+        self,
+        **kwargs
+        ):
+        """
+        """
+
+        super().__init__(**kwargs)
+
+        return
+    
+    def plotVelocityHistogram(
+        self,
+        animal='mlati6',
+        date='2023-04-11',
+        vrange=(-10, 10),
+        nBins=200,
+        figsize=(5, 3),
+        colors=('r', 'b', '0.5'),
+        labels=('Nasal', 'Temporal', 'Control')
+        ):
+        """
+        """
+
+        fig, ax = plt.subplots()
+        sessionLocated = False
+        for session in self.sessions:
+            if str(session.date) == date and session.animal == animal:
+                self._session = session
+                sessionLocated = True
+                break
+        if sessionLocated == False:
+            raise Exception(f'Could not locate session for {animal} on {date}')
+        
+        #
+        saccadeWaveforms = {
+            'nasal': self.session.load(f'saccades/predicted/{self.session.eye}/nasal/waveforms'),
+            'temporal': self.session.load(f'saccades/predicted/{self.session.eye}/temporal/waveforms')
+        }
+        horizontalEyePosition = self.session.load('pose/filtered')[:, 0 if self.session.eye == 'left' else 2]
+        velocity = {
+            'nasal': list(),
+            'temporal': list(),
+            'control': np.diff(horizontalEyePosition)
+        }
+        for k in saccadeWaveforms.keys():
+            for wf in saccadeWaveforms[k]:
+                dx = np.diff(wf)
+                i = np.argmax(np.abs(dx))
+                v = dx[i]
+                velocity[k].append(v)
+
+        #
+        for i, k in enumerate(velocity.keys()):
+            counts, edges = np.histogram(velocity[k], range=vrange, bins=nBins)
+            y = counts / counts.sum()
+            x = edges[:-1] + ((edges[1] - edges[0]) / 2)
+            ax.plot(x, y, color=colors[i], label=labels[i])
+            ax.fill_between(x, 0, y, color=colors[i], alpha=0.2)
+
+        #
+        ax.legend()
+        ax.set_xlabel('Velocity (pix/sec)')
+        ax.set_ylabel('Probability')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+                
+        return fig, ax
