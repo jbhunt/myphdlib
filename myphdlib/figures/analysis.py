@@ -147,7 +147,7 @@ class AnalysisBase():
         #
         for i, session in enumerate(self._sessions):
 
-            end = '\r' if i + 1 != n else None
+            end = '\r' if i + 1 != nSessions else None
             print(f'Filtering units from session {i + 1} out of {nSessions}', end=end)
 
             #
