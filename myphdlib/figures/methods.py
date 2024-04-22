@@ -810,9 +810,10 @@ class EyeVelocityDistribution(AnalysisBase):
             raise Exception(f'Could not locate session for {animal} on {date}')
         
         #
+        saccadeLabels = self.session.load(f'saccades/predicted/{self.session.eye}/labels')
         saccadeWaveforms = {
-            'nasal': self.session.load(f'saccades/predicted/{self.session.eye}/nasal/waveforms'),
-            'temporal': self.session.load(f'saccades/predicted/{self.session.eye}/temporal/waveforms')
+            'nasal': self.session.load(f'saccades/predicted/{self.session.eye}/waveforms')[saccadeLabels == 1],
+            'temporal': self.session.load(f'saccades/predicted/{self.session.eye}/waveforms')[saccadeLabels == -1]
         }
         horizontalEyePosition = self.session.load('pose/filtered')[:, 0 if self.session.eye == 'left' else 2]
         velocity = {
