@@ -323,7 +323,7 @@ class GonogoSession(SessionBase):
         ax.set_xlabel('Trials by Contrast Change')
         return fig
 
-    count1 = 0
+        count1 = 0
         count6 = 0
         count5 = 0
         count4 = 0
