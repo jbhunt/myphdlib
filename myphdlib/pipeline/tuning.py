@@ -190,6 +190,10 @@ class TuningProcessingMixin(object):
             stimulusFields[block] = np.array(stimulusFields[block])
 
         #
+        if spotTimestamps['on'].size == 0:
+            return
+
+        #
         nRows, nCols = stimulusFields['on'][0].shape
         values, counts = np.unique(stimulusFields['on'], axis=0, return_counts=True)
         nTrials = counts[0]
@@ -233,7 +237,7 @@ class TuningProcessingMixin(object):
 
         #
         for block in heatmaps.keys():
-            self.save(f'metrics/rf/{block}', heatmaps[block])
+            self.save(f'rf/{block}', heatmaps[block])
 
         return
 

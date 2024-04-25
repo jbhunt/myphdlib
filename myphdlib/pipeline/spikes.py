@@ -332,11 +332,13 @@ class SpikesProcessingMixin(object):
         presenceRatios = np.array(list(metrics['presence_ratio'].values())).astype(float)
         isiViolationRates = np.array(list(metrics['isi_viol'].values())).astype(float)
         amplitudeCutoffs = np.array(list(metrics['amplitude_cutoff'].values())).astype(float)
+        firingRates = np.array(list(metrics['firing_rate'].values())).astype(float)
 
         #
         self.save('metrics/pr', presenceRatios)
         self.save('metrics/rpvr', isiViolationRates)
         self.save('metrics/ac', amplitudeCutoffs)
+        self.save('metrics/fr', firingRates)
 
         return
 

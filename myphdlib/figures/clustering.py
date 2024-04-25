@@ -20,11 +20,22 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
     """
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        **kwargs
+        ):
         """
+        Analysis for fitting visual responses with a Gaussian mixtures model
+
+        Method sequence
+        ---------------
+        1. computeExtrasaccadicPeths
+        2. fitExtrasaccadicPeths
+        3. predictLabels
+        4. createFilter
         """
 
-        super().__init__()
+        super().__init__(**kwargs)
         self.peths = {
             'raw': None,
             'normal': None,
@@ -36,20 +47,21 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             'rss': None,
             'k': None
         }
-        self.descriptions = {
+        self.features = {
             'a': None,
             'd': None,
             'm': None,
             's': None,
         }
         self.t = None
+        self.filter = None
 
         #
         self.examples = (
-            ('2023-07-19', 'mlati10', 268),
             ('2023-07-11', 'mlati10', 291),
             ('2023-07-19', 'mlati10', 327),
-            ('2023-07-11', 'mlati10', 295)
+            ('2023-07-11', 'mlati10', 295),
+            ('2023-07-19', 'mlati10', 268),
         )
 
         return
@@ -72,23 +84,24 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             'clustering/model/labels': self.model['labels'],
             'clustering/model/rss': self.model['rss'],
             'clustering/model/k': self.model['k'],
-            'clustering/description/a': self.descriptions['a'],
-            'clustering/description/d': self.descriptions['d'],
-            'clustering/description/m': self.descriptions['m'],
-            'clustering/description/s': self.descriptions['s'],
+            'clustering/description/a': self.features['a'],
+            'clustering/description/d': self.features['d'],
+            'clustering/description/m': self.features['m'],
+            'clustering/description/s': self.features['s'],
+            'clustering/filter': self.filter,
         }
 
         #
-        unitMask = findOverlappingUnits(self.ukeys, self.hdf)
+        mask = self._intersectUnitKeys(self.ukeys)
 
-        # TODO: Standardize saving a dictionary like this (above)
+        #
         with h5py.File(self.hdf, 'a') as stream:
             for k, v in d.items():
                 if v is None:
                     continue
                 nCols = 1 if len(v.shape) == 1 else v.shape[1]
-                data = np.full([unitMask.size, nCols], np.nan)
-                data[unitMask, :] = v.reshape(-1, nCols)
+                data = np.full([mask.size, nCols], np.nan)
+                data[mask, :] = v.reshape(-1, nCols)
                 if k in stream:
                     del stream[k]
                 ds = stream.create_dataset(
@@ -99,26 +112,52 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 )
 
                 # Save the bin centers for all PETH datasets
-                if 'peth' in pl.Path(k).parts:
+                if 'peths' in pl.Path(k).parts:
                     ds.attrs['t'] = self.t
 
         return
 
     def loadNamespace(
         self,
-        hdf,
         ):
         """
         """
 
-        # TODO: Code this
+        d = {
+            'clustering/peths/raw': (self.peths, 'raw'),
+            'clustering/peths/normal': (self.peths, 'normal'),
+            'clustering/peths/standard': (self.peths, 'standard'),
+            'clustering/model/params': (self.model, 'params'),
+            'clustering/model/labels': (self.model, 'labels'),
+            'clustering/model/rss': (self.model, 'rss'),
+            'clustering/model/k': (self.model, 'k'),
+            'clustering/description/a': (self.features, 'a'),
+            'clustering/description/d': (self.features, 'd'),
+            'clustering/description/m': (self.features, 'm'),
+            'clustering/description/s': (self.features, 's'),
+            'clustering/filter': ('filter', None),
+        }
+
+        with h5py.File(self.hdf, 'r') as stream:
+            for path, (attr, key) in d.items():
+                if path in stream:
+                    ds = stream[path]
+                    if 't' in ds.attrs.keys() and self.t is None:
+                        self.t = ds.attrs['t']
+                    value = np.array(ds)
+                    if len(value.shape) == 2 and value.shape[-1] == 1:
+                        value = value.flatten()
+                    if key is None:
+                        setattr(self, attr, value)
+                    else:
+                        attr[key] = value
 
         return
 
     def computeExtrasaccadicPeths(
         self,
         responseWindow=(-0.2, 0.5),
-        baselineWindow=(-0.25, -0.05),
+        baselineWindow=(-0.3, 0),
         binsize=0.01,
         smoothingKernelWidth=0.01,
         perisaccadicWindow=(-0.1, 0.1),
@@ -136,10 +175,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         #
         nUnits = len(self.ukeys)
-        self.a = np.full(nUnits, np.nan)
-        self.d = np.full(nUnits, np.nan)
-        self.m = np.full(nUnits, np.nan)
-        self.s = np.full(nUnits, np.nan)
+        for k in self.features.keys():
+            self.features[k] = np.full(nUnits, np.nan)
         for k in self.peths.keys():
             self.peths[k] = np.full([nUnits, nBins], np.nan)
         for iUnit, ukey in enumerate(self.ukeys):
@@ -147,61 +184,74 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             #
             end = None if iUnit + 1 == nUnits else '\r'
             print(f'Working on {iUnit + 1} out of {nUnits} units', end=end)
-            self.ukey = ukey
+            self.ukey = ukey # NOTE: Very important
 
-            # Initialize parameters
+            # Initialize feature set
             y = np.full(nBins, np.nan)
-            a = 0 # Amplitude
+            a = None # Amplitude
             d = None # Probe direction
             m = None # Mean FR
             s = None # Standard deviation
 
             #
             for gratingMotion in (-1, 1):
+
+                # Select just the extra-saccadic trials
                 trialIndices = np.where(np.vstack([
                     self.session.gratingMotionDuringProbes == gratingMotion,
                     np.logical_or(
-                        self.session.probeLatency > perisaccadicWindow[1],
-                        self.session.probeLatency < perisaccadicWindow[0]
+                        self.session.probeLatencies > perisaccadicWindow[1],
+                        self.session.probeLatencies < perisaccadicWindow[0]
                     )
                 ]).all(0))[0]
-                t, fr = self.unit.kde(
+
+                # Compute firing rate
+                t, y_ = self.unit.kde(
                     self.session.probeTimestamps[trialIndices],
                     responseWindow=responseWindow,
                     binsize=binsize,
                     sigma=smoothingKernelWidth,
                 )
-                t, M = psth2(
+
+                # Estimate baseline mean and standard deviation
+                t, bl = self.unit.kde(
                     self.session.probeTimestamps[trialIndices],
-                    self.unit.timestamps,
-                    window=baselineWindow,
-                    binsize=None
+                    responseWindow=baselineWindow,
+                    binsize=binsize,
+                    sigma=smoothingKernelWidth
                 )
-                bl = M.flatten() / np.diff(baselineWindow).item()
-                if np.abs(fr - bl.mean()).max() > a:
-                    y = fr
-                    a = np.abs(fr - bl.mean()).max()
-                    d = gratingMotion
-                    m = bl.mean()
-                    s = bl.std()
+                m_ = bl.mean()
+                s_ = bl.std()
+
+                # Compute new features
+                a_ = np.abs(y_[self.t > 0] - m_).max()
+                d_ = gratingMotion
+
+                # Override current feature set if amplitude is greater
+                if a is None or a_ > a:
+                    y = y_
+                    a = a_
+                    d = d_
+                    m = m_
+                    s = s_
 
             #
-            self.descriptions['a'][iUnit] = a
-            self.descriptions['d'][iUnit] = d
-            self.descriptions['m'][iUnit] = m
-            self.descriptions['s'][iUnit] = s if s != 0 else np.nan
+            self.features['a'][iUnit] = a
+            self.features['d'][iUnit] = d
+            self.features['m'][iUnit] = m
+            self.features['s'][iUnit] = s if s != 0 else np.nan
 
             # Store the raw PSTH
             self.peths['raw'][iUnit] = y
 
             # Normalize
-            self.peths['normal'][iUnit] = (fr - m) / a
+            self.peths['normal'][iUnit] = (y - m) / a
 
             # Standardize
             if np.isnan(s):
                 self.peths['standard'][iUnit] = np.full(y.size, np.nan)
             else:
-                self.peths['standard'][iUnit] = (fr - m) / s
+                self.peths['standard'][iUnit] = (y - m) / s
 
         return
 
@@ -245,9 +295,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             print(f'Fitting GMM for unit {iUnit + 1} out of {nUnits} units', end=end)
 
             #
-            # yRaw = self.peths['raw'][iUnit]
-            yNormal = self.peths['normalized'][iUnit]
-            yStandard = self.peths['standardized'][iUnit]
+            yNormal = self.peths['normal'][iUnit]
+            yStandard = self.peths['standard'][iUnit]
 
             #
             peakIndices = list()
@@ -288,7 +337,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             
             #
             k = peakIndices.size
-            self.k[iUnit] = k
+            self.model['k'][iUnit] = k
 
             # Initialize the parameter space
             p0 = np.concatenate([
@@ -348,7 +397,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         """
 
         nUnits = len(self.ukeys)
-        self.labels = np.full(nUnits, np.nan)
+        self.model['labels'] = np.full(nUnits, np.nan)
         for i, y in enumerate(self.peths['normal']):
 
             # No peaks detected
@@ -358,15 +407,38 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
             # Negative
             if y[np.argmax(np.abs(y))] < 0:
-                self.model['labels'] = -1
+                self.model['labels'][i] = -1
 
             # Positive (multiphasic)
-            elif self.k[i] >= 3:
-                self.model['labels'] = 3
+            elif self.model['k'][i] >= 3:
+                self.model['labels'][i] = 3
 
             # Positive (Mono- or Biphasic)
             else:
-                self.model['labels'][i] = self.k[i]
+                self.model['labels'][i] = self.model['k'][i]
+
+        return
+
+    def createFilter(
+        self,
+        minimumResponseLatency=0.03,
+        minimumResponseAmplitude=5,
+        ):
+        """
+        """
+
+        nUnits = len(self.ukeys)
+        self.filter = np.full(nUnits, False)
+        for iUnit in range(nUnits):
+            params = self.model['params'][iUnit]
+            mask = np.invert(np.isnan(params))
+            if np.all(np.isnan(params)):
+                continue
+            abcd = params[mask]
+            abc, d = abcd[:-1], abcd[-1]
+            A, B, C = np.split(abc, 3)
+            if np.max(np.abs(A)) >= minimumResponseAmplitude and B.min() >= minimumResponseLatency:
+                self.filter[iUnit] = True
 
         return
 
@@ -374,36 +446,33 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         self,
         axs,
         threshold=2,
-        vrange=(-5, 5),
-        cmap='binary_r',
-        phase='on',
         smoothingKernelWidth=0.5,
+        colors={'on': '0.5', 'off': 'k'},
+        linestyles={'on': '-', 'off': '-'}
         ):
         """
         """
 
-        # fig, axs = plt.subplots(ncols=len(self.examples))
-        # if len(self.examples) == 1:
-        #     axs = [axs,]
         for i, ukey in enumerate(self.examples):
             self.ukey = ukey
-            heatmaps = self.session.load(f'population/rf/{phase}')
-            if heatmaps is None:
-                continue
-            hm = heatmaps[self.unit.index]
-            if smoothingKernelWidth is not None:
-                hm = gaussianFilter(hm, smoothingKernelWidth)
-            X, Y = np.meshgrid(np.arange(hm.shape[1]), np.arange(hm.shape[0]))
-            mesh = axs[i].pcolor(X, Y, hm, vmin=vrange[0], vmax=vrange[1], cmap=cmap)
-            if hm.max() < threshold:
-                continue
-            lines = axs[i].contour(hm, np.array([threshold]), colors=['k'])
-            # axs[i].set_aspect('equal')
-
-        #
-        # fig.set_figwidth(figsize[0])
-        # fig.set_figheight(figsize[1])
-        # fig.tight_layout()
+            for phase in ('on', 'off'):
+                heatmaps = self.session.load(f'rf/{phase}')
+                if heatmaps is None:
+                    continue
+                hm = heatmaps[self.unit.index]
+                if smoothingKernelWidth is not None:
+                    hm = gaussianFilter(hm, smoothingKernelWidth)
+                # X, Y = np.meshgrid(np.arange(hm.shape[1]), np.arange(hm.shape[0]))
+                # mesh = axs[i].pcolor(X, Y, hm, vmin=vrange[0], vmax=vrange[1], cmap=cmap)
+                if hm.max() < threshold:
+                    continue
+                lines = axs[i].contour(hm, np.array([threshold]), colors=colors[phase], linestyles=linestyles[phase])
+                centroid = lines.allsegs[0][0].mean(0)
+                axs[i].scatter(*centroid, color=colors[phase], marker='.', s=5)
+            x = hm.shape[1] / 2
+            y = hm.shape[0] / 2
+            axs[i].vlines(x, y - 1, y + 1, color='k')
+            axs[i].hlines(y, x - 1, x, color='k')
 
         return
 
@@ -422,21 +491,15 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             'marker': '.',
             'color': 'k',
             's': 3,
-            'alpha': 0.3
+            'alpha': 0.25
         }
         kwargs.update(kwargs_)
-
-        # if len(self.examples) == 1:
-        #     fig, ax = plt.subplots()
-        #     axs = [ax,]
-        # else:
-        #     fig, axs = plt.subplots(ncols=len(self.examples))
         
         for i in range(len(self.examples)):
 
             #
             self.ukey = self.examples[i]
-            gratingMotion = self.ambc[self.iUnit, 1]
+            gratingMotion = self.features['d'][self.iUnit]
             trialIndices = np.where(self.session.parseEvents(
                 eventName='probe',
                 coincident=False,
@@ -464,36 +527,25 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             )
             axs[i].set_ylim([-1, nTrials + 1])
 
-        #
-        # fig.set_figwidth(figsize[0])
-        # fig.set_figheight(figsize[1])
-        # fig.tight_layout()
-
         return
 
     def _plotFittingDemo(
         self,
         axs,
-        figsize=(5, 2),
         ):
         """
         """
 
-        # if len(self.examples) == 1:
-        #     fig, ax = plt.subplots()
-        #     axs = [ax,]
-        # else:
-        #     fig, axs = plt.subplots(ncols=len(self.examples), sharey=False, sharex=True)
-        cmap = plt.get_cmap('rainbow', np.nanmax(self.k))
+        cmap = plt.get_cmap('rainbow', np.nanmax(self.model['k']))
         for i, ukey in enumerate(self.examples):
 
             #
             self.ukey = ukey
 
             #
-            yRaw = self.peths['standardized'][self.iUnit]
-            gmm = GaussianMixturesModel(k=int(self.k[self.iUnit]))
-            params = self.params[self.iUnit][np.invert(np.isnan(self.params[self.iUnit]))]
+            yRaw = self.peths['standard'][self.iUnit]
+            gmm = GaussianMixturesModel(k=int(self.model['k'][self.iUnit]))
+            params = self.model['params'][self.iUnit][np.invert(np.isnan(self.model['params'][self.iUnit]))]
             paramsOrdered = np.concatenate([
                 np.array([params[-1],]),
                 params[:-1]
@@ -511,12 +563,10 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 t = np.linspace(-15 * C[ii], 15 * C[ii], 100) + B[ii]
                 yComponent = g(t, A[ii], B[ii], C[ii], d)
                 axs[i].plot(t, yComponent, color=cmap(ii), alpha=1)
-            # axs[i].set_title(f'k={gmm.k}', fontsize=10)
 
-        #
-        # fig.set_figwidth(figsize[0])
-        # fig.set_figheight(figsize[1])
-        # fig.tight_layout()
+            ylim = axs[i].get_ylim()
+            ymax = np.max(np.abs(ylim))
+            axs[i].set_ylim([-ymax, ymax])
 
         return
 
@@ -529,41 +579,34 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         """
 
         fig, axs = plt.subplots(
-            nrows=3,
-            ncols=len(self.examples),
-            gridspec_kw={'height_ratios': (1, 1, 1)},
+            ncols=3,
+            nrows=len(self.examples),
+            gridspec_kw={'height_ratios': (1, 1, 1, 1)},
         )
-        if len(self.examples) == 1:
-            axs = np.array([[axs[0],], [axs[1],], [axs[2],]])
-            figsize = (
-                figsize[0],
-                figsize[1]
-            )
-        else:
-            figsize = (
-                figsize[0] * len(self.examples),
-                figsize[1]
-            )
+        figsize = (
+            figsize[0] * len(self.examples),
+            figsize[1]
+        )
 
         #
-        self._plotReceptiveFields(axs[0], phase='off')
-        self._plotExampleRasterplots(axs[1])
-        self._plotFittingDemo(axs[2])
+        self._plotReceptiveFields(axs[:, 0])
+        self._plotExampleRasterplots(axs[:, 1])
+        self._plotFittingDemo(axs[:, 2])
 
         #
-        # xlim = axs[1, 0].get_xlim()
-        for ax in axs[1:, :].flatten():
+        for ax in axs[:, 1:].flatten():
             ax.set_xlim(responseWindow)
         for ax in axs.flatten():
             for sp in ('top', 'right', 'bottom', 'left'):
                 ax.spines[sp].set_visible(False)
-        for ax in axs[0, :].flatten():
+        for ax in axs[:, 0].flatten():
             ax.set_xticks([])
             ax.set_yticks([])
-        for ax in axs[1, :]:
+            ax.set_aspect('equal')
+        for ax in axs[:, 1]:
             ax.set_yticks([0, 100])
-        # for ax in axs[2, :]:
-        #     ax.set_yticks([0, 1])
+        for ax in axs[:-1, 1:].flatten():
+            ax.set_xticklabels([])
 
         #
         fig.set_figwidth(figsize[0])
@@ -572,10 +615,9 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         return fig, axs
 
-    def plotPeths(
+    def plotHeatmapsByCluster(
         self,
-        form='normalized',
-        order=None,
+        form='normal',
         figsize=(4, 5),
         vrange=(-1, 1),
         cmap='coolwarm',
@@ -583,31 +625,36 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         """
         """
 
-        if self.labels is None:
-            self.predictLabels()
-        uniqueLabels, labelCounts = np.unique(self.labels, return_counts=True)
-        labelCounts = np.delete(labelCounts, np.isnan(uniqueLabels))
-        uniqueLabels = np.delete(uniqueLabels, np.isnan(uniqueLabels))
-        if order is not None:
-            uniqueLabels = uniqueLabels[order]
-            labelCounts = labelCounts[order]
+        #
+        mask = np.logical_and(
+            np.invert(np.isnan(self.model['labels'])),
+            self.filter
+        )
+        labelCounts = np.array([
+            np.sum(self.model['labels'][mask] == l)
+                for l in (1, 2, 3, -1)
+        ])
         fig, axs = plt.subplots(
             ncols=2,
-            nrows=uniqueLabels.size,
+            nrows=4,
             gridspec_kw={'height_ratios': labelCounts},
-            # sharey=True
         )
-        latency = np.array([np.argmax(np.abs(y)) for y in self.peths['normalized']])
-        pethsReverseLatencySorted = self.peths[form][np.argsort(latency)[::-1]]
+
+        #
+        peths = self.peths[form][mask]
+        latency = np.array([np.argmax(np.abs(y)) for y in peths])
+        pethsReverseLatencySorted = peths[np.argsort(latency)[::-1]]
+
+        #
         start = 0
-        for i, label in enumerate(uniqueLabels):
+        for i, label in enumerate([1, 2, 3, -1]):
 
             #
-            m = self.labels.ravel() == label
+            maskByLabel = self.model['labels'][mask] == label
 
-            #
-            stop = start + m.sum()
-            y = np.arange(0, m.sum(), 1)[::-1]
+            # Plot unsorted PETHs
+            stop = start + maskByLabel.sum()
+            y = np.arange(0, maskByLabel.sum(), 1)[::-1]
             axs[i, 0].pcolor(
                 self.t,
                 y,
@@ -618,15 +665,14 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 rasterized=True
             )
             axs[i, 0].vlines(0, y.max() + 0.5, y.min() - 0.5, color='k')
-            start += m.sum()
 
-            #
-            n = np.arange(m.sum())
-            index = np.argsort(latency[m])
+            # Plot sorted PETHs
+            n = np.arange(maskByLabel.sum())
+            index = np.argsort(latency[maskByLabel])
             axs[i, 1].pcolor(
                 self.t,
                 n,
-                self.peths[form][m][index],
+                peths[maskByLabel][index],
                 vmin=vrange[0],
                 vmax=vrange[1],
                 cmap=cmap,
@@ -634,6 +680,23 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             )
             axs[i, 1].vlines(0, -0.5, n.max() + 0.5, color='k')
 
+            # Indicate examples
+            xlim = axs[i, 1].get_xlim()
+            x = xlim[0] - 0.05
+            ukeysByLabel = [ukey
+                for ukey, flag in zip(self.ukeys, np.vstack([self.filter, self.model['labels'] == label]).all(0))
+                    if flag
+            ]
+            for y, ukey in enumerate(ukeysByLabel):
+                if ukey in self.examples:
+                    axs[i, 1].plot(x, y, marker='>', color='k', clip_on=False)
+                    break
+            axs[i, 1].set_xlim(xlim)
+
+            #
+            start += maskByLabel.sum()
+
+        #
         for ax in axs[:-1, :].flatten():
             ax.set_xticks([])
         for ax in axs[:, 1].flatten():
