@@ -715,16 +715,43 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         return fig, axs
 
-    def plotComplexityByAmplitude(
+    def plotAmplitudeByComplexity(
         self,
+        nBins=20,
+        levels=(5, 15, 25),
+        figsize=(3.5, 3),
+        cmap='Spectral_r'
         ):
         """
         """
 
-        fig, ax = plt.subplots()
-        x = self.k.flatten()
-        y = self.params[:, 0]
-        ax.scatter(x, y)
+        fig, ax = plt.subplots(subplot_kw=dict(box_aspect=1))
+        complexity = np.abs(self.peths['normal']).sum(1) / (self.peths['normal'].shape[1])
+        amplitude = self.model['params'][:, 0]
+        H, x, y = np.histogram2d(
+            complexity[self.filter],
+            amplitude[self.filter],
+            range=np.array([[0, 0.5],[0, 200]]),
+            bins=nBins
+        )
+        Z = gaussianFilter(H.T, sigma=0.55)
+        xc = x[:-1] + ((x[1] - x[0]) / 2)
+        yc = y[:-1] + ((y[1] - y[0]) / 2)
+        X, Y = np.meshgrid(xc, yc)
+        ax.pcolor(X, Y, Z, alpha=0.7, ec='none', shading='nearest', cmap=cmap)
+        ax.contour(X, Y, Z, levels=levels, colors='k')
+
+        #
+        for ukey in self.examples:
+            iUnit = self._indexUnitKey(ukey)
+            ax.scatter(complexity[iUnit], np.clip(abs(amplitude[iUnit]), 0, 200), marker='v', s=30, color='k', ec=None, zorder=3, clip_on=False)
+
+        #
+        ax.set_xlabel('Complexity index')
+        ax.set_ylabel('Response amplitude (z-scored)')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
 
         return fig, ax
     
@@ -733,6 +760,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         nBins=20,
         figsize=(3.5, 3),
         levels=(10, 20, 30),
+        cmap='Spectral_r'
         ):
         """
         """
@@ -750,7 +778,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             latency[iUnit] = B[0]
 
         #
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(subplot_kw=dict(box_aspect=1))
         H, x, y = np.histogram2d(
             latency[self.filter],
             polarity[self.filter],
@@ -761,8 +789,13 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         xc = x[:-1] + ((x[1] - x[0]) / 2)
         yc = y[:-1] + ((y[1] - y[0]) / 2)
         X, Y = np.meshgrid(xc, yc)
-        ax.contour(X, Y, Z, levels=levels, colors='k')
-        ax.scatter(latency[self.filter], polarity[self.filter], color='0.7', marker='.', s=15, alpha=1)
+        ax.pcolor(X, Y, Z, alpha=0.7, ec='none', shading='nearest', cmap=cmap)
+        ax.contour(X, Y, Z, levels=levels, colors='k', linestyles='-')
+
+        #
+        for ukey in self.examples:
+            iUnit = self._indexUnitKey(ukey)
+            ax.scatter(latency[iUnit], polarity[iUnit], marker='v', s=30, fc='k', ec=None, zorder=3)
 
         #
         ax.set_xlabel('Latency from probe to response (s)')
