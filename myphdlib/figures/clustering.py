@@ -727,3 +727,48 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         ax.scatter(x, y)
 
         return fig, ax
+    
+    def plotPolarityByLatency(
+        self,
+        nBins=20,
+        figsize=(3.5, 3),
+        levels=(9, 19, 29)
+        ):
+        """
+        """
+
+        # Compute polarity index and extract latency
+        nUnits = len(self.ukeys)
+        polarity = self.peths['normal'].sum(1) / np.abs(self.peths['normal']).sum(1)
+        latency = np.full(nUnits, np.nan)
+        for iUnit in range(nUnits):
+            params = self.model['params'][iUnit]
+            mask = np.invert(np.isnan(params))
+            abcd = params[mask]
+            abc, d = abcd[:-1], abcd[-1]
+            A, B, C = np.split(abc, 3)
+            latency[iUnit] = B[0]
+
+        #
+        fig, ax = plt.subplots()
+        H, x, y = np.histogram2d(
+            latency[self.filter],
+            polarity[self.filter],
+            range=np.array([[0, 0.5],[-1, 1]]),
+            bins=nBins
+        )
+        Z = gaussianFilter(H.T, sigma=0.5)
+        xc = x[:-1] + ((x[1] - x[0]) / 2)
+        yc = y[:-1] + ((y[1] - y[0]) / 2)
+        X, Y = np.meshgrid(xc, yc)
+        ax.contour(X, Y, Z, levels=levels, colors='k')
+        ax.scatter(latency[self.filter], polarity[self.filter], color='0.7', marker='.', s=15, alpha=1)
+
+        #
+        ax.set_xlabel('Latency from probe to response (s)')
+        ax.set_ylabel('Polarity index')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax
