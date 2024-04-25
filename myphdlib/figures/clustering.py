@@ -84,10 +84,10 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             'clustering/model/labels': self.model['labels'],
             'clustering/model/rss': self.model['rss'],
             'clustering/model/k': self.model['k'],
-            'clustering/description/a': self.features['a'],
-            'clustering/description/d': self.features['d'],
-            'clustering/description/m': self.features['m'],
-            'clustering/description/s': self.features['s'],
+            'clustering/features/a': self.features['a'],
+            'clustering/features/d': self.features['d'],
+            'clustering/features/m': self.features['m'],
+            'clustering/features/s': self.features['s'],
             'clustering/filter': self.filter,
         }
 
@@ -131,10 +131,10 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             'clustering/model/labels': (self.model, 'labels'),
             'clustering/model/rss': (self.model, 'rss'),
             'clustering/model/k': (self.model, 'k'),
-            'clustering/description/a': (self.features, 'a'),
-            'clustering/description/d': (self.features, 'd'),
-            'clustering/description/m': (self.features, 'm'),
-            'clustering/description/s': (self.features, 's'),
+            'clustering/features/a': (self.features, 'a'),
+            'clustering/features/d': (self.features, 'd'),
+            'clustering/features/m': (self.features, 'm'),
+            'clustering/features/s': (self.features, 's'),
             'clustering/filter': ('filter', None),
         }
 
