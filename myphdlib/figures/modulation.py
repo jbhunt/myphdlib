@@ -23,28 +23,33 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             'peri': None
         }
         self.terms = {
-            'rProbe': {
-                'extra': None,
-                'peri': None
-            },
-            'rMixed': None,
-            'rSaccade': None,
+            'rpe': None,
+            'rpp': None,
+            'rps': None,
+            'rs': None
         }
-        self.ambc = None # Amplitude, Preferred direction (motion), baseline FR mean, STD
-        self.labels = None
-        self.params = None
-        self.paramsRefit = None
-        self.k = None
-        self.t = None
+        self.features = {
+            'm': None,
+            's': None,
+            'd': None
+        }
+        self.model = {
+            'k': None,
+            'params': None,
+            'labels': None,
+            'refits': None
+        }
         self.templates = {
             'nasal': None,
             'temporal': None
         }
+        self.tProbe = None
         self.tSaccade = None
         self.windows = None
-        self.refits = None
-        self.latencies = None
-        self.modulation = None
+        self.mi = None # Modulation index
+        self.filter = None
+
+        #
         self.examples = (
             ('2023-07-05', 'mlati9', 271),
             ('2023-05-12', 'mlati7', 163),
@@ -55,79 +60,35 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
 
     def loadNamespace(
         self,
-        hdf,
         ):
         """
         """
 
+        #
         d = {
-            'peths/dg/extra/params': 'ambc',
-            'gmm/dg/extra/params': 'params',
-            'gmm/dg/peri/params': 'paramsRefit',
-            'gmm/dg/extra/labels': 'labels',
-            'gmm/dg/extra/k': 'k',
-            'gmm/dg/extra/modulation': 'modulation',
-            'gmm/dg/extra/latencies': 'latencies'
+            'clustering/peths/standard': (self.peths, 'extra'),
+            'clustering/model/params': (self.model, 'params'),
+            'clustering/model/labels': (self.model, 'labels'),
+            'clustering/model/k': (self.model, 'k'),
+            'clustering/description/d': (self.features, 'd'),
+            'clustering/description/m': (self.features, 'm'),
+            'clustering/description/s': (self.features, 's'),
+            'clustering/filter': ('filter', None),
         }
-        m = findOverlappingUnits(self.ukeys, hdf)
-        with h5py.File(hdf, 'r') as stream:
 
-            #
-            for k, v in d.items():
-                if (k in stream) == False:
-                    continue
-                ds = np.array(stream[k])
-                if len(ds.shape) == 1:
-                    ds = ds.flatten()
-                self.__setattr__(v, ds[m])
-
-            #
-            for saccadeDirection in ('nasal', 'temporal'):
-                path = f'temps/dg/{saccadeDirection}/fr'
+        with h5py.File(self.hdf, 'r') as stream:
+            for path, (attr, key) in d.items():
                 if path in stream:
                     ds = stream[path]
-                    self.tSaccade = ds.attrs['t']
-                    self.templates[saccadeDirection] = np.array(ds)[m]
-
-            #
-            path = f'terms/dg/extra/rProbe'
-            if path in stream:
-                ds = stream[path]
-                if 't' in ds.attrs.keys():
-                    self.t = ds.attrs['t']
-                self.terms['rProbe']['extra'] = np.array(ds)[m]
-
-            #
-            path = f'terms/dg/peri/rProbe'
-            if path in stream:
-                ds = stream[path]
-                self.terms['rProbe']['peri'] = np.array(ds)[m]
-
-            #
-            path = f'terms/dg/peri/rMixed'
-            if path in stream:
-                ds = stream[path]
-                self.terms['rMixed'] = np.array(ds)[m]
-
-            #
-            path = f'terms/dg/peri/rSaccade'
-            if path in stream:
-                ds = stream[path]
-                self.terms['rSaccade'] = np.array(ds)[m]
-
-            #
-            path = f'peths/dg/extra/fr'
-            if path in stream:
-                ds = stream[path]
-                self.peths['extra'] = np.array(ds)[m]
-
-            #
-            path = 'peths/dg/peri/fr'
-            if path in stream:
-                ds = stream[path]
-                if 'windows' in ds.attrs.keys():
-                    self.windows = np.array(ds.attrs['windows'])
-                self.peths['peri'] = np.array(ds)[m]
+                    if 't' in ds.attrs.keys() and self.t is None:
+                        self.t = ds.attrs['t']
+                    value = np.array(ds)
+                    if len(value.shape) == 2 and value.shape[-1] == 1:
+                        value = value.flatten()
+                    if key is None:
+                        setattr(self, attr, value)
+                    else:
+                        attr[key] = value
 
         return
     
@@ -139,16 +100,11 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         """
 
         d = {
-            'gmm/dg/extra/latencies': self.latencies,
-            'gmm/dg/extra/modulation': self.modulation,
-            'gmm/dg/peri/params': self.paramsRefit,
-            'temps/dg/nasal/fr': self.templates['nasal'],
-            'temps/dg/temporal/fr': self.templates['temporal'],
-            'peths/dg/peri/fr': self.peths['peri'],
-            'terms/dg/peri/rMixed': self.terms['rMixed'],
-            'terms/dg/peri/rSaccade': self.terms['rSaccade'],
-            'terms/dg/extra/rProbe': self.terms['rProbe']['extra'],
-            'terms/dg/peri/rProbe': self.terms['rProbe']['peri']
+            'modulation/mi': self.mi,
+            'modulation/model/params': self.model['refits'],
+            'modulation/templates/nasal': self.templates['nasal'],
+            'modulation/templates/temporal': self.templates['temporal'],
+            'modulation/peths/peri': self.peths['peri'],
         }
         m = findOverlappingUnits(self.ukeys, hdf)
         with h5py.File(hdf, 'a') as stream:
@@ -193,8 +149,25 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             self.session.saccadeLabels,
             self.session.gratingMotionDuringSaccades
         )
+    
+    def _loadEventDataForProbes(
+        self,
+        perisaccadicWindow=(-0.05, 0.1),
+        ):
+        """
+        """
 
-    def computeSaccadeResponseTemplates(
+        trialIndices = np.where(self.session.parseEvents(
+            eventName='probe',
+            coincident=True,
+            eventDirection=self.ambc[self.iUnit, 1],
+            coincidenceWindow=perisaccadicWindow,
+        ))[0]
+        saccadeLabels = self.session.load('stimuli/dg/probe/dos')
+
+        return trialIndices, self.session.probeTimestamps, self.session.probeLatencies, saccadeLabels, self.session.gratingMotionDuringProbes
+
+    def _computeSaccadeResponseTemplates(
         self,
         responseWindow=(-0.2, 0.5),
         perisaccadicWindow=(-0.2, 0.2),
@@ -253,13 +226,6 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                         binsize=binsize,
                         sigma=gaussianKernelWidth
                     )
-                    # tSaccade, M = psth2(
-                    #     saccadeTimestamps[trialIndices],
-                    #     self.unit.timestamps,
-                    #     window=(responseWindow[0] - pad, responseWindow[1] + pad),
-                    #     binsize=binsize
-                    # )
-                    # fr = M.mean(0) / binsize
                 except:
                     continue
 
@@ -268,24 +234,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
 
         return
 
-    def _loadEventDataForProbes(
-        self,
-        perisaccadicWindow=(-0.05, 0.1),
-        ):
-        """
-        """
-
-        trialIndices = np.where(self.session.parseEvents(
-            eventName='probe',
-            coincident=True,
-            eventDirection=self.ambc[self.iUnit, 1],
-            coincidenceWindow=perisaccadicWindow,
-        ))[0]
-        saccadeLabels = self.session.load('stimuli/dg/probe/dos')
-
-        return trialIndices, self.session.probeTimestamps, self.session.probeLatencies, saccadeLabels, self.session.gratingMotionDuringProbes
-
-    def computeResponseTerms(
+    def _computeResponseTerms(
         self,
         ukey=None,
         responseWindow=(-0.2, 0.5),
@@ -343,18 +292,11 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             bl = self.templates[saccadeDirection][self.iUnit][np.logical_and(self.tSaccade >= baselineWindow[0], self.tSaccade <= baselineWindow[1])].mean()
             rBaseline.append(bl)
 
-        #
-        # if self.ukey[0] == '2023-07-06':
-        #     import pdb; pdb.set_trace()
-
-        #
-        # if len(rSaccade) == 0:
-        #     import pdb; pdb.set_trace()
         rSaccade = np.nanmean(np.array(rSaccade) - np.array(rBaseline).reshape(-1, 1), 0)
 
         return rMixed, rSaccade
 
-    def refitSinglePeth(
+    def _refitSinglePeth(
         self,
         ukey=None,
         sortby='amplitude',
@@ -452,9 +394,9 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         nUnits = len(self.ukeys)
         nBins = self.t.size
         nWindows = self.windows.shape[0]
-        self.terms['rMixed'] = np.full([nUnits, nBins, nWindows], np.nan)
-        self.terms['rSaccade'] = np.full([nUnits, nBins, nWindows], np.nan)
-        self.terms['rProbe']['peri'] = np.full([nUnits, nBins, nWindows], np.nan)
+        self.terms['rps'] = np.full([nUnits, nBins, nWindows], np.nan)
+        self.terms['rs'] = np.full([nUnits, nBins, nWindows], np.nan)
+        self.terms['rpp'] = np.full([nUnits, nBins, nWindows], np.nan)
         self.peths['peri'] = np.full([nUnits, nBins, nWindows], np.nan)
 
         #
@@ -477,7 +419,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                 )
 
                 # Standardize the PETHs
-                mu, sigma = self.ambc[self.iUnit, 2], self.ambc[self.iUnit, 3]
+                mu, sigma = self.features['m'][self.iUnit], self.features['s'][self.iUnit]
                 yResidual = np.clip(rMixed - rSaccade, 0, np.inf)
                 yStandard = (yResidual - mu) / sigma
 
@@ -489,8 +431,8 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                 yCorrected = yStandard - yStandard[binIndices].mean()
 
                 #
-                self.terms['rMixed'][self.iUnit, :, iWin] = rMixed
-                self.terms['rSaccade'][self.iUnit, :, iWin] = rSaccade
+                self.terms['rps'][self.iUnit, :, iWin] = rMixed
+                self.terms['rs'][self.iUnit, :, iWin] = rSaccade
                 if zeroBaseline:
                     self.peths['peri'][self.iUnit, :, iWin] = yCorrected
                 else:
@@ -527,7 +469,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                 peth = self.peths['peri'][self.iUnit, :, iWin]
                 if np.isnan(peth).all():
                     continue
-                dr, latencies, params = self.refitSinglePeth(
+                dr, latencies, params = self._refitSinglePeth(
                     ukey=self.ukeys[self.iUnit],
                     sortby='amplitude',
                     peth=peth
@@ -537,27 +479,6 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                 self.modulation[self.iUnit, :, iWin] = dr
                 self.latencies[self.iUnit, :, iWin] = latencies
                 self.paramsRefit[self.iUnit, :, iWin, :] = params
-
-        return
-
-    def run(
-        self,
-        hdf=None,
-        redo=False,
-        ):
-        """
-        """
-
-        if self.ukeys is None or redo:
-            self.filterUnits()
-        if hdf is not None:
-            self.loadNamespace(hdf)
-        if self.peths['peri'] is None or redo:
-            self.computePerisaccadicPeths()
-        if self.modulation is None or redo:
-            self.fitPerisaccadicPeths()
-        if hdf is not None:
-            self.saveNamespace(hdf)
 
         return
 
