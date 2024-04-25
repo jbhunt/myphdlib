@@ -732,7 +732,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         self,
         nBins=20,
         figsize=(3.5, 3),
-        levels=(9, 19, 29)
+        levels=(10, 20, 30),
         ):
         """
         """
@@ -757,7 +757,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             range=np.array([[0, 0.5],[-1, 1]]),
             bins=nBins
         )
-        Z = gaussianFilter(H.T, sigma=0.5)
+        Z = gaussianFilter(H.T, sigma=0.55)
         xc = x[:-1] + ((x[1] - x[0]) / 2)
         yc = y[:-1] + ((y[1] - y[0]) / 2)
         X, Y = np.meshgrid(xc, yc)
