@@ -35,9 +35,9 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         }
         self.model = {
             'k': None,
-            'params': None,
             'labels': None,
-            'refits': None
+            'params1': None,
+            'params2': None
         }
         self.templates = {
             'nasal': None,
@@ -65,24 +65,35 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         """
 
         #
-        d = {
+        datasets = {
             'clustering/peths/standard': (self.peths, 'extra'),
-            'clustering/model/params': (self.model, 'params'),
+            'clustering/model/params': (self.model, 'params1'),
             'clustering/model/labels': (self.model, 'labels'),
             'clustering/model/k': (self.model, 'k'),
-            'clustering/description/d': (self.features, 'd'),
-            'clustering/description/m': (self.features, 'm'),
-            'clustering/description/s': (self.features, 's'),
+            'clustering/features/d': (self.features, 'd'),
+            'clustering/features/m': (self.features, 'm'),
+            'clustering/features/s': (self.features, 's'),
             'clustering/filter': ('filter', None),
+            'modulation/mi': ('mi', None),
+            'modulation/windows': ('windows', None),
+            'modulation/model/params': (self.model, 'params2'),
+            'modulation/templates/nasal': (self.templates, 'nasal'),
+            'modulation/templates/temporal': (self.templates, 'temporal'),
+            'modulation/peths/peri': (self.peths, 'peri'),
         }
 
         with h5py.File(self.hdf, 'r') as stream:
-            for path, (attr, key) in d.items():
+            for path, (attr, key) in datasets.items():
+                parts = path.split('/')
                 if path in stream:
                     ds = stream[path]
-                    if 't' in ds.attrs.keys() and self.t is None:
-                        self.t = ds.attrs['t']
+                    if path == 'modulation/peths/peri':
+                        self.tProbe = ds.attrs['t']
+                    if path == 'modulation/templates/nasal':
+                        self.tSaccade = ds.attrs['t']
                     value = np.array(ds)
+                    if 'filter' in parts:
+                        value = value.astype(bool)
                     if len(value.shape) == 2 and value.shape[-1] == 1:
                         value = value.flatten()
                     if key is None:
@@ -94,32 +105,43 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
     
     def saveNamespace(
         self,
-        hdf
         ):
         """
         """
 
-        d = {
-            'modulation/mi': self.mi,
-            'modulation/model/params': self.model['refits'],
-            'modulation/templates/nasal': self.templates['nasal'],
-            'modulation/templates/temporal': self.templates['temporal'],
-            'modulation/peths/peri': self.peths['peri'],
+        datasets = {
+            'modulation/mi': (self.mi, True),
+            'modulation/windows': (self.windows, False),
+            'modulation/model/params': (self.model['params2'], True),
+            'modulation/templates/nasal': (self.templates['nasal'], True),
+            'modulation/templates/temporal': (self.templates['temporal'], True),
+            'modulation/peths/peri': (self.peths['peri'], True)
         }
-        m = findOverlappingUnits(self.ukeys, hdf)
-        with h5py.File(hdf, 'a') as stream:
-            for k, v in d.items():
+        mask = self._intersectUnitKeys(self.ukeys)
+        with h5py.File(self.hdf, 'a') as stream:
+
+            #
+            for k, (v, f) in datasets.items():
+
+                #
                 if v is None:
                     continue
                 if np.isnan(v).sum() == v.size:
                     continue
-                nd = len(v.shape)
-                if nd == 1:
-                    data = np.full([m.size, 1], np.nan)
-                    data[m, :] = v.reshape(-1, 1)
+
+                #
+                if f:
+                    nd = len(v.shape)
+                    if nd == 1:
+                        data = np.full([mask.size, 1], np.nan)
+                        data[mask, :] = v.reshape(-1, 1)
+                    else:
+                        data = np.full([mask.size, *v.shape[1:]], np.nan)
+                        data[mask] = v
                 else:
-                    data = np.full([m.size, *v.shape[1:]], np.nan)
-                    data[m] = v
+                    data = v
+
+                #
                 if k in stream:
                     del stream[k]
                 ds = stream.create_dataset(
@@ -128,12 +150,13 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                     data.dtype,
                     data=data
                 )
-                if k == 'terms/dg/extra/rProbe':
-                    ds.attrs['t'] = self.t
-                if 'temp' in k:
+
+                #
+                parts = k.split('/')
+                if 'peths' in parts:
+                    ds.attrs['t'] = self.tProbe
+                if 'templates' in parts:
                     ds.attrs['t'] = self.tSaccade
-                if 'peri' in k.split('/'):
-                    ds.attrs['windows'] = self.windows
 
         return
 
@@ -160,7 +183,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         trialIndices = np.where(self.session.parseEvents(
             eventName='probe',
             coincident=True,
-            eventDirection=self.ambc[self.iUnit, 1],
+            eventDirection=self.features['d'][self.iUnit],
             coincidenceWindow=perisaccadicWindow,
         ))[0]
         saccadeLabels = self.session.load('stimuli/dg/probe/dos')
@@ -178,13 +201,15 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         """
         """
 
-        t, nTrials, nBins = psth2(
+        tSaccade, nTrials, nBins = psth2(
             np.zeros(1),
             np.zeros(1),
             window=(responseWindow[0] - pad, responseWindow[1] + pad),
             binsize=binsize,
             returnShape=True
         )
+        if self.tSaccade is None:
+            self.tSaccade = tSaccade
         nUnits = len(self.ukeys)
         self.templates = {
             'nasal': np.full([nUnits, nBins], np.nan),
@@ -215,7 +240,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                         saccadeLatencies > perisaccadicWindow[0] * -1,
                     ),
                     saccadeLabels == saccadeLabel,
-                    gratingMotion == self.ambc[self.iUnit, 1]
+                    gratingMotion == self.features['d'][self.iUnit]
                 ]).all(0))[0]
                 if trialIndices.size == 0:
                     continue
@@ -296,11 +321,10 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
 
         return rMixed, rSaccade
 
-    def _refitSinglePeth(
+    def _fitPerisaccadicPeth(
         self,
         ukey=None,
-        sortby='amplitude',
-        maximumAmplitudeShift=30,
+        maximumAmplitudeShift=100,
         peth=None
         ):
         """
@@ -315,27 +339,22 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             peth = self.peths['peri'][self.iUnit]
 
         #
-        params = self.params[self.iUnit]
-        if np.isnan(params).all():
+        params1 = self.model['params1'][self.iUnit]
+        if np.isnan(params1).all():
             return None, None, None
-        abcd = params[np.invert(np.isnan(params))]
+        abcd = params1[np.invert(np.isnan(params1))]
         abc, d = abcd[:-1], abcd[-1]
         A1, B1, C1 = np.split(abc, 3)
+        order = np.arange(A1.size) # NOTE: This is unnecessary, but I left it
         k = A1.size
-        if sortby == 'amplitude':
-            order = np.argsort(A1)[::-1]
-        elif sortby == 'latency':
-            order = np.argsort(B1)
 
         #
-        nComponents = int(np.nanmax(self.k))
+        nComponents = int(np.nanmax(self.model['k']))
         dr = np.full(nComponents, np.nan)
-        latencies = np.full(nComponents, np.nan)
-        latencies[:k] = B1[order]
 
         #
-        nParams = self.params.shape[1]
-        paramsRefit = np.full([nComponents, nParams], np.nan)
+        nParams = params1.size
+        params2 = np.full([nComponents, nParams], np.nan)
         for i, iComp in enumerate(order):
 
             # Refit
@@ -355,44 +374,49 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                 C1
             ])
             gmm = GaussianMixturesModel(k)
-            gmm.fit(self.t, peth, p0, bounds)
+            gmm.fit(self.tProbe, peth, p0, bounds)
             if i == 0:
                 d, abc = gmm._popt[0], gmm._popt[1:]
-                paramsRefit[iComp, :abc.size] = abc
-                paramsRefit[iComp, -1] = d
+                params2[iComp, :abc.size] = abc
+                params2[iComp, -1] = d
 
             #
             A2 = np.split(gmm._popt[1:], 3)[0]
             dr[i] = A2[iComp] - A1[iComp]
 
-        return np.array(dr), latencies, paramsRefit
+        return dr, params2
 
     def computePerisaccadicPeths(
         self,
-        binsize=0.1,
         trange=(-0.5, 0.5),
-        perisaccadicWindow=(-0.05, 0.1),
+        tstep=0.1,
+        responseWindow=(-0.2, 0.5),
         baselineWindow=(-0.2, 0),
+        binsize=0.01,
         zeroBaseline=True
         ):
         """
         """
 
         #
-        if binsize is None:
-            self.windows = np.array([perisaccadicWindow,])
-        else:
-            leftEdges = np.arange(trange[0], trange[1], binsize)
-            rightEdges = leftEdges + binsize
-            perisaccadicWindows = np.vstack([leftEdges, rightEdges]).T
-            self.windows = np.vstack([
-                perisaccadicWindows,
-                np.array(perisaccadicWindow)
-            ])
+        tProbe, nTrials, nBins = psth2(
+            np.zeros(1),
+            np.zeros(1),
+            window=responseWindow,
+            binsize=binsize,
+            returnShape=True
+        )
+        if self.tProbe is None:
+            self.tProbe = tProbe
+
+        #
+        leftEdges = np.arange(trange[0], trange[1], tstep)
+        rightEdges = leftEdges + tstep
+        self.windows = np.vstack([leftEdges, rightEdges]).T
 
         #
         nUnits = len(self.ukeys)
-        nBins = self.t.size
+        nBins = self.tProbe.size
         nWindows = self.windows.shape[0]
         self.terms['rps'] = np.full([nUnits, nBins, nWindows], np.nan)
         self.terms['rs'] = np.full([nUnits, nBins, nWindows], np.nan)
@@ -413,8 +437,9 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             for iWin, perisaccadicWindow in enumerate(self.windows):
 
                 #
-                rMixed, rSaccade = self.computeResponseTerms(
+                rMixed, rSaccade = self._computeResponseTerms(
                     ukey=self.ukeys[self.iUnit],
+                    responseWindow=responseWindow,
                     perisaccadicWindow=perisaccadicWindow,
                 )
 
@@ -425,8 +450,8 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
 
                 # Correct for baseline shift
                 binIndices = np.where(np.logical_and(
-                    self.t >= baselineWindow[0],
-                    self.t < baselineWindow[1]
+                    self.tProbe >= baselineWindow[0],
+                    self.tProbe < baselineWindow[1]
                 ))
                 yCorrected = yStandard - yStandard[binIndices].mean()
 
@@ -442,17 +467,17 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
     
     def fitPerisaccadicPeths(
         self,
+        maximumAmplitudeShift=200,
         ):
         """
         """
 
         #
         nUnits, nBins, nWindows = self.peths['peri'].shape
-        nParams = self.params.shape[1]
-        nComponents = int((self.params.shape[1] - 1) / 3)
-        self.modulation = np.full([nUnits, nComponents, nWindows], np.nan)
-        self.latencies = np.full([nUnits, nComponents, nWindows], np.nan)
-        self.paramsRefit = np.full([nUnits, nComponents, nWindows, nParams], np.nan)
+        nParams = self.model['params1'].shape[1]
+        nComponents = int((nParams - 1) / 3)
+        self.mi = np.full([nUnits, nWindows, nComponents], np.nan)
+        self.model['params2'] = np.full([nUnits, nParams, nWindows, nComponents], np.nan)
 
         #
         for ukey in self.ukeys:
@@ -469,25 +494,24 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                 peth = self.peths['peri'][self.iUnit, :, iWin]
                 if np.isnan(peth).all():
                     continue
-                dr, latencies, params = self._refitSinglePeth(
+                dr, params2 = self._fitPerisaccadicPeth(
                     ukey=self.ukeys[self.iUnit],
-                    sortby='amplitude',
-                    peth=peth
+                    peth=peth,
+                    maximumAmplitudeShift=maximumAmplitudeShift
                 )
-                if all([dr is None, latencies is None, params is None]):
+                if all([dr is None, params2 is None]):
                     continue
-                self.modulation[self.iUnit, :, iWin] = dr
-                self.latencies[self.iUnit, :, iWin] = latencies
-                self.paramsRefit[self.iUnit, :, iWin, :] = params
+                self.mi[self.iUnit, iWin, :] = dr
+                self.model['params2'][self.iUnit, :, iWin, :] = params2.T
 
         return
 
-    def _plotLatencySortedRasterplot(
+    def plotLatencySortedRasterplot(
         self,
         ukey,
-        ax=None,
         responseWindow=(-0.5, 0.5),
-        perisaccadicWindow=(-0.05, 0.1),
+        figsize=(2, 3),
+        alpha=0.5,
         **kwargs_
         ):
 
@@ -496,62 +520,94 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
 
         #
         kwargs = {
-            'color': 'k',
             'marker': '.',
-            'alpha': 0.5,
             's': 5
         }
         kwargs.update(kwargs_)
-
-        #
-        if ax is None:
-            fig, ax = plt.subplots()
 
         #
         if self.ukey is not None:
             self.ukey = ukey
 
         #
-        probeMotion = self.ambc[self.iUnit, 1]
-        trialIndices = np.where(np.vstack([
-            self.session.gratingMotionDuringProbes == probeMotion,
-            self.session.probeLatencies > perisaccadicWindow[0],
-            self.session.probeLatencies <= perisaccadicWindow[1]
-        ]).all(0))[0]
-        latencySortedIndex = np.argsort(self.session.probeLatencies[trialIndices])[::-1]
-        t, M, spikeTimestamps = psth2(
-            self.session.probeTimestamps[trialIndices],
-            self.unit.timestamps,
-            window=responseWindow,
-            binsize=None,
-            returnTimestamps=True
-        )
-        x = list()
-        y = list()
-        for i, trialIndex in enumerate(latencySortedIndex):
-            nSpikes = spikeTimestamps[trialIndex].size
-            for t in np.atleast_1d(spikeTimestamps[trialIndex]):
-                x.append(t)
-            for r in np.full(nSpikes, i):
-                y.append(r)
+        nWindows = len(self.windows)
+        nTrialsPerWindow = list()
+        for window in self.windows:
+            gratingMotion = self.features['d'][self.iUnit]
+            trialIndices = np.where(np.vstack([
+                self.session.gratingMotionDuringProbes == gratingMotion,
+                self.session.probeLatencies > window[0],
+                self.session.probeLatencies <= window[1]
+            ]).all(0))[0]
+            nTrialsPerWindow.append(trialIndices.size)
 
         #
-        ax.scatter(x, y, rasterized=True, **kwargs)
-
-        #
-        x, y = list(), list()
-        for i, t in enumerate(self.session.probeLatencies[trialIndices][latencySortedIndex]):
-            x.append(-1 * t)
-            y.append(i)
-        kwargs['color'] = 'tab:green'
-        ax.scatter(
-            x,
-            y,
-            rasterized=True,
-            **kwargs
+        fig, axs = plt.subplots(
+            nrows=nWindows,
+            gridspec_kw={'height_ratios': nTrialsPerWindow},
+            sharex=True
         )
 
-        return
+        #
+        for iWin, window in enumerate(self.windows):
+            gratingMotion = self.features['d'][self.iUnit]
+            trialIndices = np.where(np.vstack([
+                self.session.gratingMotionDuringProbes == gratingMotion,
+                self.session.probeLatencies > window[0],
+                self.session.probeLatencies <= window[1]
+            ]).all(0))[0]
+            latencySortedIndex = np.argsort(self.session.probeLatencies[trialIndices])[::-1]
+            t, M, spikeTimestamps = psth2(
+                self.session.probeTimestamps[trialIndices],
+                self.unit.timestamps,
+                window=responseWindow,
+                binsize=None,
+                returnTimestamps=True
+            )
+            x = list()
+            y = list()
+            for i, trialIndex in enumerate(latencySortedIndex):
+                nSpikes = spikeTimestamps[trialIndex].size
+                for t in np.atleast_1d(spikeTimestamps[trialIndex]):
+                    x.append(t)
+                for r in np.full(nSpikes, i):
+                    y.append(r)
+
+            #
+            axs[iWin].scatter(x, y, rasterized=True, color='k', alpha=alpha, **kwargs)
+
+            # Indicate the time of saccade onset
+            x, y = list(), list()
+            for i, t in enumerate(self.session.probeLatencies[trialIndices][latencySortedIndex]):
+                x.append(-1 * t)
+                y.append(i)
+            axs[iWin].scatter(
+                x,
+                y,
+                rasterized=True,
+                color='m',
+                **kwargs
+            )
+
+            # TODO: Indicate the time of probe onset
+            y = np.arange(trialIndices.size)
+            x = np.full(y.size, 0)
+            axs[iWin].scatter(x, y, rasterized=True, color='c', **kwargs)
+
+        #
+        for ax in axs[:-1]:
+            ax.set_yticks([])
+            ax.set_xticks([])
+        axs[-1].set_yticks([30,])
+        for ax in axs.flatten():
+            for sp in ('top', 'right', 'left', 'bottom'):
+                ax.spines[sp].set_visible(False)
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+        fig.subplots_adjust(hspace=0.1)
+
+        return fig, axs
 
     def _plotResponseTerms(
         self,
@@ -722,6 +778,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
     def plotExamplePeths(
         self,
         figsize=(3, 3.5),
+        windowIndex=5,
         ):
         """
         """
@@ -732,37 +789,21 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             grid = np.atleast_2d(grid)
         for i in range(len(self.examples)):
             self.ukey = self.examples[i]
-            rProbePeri = self.peths['peri'][self.iUnit, :, -1]
+            rProbePeri = self.peths['peri'][self.iUnit, :, windowIndex]
             rProbeExtra = self.peths['extra'][self.iUnit, :]
-            grid[i, 0].plot(self.t, rProbePeri, 'k')
-            grid[i, 0].plot(self.t, rProbeExtra, color='k', linestyle=':')
-            grid[i, 0].fill_between(
-                self.t,
-                rProbeExtra,
-                rProbePeri,
-                where=rProbeExtra > rProbePeri,
-                color='b',
-                alpha=0.2,
-            )
-            grid[i, 0].fill_between(
-                self.t,
-                rProbeExtra,
-                rProbePeri,
-                where=rProbeExtra < rProbePeri,
-                color='r',
-                alpha=0.2,
-            )
-            # paramsExtra = self.params[self.iUnit, :]
-            # paramsPeri = self.paramsRefit[self.iUnit, 0, -1, :]
-            # for j, params in enumerate([paramsPeri, paramsExtra]):
-            #    params = params[np.invert(np.isnan(params))]
-            #     if len(params) == 0:
-            #         continue
-            #     abc, d = params[:-1], params[-1]
-            #     A, B, C = np.split(abc, 3)
-            #     a, b, c = A[0], B[0], C[0]
-            #     yFit = g(self.t, a, b, c, d)
-            #     grid[i, j].plot(self.t, yFit, color='k' )
+            grid[i, 0].plot(self.tProbe, rProbePeri, 'k')
+            grid[i, 1].plot(self.tProbe, rProbeExtra, color='k')
+            paramsExtra = self.model['params1'][self.iUnit, :]
+            paramsPeri = self.model['params2'][self.iUnit, :, windowIndex, :]
+            for j, params in enumerate([paramsPeri, paramsExtra]):
+                params = params[np.invert(np.isnan(params))]
+                if len(params) == 0:
+                    continue
+                abc, d = params[:-1], params[-1]
+                A, B, C = np.split(abc, 3)
+                a, b, c = A[0], B[0], C[0]
+                yFit = g(self.t, a, b, c, d)
+                grid[i, j].plot(self.t, yFit, color='k' )
 
         #
         for axs in grid:

@@ -140,11 +140,14 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         with h5py.File(self.hdf, 'r') as stream:
             for path, (attr, key) in d.items():
+                parts = path.split('/')
                 if path in stream:
                     ds = stream[path]
                     if 't' in ds.attrs.keys() and self.t is None:
                         self.t = ds.attrs['t']
                     value = np.array(ds)
+                    if 'filter' in parts:
+                        value = value.astype(bool)
                     if len(value.shape) == 2 and value.shape[-1] == 1:
                         value = value.flatten()
                     if key is None:
@@ -157,7 +160,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
     def computeExtrasaccadicPeths(
         self,
         responseWindow=(-0.2, 0.5),
-        baselineWindow=(-0.3, 0),
+        baselineWindow=(-0.2, 0),
+        standardizationWindow=(-20, -10),
         binsize=0.01,
         smoothingKernelWidth=0.01,
         perisaccadicWindow=(-0.1, 0.1),
@@ -213,15 +217,23 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                     sigma=smoothingKernelWidth,
                 )
 
-                # Estimate baseline mean and standard deviation
-                t, bl = self.unit.kde(
+                # Estimate baseline firing rate
+                t, bl1 = self.unit.kde(
                     self.session.probeTimestamps[trialIndices],
                     responseWindow=baselineWindow,
                     binsize=binsize,
                     sigma=smoothingKernelWidth
                 )
-                m_ = bl.mean()
-                s_ = bl.std()
+                m_ = bl1.mean()
+
+                # Estimate standard deviation of firing rate
+                t, bl2 = self.unit.kde(
+                    self.session.probeTimestamps[trialIndices],
+                    responseWindow=standardizationWindow,
+                    binsize=binsize,
+                    sigma=smoothingKernelWidth
+                )
+                s_ = bl2.std()
 
                 # Compute new features
                 a_ = np.abs(y_[self.t > 0] - m_).max()
