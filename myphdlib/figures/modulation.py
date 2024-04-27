@@ -787,12 +787,21 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         fig, grid = plt.subplots(nrows=len(self.examples), ncols=2, sharex=True)
         if len(self.examples) == 1:
             grid = np.atleast_2d(grid)
+        cmap = plt.get_cmap('rainbow', np.nanmax(self.model['k']))
+
+        #
         for i in range(len(self.examples)):
+
+            #
             self.ukey = self.examples[i]
+
+            # Plot the raw PETHs
             rProbePeri = self.peths['peri'][self.iUnit, :, windowIndex]
             rProbeExtra = self.peths['extra'][self.iUnit, :]
             grid[i, 0].plot(self.tProbe, rProbePeri, 'k')
             grid[i, 1].plot(self.tProbe, rProbeExtra, color='k')
+
+            # Plot the fit for the largest component of the response
             paramsExtra = self.model['params1'][self.iUnit, :]
             paramsPeri = self.model['params2'][self.iUnit, :, windowIndex, :]
             for j, params in enumerate([paramsPeri, paramsExtra]):
@@ -802,8 +811,9 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                 abc, d = params[:-1], params[-1]
                 A, B, C = np.split(abc, 3)
                 a, b, c = A[0], B[0], C[0]
-                yFit = g(self.t, a, b, c, d)
-                grid[i, j].plot(self.t, yFit, color='k' )
+                t = np.linspace(-15 * C[0], 15 * C[0], 100) + B[0]
+                yFit = g(t, a, b, c, d)
+                grid[i, j].plot(t, yFit, color=cmap(0))
 
         #
         for axs in grid:
