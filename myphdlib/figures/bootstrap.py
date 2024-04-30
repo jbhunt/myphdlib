@@ -15,45 +15,55 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
     """
     """
 
-    def __init__(self):
+    def __init__(self, iw=5, **kwargs):
         """
         """
 
-        super().__init__()
+        super().__init__(**kwargs)
 
-        self.pethsResampled = None
-        self.pvalues = None
+        # Window index
+        self.iw = iw
+
+        #
+        self.peths = None
+        self.p = None
         self.samples = None
-        self.msign = None
+        self.features = {
+            'm': None,
+            's': None,
+            'd': None,
+        }
+        self.model = {
+            'k': None,
+        }
+        self.windows = None
+        self.filter = None
+        self.mi = None
+        self.tProbe = None
 
         return
 
     def saveNamespace(
         self,
-        hdf,
         nUnitsPerChunk=100,
         ):
         """
         """
 
         datasets = {
-            'bootstrap/dg/p': self.pvalues,
-            'bootstrap/dg/sign': self.msign,
+            'bootstrap/p': self.p,
         }
 
         #
-        m = findOverlappingUnits(self.ukeys, hdf)
-
-        with h5py.File(hdf, 'a') as stream:
-
-            #
-            for path, attribute in datasets.items():
-                if attribute is None:
+        mask = self._intersectUnitKeys(self.ukeys)
+        with h5py.File(self.hdf, 'a') as stream:
+            for path, attr in datasets.items():
+                if attr is None:
                     continue
                 if path in stream:
                     del stream[path]
-                data = np.full([m.size, *attribute.shape[1:]], np.nan)
-                data[m] = attribute
+                data = np.full([mask.size, *attr.shape[1:]], np.nan)
+                data[mask] = attr
                 ds = stream.create_dataset(
                     path,
                     dtype=data.dtype,
@@ -63,16 +73,16 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
         #
         self._saveLargeDataset(
-            hdf,
-            path='bootstrap/dg/peths',
-            dataset=self.pethsResampled,
+            self.hdf,
+            path='bootstrap/peths',
+            dataset=self.peths,
             nUnitsPerChunk=nUnitsPerChunk,
         )
 
         #
         self._saveLargeDataset(
-            hdf,
-            path='bootstrap/dg/samples',
+            self.hdf,
+            path='bootstrap/samples',
             dataset=self.samples,
             nUnitsPerChunk=nUnitsPerChunk
         )
@@ -81,26 +91,43 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
     def loadNamespace(
         self,
-        hdf
         ):
         """
         """
 
         #
-        m = findOverlappingUnits(self.ukeys, hdf)
+        mask = self._intersectUnitKeys(self.ukeys)
         datasets = {
-            'bootstrap/peths': 'pethsResampled',
-            'bootstrap/samples': 'samples',
-            'bootstrap/sign': 'msigns',
-            'bootstrap/p': 'pvalues',
+            'bootstrap/peths': ('peths', None),
+            'bootstrap/samples': ('samples', None),
+            'bootstrap/p': ('p', None),
+            'clustering/features/m': ('features', 'm'),
+            'clustering/features/s': ('features', 's'),
+            'clustering/features/d': ('features', 'd'),
+            'clustering/model/k': ('model', 'k'),
+            'clustering/model/params': ('model', 'params1'),
+            'clustering/filter': ('filter', None),
+            'modulation/windows': ('windows', None),
+            'modulation/mi': ('mi', None)
         }
-        with h5py.File(hdf, 'r') as stream:
-            for path, attribute in datasets.items():
+        with h5py.File(self.hdf, 'r') as stream:
+            for path, (attr, key) in datasets.items():
                 if path in stream:
-                    ds = np.array(stream[path][m])
-                    self.__setattr__(attribute, ds)
+                    if 'windows' in path.split('/'): # Do not apply unit mask
+                        ds = np.array(stream[path])
+                    else:
+                        ds = np.array(stream[path][mask])
+                    if len(ds.shape) == 2 and ds.shape[-1] == 1:
+                        ds = ds.flatten()
+                    if key is None:
+                        self.__setattr__(attr, ds)
+                    else:
+                        self.__getattribute__(attr)[key] = ds
 
-        super().loadNamespace(hdf)
+            #
+            ds = stream['clustering/peths/standard']
+            if 't' in ds.attrs.keys():
+                self.tProbe = np.array(ds.attrs['t'])
 
         return
 
@@ -108,7 +135,6 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         self,
         nRuns=30,
         responseWindow=(-0.2, 0.5),
-        perisaccadicWindow=(0, 0.1),
         binsize=0.01,
         smoothingKernelWidth=0.01,
         buffer=1,
@@ -118,8 +144,15 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         """
         """
 
-        nUnits, nBins = self.peths['extra'].shape
-        self.pethsResampled = np.full([nUnits, nBins, nRuns], np.nan)
+        t, nTrials, nBins = psth2(
+            np.zeros(1),
+            np.zeros(1),
+            window=responseWindow,
+            binsize=binsize,
+            returnShape=True
+        )
+        nUnits = len(self.ukeys)
+        self.peths = np.full([nUnits, nBins, nRuns], np.nan)
         for iUnit in range(nUnits):
 
             #
@@ -128,16 +161,17 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
             #
             self.ukey = self.ukeys[iUnit]
-            mu, sigma = self.ambc[iUnit, 2], self.ambc[iUnit, 3]
+            mu, sigma = self.features['m'][iUnit], self.features['s'][iUnit]
 
             #
+            perisaccadicWindow = self.windows[self.iw]
             trialIndicesPerisaccadic, probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes(
                 perisaccadicWindow
             )
 
             # Extra-saccadic trial indices
             trialIndicesExtrasaccadic = np.where(np.vstack([
-                gratingMotion == self.ambc[self.iUnit, 1],
+                gratingMotion == self.features['d'][self.iUnit],
                 np.logical_or(
                     probeLatencies < perisaccadicWindow[0],
                     probeLatencies > perisaccadicWindow[1]
@@ -182,10 +216,6 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                     replace=False
                 )
 
-                #
-                # if iUnit == 500:
-                #   import pdb; pdb.set_trace()
-
                 # Use raw PSTH
                 # sample = list()
                 # for iTrial in trialIndices:
@@ -208,24 +238,29 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                     continue
 
                 # Standardize PSTH
-                self.pethsResampled[iUnit, :, iRun] = (fr - mu) / sigma
+                self.peths[iUnit, :, iRun] = (fr - mu) / sigma
 
         return
 
     def generateNullSamples(
         self,
-        nRuns=None
+        nRuns=None,
+        useFilter=True
         ):
         """
         """
 
         #
-        nUnits, nBins, nRuns_ = self.pethsResampled.shape
+        nUnits, nBins, nRuns_ = self.peths.shape
         if nRuns is None:
             nRuns = nRuns_
-        nComponents = int(np.nanmax(self.k.flatten()))
+        nComponents = int(np.nanmax(self.model['k']))
         self.samples = np.full([nUnits, nRuns, nComponents], np.nan)
         for iUnit in range(nUnits):
+
+            #
+            if useFilter and self.filter[iUnit] == False:
+                continue
 
             #
             self.ukey = self.ukeys[iUnit]
@@ -234,13 +269,16 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
             #
             sample = np.full([nRuns, nComponents], np.nan)
-            if np.isnan(self.modulation[self.iUnit, :, -1]).all():
-                continue
+
+            # Skip units without a modulation index
+            # if np.isnan(self.modulation[self.iUnit, :, -1]).all():
+            #     continue
+
             for iRun in range(nRuns):
-                peth = self.pethsResampled[iUnit, :, iRun]
+                peth = self.peths[iUnit, :, iRun]
                 if np.isnan(peth).all():
                     continue
-                dr, latencies, popt = super().refitSinglePeth(
+                dr, params2 = super()._fitPerisaccadicPeth(
                     self.ukey,
                     peth=peth
                 )
@@ -253,11 +291,9 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         """
         """
 
-        nUnits, nBins, nRuns = self.pethsResampled.shape
-        nComponents = int(np.nanmax(self.k.flatten()))
-        nWindows = len(self.windows)
-        self.pvalues = np.full([nUnits, nWindows, nComponents], np.nan)
-        self.msign = np.full([nUnits, nWindows, nComponents], np.nan)
+        nUnits, nBins, nRuns = self.peths.shape
+        nComponents = int(np.nanmax(self.model['k']))
+        self.p = np.full([nUnits, nComponents], np.nan)
 
         for ukey in self.ukeys:
 
@@ -265,17 +301,12 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             self.ukey = ukey
             end = '\n' if self.iUnit + 1 == nUnits else '\r'
             print(f'Computing p-values for unit {self.iUnit + 1} out of {nUnits}', end=end)
-            for iWindow in range(nWindows):
-                for iComp in range(nComponents):
-
-                    #
-                    sample = self.samples[self.iUnit, iComp, :]
-                    tv = self.modulation[self.iUnit, iComp, iWindow]
-                    sign = -1 if tv < 0 else +1
-                    m = np.invert(np.isnan(sample))
-                    p = np.sum(np.abs(sample[m]) > np.abs(tv)) / m.sum()
-                    self.pvalues[self.iUnit, iWindow, iComp] = p
-                    self.msign[self.iUnit, iWindow, iComp] = sign
+            for iComp in range(nComponents):
+                sample = self.samples[self.iUnit, :, iComp]
+                tv = self.mi[self.iUnit, self.iw, iComp]
+                mask = np.invert(np.isnan(sample))
+                p = np.sum(np.abs(sample[mask]) > np.abs(tv)) / mask.sum()
+                self.p[self.iUnit, iComp] = p
 
         return
 

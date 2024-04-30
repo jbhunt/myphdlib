@@ -12,6 +12,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
     def __init__(
         self,
         **kwargs,
+
         ):
         """
         """
@@ -51,9 +52,9 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
 
         #
         self.examples = (
-            ('2023-07-05', 'mlati9', 271),
-            ('2023-05-12', 'mlati7', 163),
-            ('2023-05-12', 'mlati7', 104)
+            ('2023-07-12', 'mlati9', 710),
+            ('2023-07-20', 'mlati9', 337),
+            ('2023-05-26', 'mlati7', 336)
         )
 
         return
@@ -80,6 +81,8 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             'modulation/templates/nasal': (self.templates, 'nasal'),
             'modulation/templates/temporal': (self.templates, 'temporal'),
             'modulation/peths/peri': (self.peths, 'peri'),
+            'modulation/terms/rps': (self.terms, 'rps'),
+            'modulation/terms/rs': (self.terms, 'rs')
         }
 
         with h5py.File(self.hdf, 'r') as stream:
@@ -115,7 +118,9 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             'modulation/model/params': (self.model['params2'], True),
             'modulation/templates/nasal': (self.templates['nasal'], True),
             'modulation/templates/temporal': (self.templates['temporal'], True),
-            'modulation/peths/peri': (self.peths['peri'], True)
+            'modulation/peths/peri': (self.peths['peri'], True),
+            'modulation/terms/rps': (self.terms['rps'], True),
+            'modulation/terms/rs': (self.terms['rs'], True)
         }
         mask = self._intersectUnitKeys(self.ukeys)
         with h5py.File(self.hdf, 'a') as stream:
@@ -386,6 +391,37 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
 
         return dr, params2
 
+    def _fitPerisaccadicPeth2(
+        self,
+        ukey=None,
+        maximumAmplitudeShift=100,
+        peth=None
+        ):
+        """
+        """
+
+        #
+        if ukey is not None:
+            self.ukey = ukey
+
+        #
+        if peth is None:
+            peth = self.peths['peri'][self.iUnit]
+
+        #
+        params1 = self.model['params1'][self.iUnit]
+        if np.isnan(params1).all():
+            return None, None, None
+        abcd = params1[np.invert(np.isnan(params1))]
+        abc, d = abcd[:-1], abcd[-1]
+        A1, B1, C1 = np.split(abc, 3)
+
+        #
+        gmm = GaussianMixturesModel(k=A1.size)
+        # TODO: Finish coding this method
+
+        return
+
     def computePerisaccadicPeths(
         self,
         trange=(-0.5, 0.5),
@@ -629,37 +665,37 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             raise Exception('Could not locate example unit')
 
         #
-        mu, sigma = self.ambc[self.iUnit, 2], self.ambc[self.iUnit, 3] 
+        mu, sigma = self.features['m'][self.iUnit], self.features['s'][self.iUnit]
 
         #
-        rMixed = self.terms['rMixed'][self.iUnit, :, iWindow]
-        rSaccade = self.terms['rSaccade'][self.iUnit, :, iWindow]
+        rMixed = self.terms['rps'][self.iUnit, :, iWindow]
+        rSaccade = self.terms['rs'][self.iUnit, :, iWindow]
         rProbeExtra = self.peths['extra'][self.iUnit]
         rProbePeri = self.peths['peri'][self.iUnit, :, iWindow]
 
         #
-        params = self.params[self.iUnit, :]
+        params = self.model['params1'][self.iUnit, :]
         params = params[np.invert(np.isnan(params))]
         abc, d = params[:-1], params[-1]
         A, B, C = np.split(abc, 3)
         a, b, c = A[0], B[0], C[0]
-        rProbeExtraFit = g(self.t, a, b, c, d)
+        rProbeExtraFit = g(self.tProbe, a, b, c, d)
 
         #
-        params = self.paramsRefit[self.iUnit, 0, iWindow, :]
+        params = self.model['params2'][self.iUnit, :, iWindow, 0]
         params = params[np.invert(np.isnan(params))]
         abc, d = params[:-1], params[-1]
         A, B, C = np.split(abc, 3)
         a, b, c = A[0], B[0], C[0]
-        rProbePeriFit = g(self.t, a, b, c, d)
+        rProbePeriFit = g(self.tProbe, a, b, c, d)
 
         #
         if axs is None:
             fig, axs = plt.subplots(ncols=4, sharey=True)
-        axs[0].plot(self.t, (rMixed - mu) / sigma, color='k')
-        axs[1].plot(self.t, (rSaccade) / sigma, color='k')
-        # axs[2].plot(self.t, rProbeExtra, color=colors[0], alpha=0.7, linestyle=':')
-        axs[2].plot(self.t, rProbePeri, color=colors[1])
+        axs[0].plot(self.tProbe, (rMixed - mu) / sigma, color='k')
+        axs[1].plot(self.tProbe, (rSaccade) / sigma, color='k')
+        # axs[2].plot(self.t, rProbeExtra, color=colors[0], alpha=0.7 linestyle=':')
+        axs[2].plot(self.tProbe, rProbePeri, color=colors[1])
 
         return
 
@@ -693,81 +729,43 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         if self.iUnit is None:
             raise Exception('Could not locate unit')
 
-        # Figure out how many trials are in each peri-saccadic time window
-        if useTrueRatios:
-            heightRatios = list()
-            for t1, t2 in self.windows[windowIndices, :]:
-                trialIndices = np.where(self.session.parseEvents(
-                    eventName='probe',
-                    coincident=True,
-                    eventDirection=self.ambc[self.iUnit, 1],
-                    coincidenceWindow=(t1, t2),
-                ))[0]
-                heightRatios.append(trialIndices.size)
-            heightRatios = np.array(heightRatios)
-        else:
-            heightRatios = np.ones(windowIndices.size)
-
         # Create the subplots
         nWindows = len(windowIndices)
         fig, grid = plt.subplots(
             nrows=nWindows,
-            ncols=4,
-            gridspec_kw={'height_ratios': heightRatios}
+            ncols=3,
         )
 
         # For each row, plot the raster and the trial-averages PSTHs for each term
         for i, axs, w in zip(windowIndices, grid, self.windows[windowIndices, :]):
-            self._plotLatencySortedRasterplot(
-                ukey=ukey,
-                ax=axs[0],
-                perisaccadicWindow=w,
-                responseWindow=responseWindow,
-                **kwargs
-            )
             self._plotResponseTerms(
                 ukey=ukey,
-                axs=axs[1:],
+                axs=axs,
                 iWindow=i,
             )
 
         # Set the y-axis limits for the tiral-averaged responses
         ylim = [np.inf, -np.inf]
-        for ax in grid[:, 1:].flatten():
+        for ax in grid.flatten():
             y1, y2 = ax.get_ylim()
             if y1 < ylim[0]:
                 ylim[0] = y1
             if y2 > ylim[1]:
                 ylim[1] = y2
-        for ax in grid[:, 1:].flatten():
+        yticks = grid[0, 0].get_yticks()
+        for ax in grid.flatten():
             ax.set_ylim(ylim)
+            ax.set_yticks(yticks)
             for sp in ('top', 'right', 'bottom', 'left'):
                 ax.spines[sp].set_visible(False)
 
         #
-        for ax in grid[:-1, 1:].flatten():
-            ax.set_xticklabels([])
+        for ax in grid[:, 1:].flatten():
             ax.set_yticklabels([])
         for ax in grid[:-1, 0].flatten():
-            ax.set_yticks(grid[-1, 0].get_yticks())
             ax.set_yticklabels([])
-            ax.set_xticks([])
-
-        #
-        ylim = [np.inf, -np.inf]
-        for ax in grid[:, 0].flatten():
-            y1, y2 = ax.get_ylim()
-            if y1 < ylim[0]:
-                ylim[0] = y1
-            if y2 > ylim[1]:
-                ylim[1] = y2
-
-        for ax in grid[:, 0].flatten():
-            for sp in ('top', 'right', 'bottom', 'left'):
-                ax.spines[sp].set_visible(False)
-            ax.set_xlim(responseWindow)
-            ax.set_ylim(ylim)
-            ax.set_yticks([0, 25])
+        for ax in grid[:-1, :].flatten():
+            ax.set_xticklabels([])
 
         #
         fig.set_figwidth(figsize[0])
@@ -779,6 +777,8 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         self,
         figsize=(3, 3.5),
         windowIndex=5,
+        yticks=(20,),
+        xticks=(0, 0.3)
         ):
         """
         """
@@ -798,13 +798,13 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             # Plot the raw PETHs
             rProbePeri = self.peths['peri'][self.iUnit, :, windowIndex]
             rProbeExtra = self.peths['extra'][self.iUnit, :]
-            grid[i, 0].plot(self.tProbe, rProbePeri, 'k')
-            grid[i, 1].plot(self.tProbe, rProbeExtra, color='k')
+            grid[i, 1].plot(self.tProbe, rProbePeri, 'k')
+            grid[i, 0].plot(self.tProbe, rProbeExtra, color='k')
 
             # Plot the fit for the largest component of the response
             paramsExtra = self.model['params1'][self.iUnit, :]
             paramsPeri = self.model['params2'][self.iUnit, :, windowIndex, :]
-            for j, params in enumerate([paramsPeri, paramsExtra]):
+            for j, params in enumerate([paramsExtra, paramsPeri]):
                 params = params[np.invert(np.isnan(params))]
                 if len(params) == 0:
                     continue
@@ -828,12 +828,13 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                 ax.set_ylim(ylim)
 
         #
-        for ax in grid[:, 1].flatten():
-            ax.set_yticklabels([])
+        for ax in grid.flatten():
+            ax.set_yticks(yticks)
+            ax.set_xticks(xticks)
 
         #
         for ax in grid.flatten():
-            for sp in ('top', 'right'):
+            for sp in ('top', 'right', 'bottom', 'left'):
                 ax.spines[sp].set_visible(False)
 
         #
@@ -842,3 +843,27 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         fig.tight_layout()
 
         return fig, grid
+
+    def plotModulationIndexByFiringRate(
+        self,
+        ):
+        """
+        """
+
+        x, y = list(), list()
+        for session in self.sessions:
+            firingRate = session.load('metrics/fr')
+            for ukey in self.ukeys:
+                date, animal, cluster = ukey
+                if date != session.date or animal != session.animal:
+                    continue
+                unit = session.indexByCluster(cluster)
+                x.append(firingRate[unit.index])
+                iUnit = self._indexUnitKey(ukey)
+                y.append(self.mi[iUnit])
+
+        #
+        fig, ax = plt.subplots()
+        ax.scatter(x, y, color='k', marker='.', s=15, alpha=0.5)
+
+        return fig, ax

@@ -44,6 +44,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         self.model = {
             'params': None,
             'labels': None,
+            'peaks': None,
+            'fits': None,
             'rss': None,
             'k': None
         }
@@ -53,7 +55,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             'm': None,
             's': None,
         }
-        self.t = None
+        self.tProbe = None
         self.filter = None
 
         #
@@ -83,7 +85,9 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             'clustering/model/params': self.model['params'],
             'clustering/model/labels': self.model['labels'],
             'clustering/model/rss': self.model['rss'],
+            'clustering/model/fits': self.model['fits'],
             'clustering/model/k': self.model['k'],
+            'clustering/model/peaks': self.model['peaks'],
             'clustering/features/a': self.features['a'],
             'clustering/features/d': self.features['d'],
             'clustering/features/m': self.features['m'],
@@ -113,7 +117,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
                 # Save the bin centers for all PETH datasets
                 if 'peths' in pl.Path(k).parts:
-                    ds.attrs['t'] = self.t
+                    ds.attrs['t'] = self.tProbe
 
         return
 
@@ -131,6 +135,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             'clustering/model/labels': (self.model, 'labels'),
             'clustering/model/rss': (self.model, 'rss'),
             'clustering/model/k': (self.model, 'k'),
+            'clustering/model/peaks': (self.model, 'peaks'),
             'clustering/features/a': (self.features, 'a'),
             'clustering/features/d': (self.features, 'd'),
             'clustering/features/m': (self.features, 'm'),
@@ -143,8 +148,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 parts = path.split('/')
                 if path in stream:
                     ds = stream[path]
-                    if 't' in ds.attrs.keys() and self.t is None:
-                        self.t = ds.attrs['t']
+                    if 't' in ds.attrs.keys() and self.tProbe is None:
+                        self.tProbe = ds.attrs['t']
                     value = np.array(ds)
                     if 'filter' in parts:
                         value = value.astype(bool)
@@ -169,7 +174,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         """
         """
 
-        self.t, nTrials, nBins = psth2(
+        self.tProbe, nTrials, nBins = psth2(
             np.zeros(1),
             np.zeros(1),
             window=responseWindow,
@@ -236,7 +241,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 s_ = bl2.std()
 
                 # Compute new features
-                a_ = np.abs(y_[self.t > 0] - m_).max()
+                a_ = np.abs(y_[self.tProbe > 0] - m_).max()
                 d_ = gratingMotion
 
                 # Override current feature set if amplitude is greater
@@ -295,9 +300,11 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         kwargs.update(kwargs_)
 
         #
+        nBins = self.tProbe.size
         nUnits = len(self.ukeys)
         self.model['k'] = np.full(nUnits, np.nan)
         self.model['rss'] = np.full(nUnits, np.nan)
+        self.model['fits'] = np.full([nUnits, nBins], np.nan)
         self.model['params'] = np.full([nUnits, int(3 * kmax + 1)], np.nan)
 
         #
@@ -324,7 +331,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 for iPeak in range(peakIndices_.size):
 
                     # Exclude peaks detected before the stimulus  onset
-                    if self.t[peakIndices_[iPeak]] <= 0:
+                    if self.tProbe[peakIndices_[iPeak]] <= 0:
                         continue
 
                     #
@@ -337,7 +344,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 continue
             peakProminences = np.array(peakProminences)
             peakAmplitudes = yStandard[peakIndices]
-            peakLatencies = self.t[peakIndices]
+            peakLatencies = self.tProbe[peakIndices]
 
             # Use only the k largest peaks
             if peakIndices.size > kmax:
@@ -380,13 +387,131 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             # Fit the GMM and compute the residual sum of squares (rss)
             gmm = GaussianMixturesModel(k)
             gmm.fit(
-                self.t,
+                self.tProbe,
                 yStandard,
                 p0=p0,
                 bounds=bounds
             )
-            yFit = gmm.predict(self.t)
+            yFit = gmm.predict(self.tProbe)
             self.model['rss'][iUnit] = np.sum(np.power(yFit - yStandard, 2)) / np.sum(np.power(yStandard, 2))
+            self.model['fits'][iUnit] = yFit
+
+            # Extract the parameters of the fit GMM
+            d, abc = gmm._popt[0], gmm._popt[1:]
+            A, B, C = np.split(abc, 3)
+            order = np.argsort(np.abs(A))[::-1] # Sort by amplitude
+            params = np.concatenate([
+                A[order],
+                B[order],
+                C[order],
+            ])
+            self.model['params'][iUnit, :params.size] = params
+            self.model['params'][iUnit, -1] = d
+
+        return
+
+    def fitExtrasaccadicPeths2(
+        self,
+        kmax=10,
+        tolerance=0.1,
+        maximumPeakCount=5,
+        **kwargs_,
+        ):
+        """
+        """
+
+        kwargs = {
+            'minimumPeakWidth': 0.001,
+            'maximumPeakWidth': 0.05,
+            'initialPeakWidth': 0.002,
+            'maximumBaselineShift': 5,
+        }
+        kwargs.update(kwargs_)
+
+        #
+        nUnits = len(self.ukeys)
+        nBins = self.tProbe.size
+        self.model['k'] = np.full(nUnits, np.nan)
+        self.model['rss'] = np.full(nUnits, np.nan)
+        self.model['params'] = np.full([nUnits, int(3 * kmax + 1)], np.nan)
+        self.model['fits'] = np.full([nUnits, nBins], np.nan)
+        self.model['peaks'] = np.full([nUnits, maximumPeakCount], np.nan)
+        maximumPeakLatency = self.tProbe.max() + (self.tProbe[1] - self.tProbe[0]) / 2
+        minimumPeakLatency = self.tProbe.min() - (self.tProbe[1] - self.tProbe[0]) / 2
+
+        #
+        for iUnit in range(nUnits):
+
+            #
+            # if self.filter[iUnit] == False:
+            #     continue
+
+            end = None if iUnit + 1 == nUnits else '\r'
+            print(f'Fitting GMM for unit {iUnit + 1} out of {nUnits} units', end=end)
+
+            #
+            yStandard = self.peths['standard'][iUnit]
+
+            #
+            for k in range(1, kmax + 1, 1):
+
+                #
+                for th in np.linspace(0, np.abs(yStandard.max()), 30)[::-1]:
+                    peakIndices = list()
+                    for coef in (-1, 1):
+                        peakIndices_, peakProps = findPeaks(
+                            yStandard * coef,
+                            height=th
+                        )
+                        for peakIndex in peakIndices_:
+                            peakIndices.append(peakIndex)
+                    peakIndices = np.array(peakIndices)
+                    if peakIndices.size >= k:
+                        break
+
+                #
+                peakAmplitudes = np.interp(
+                    self.tProbe[peakIndices],
+                    self.tProbe,
+                    yStandard
+                )
+                amplitudeSortedIndex = np.argsort(peakAmplitudes)[::-1][:k]
+                peakAmplitudes = yStandard[peakIndices[amplitudeSortedIndex]]
+                peakLatencies = self.tProbe[peakIndices[amplitudeSortedIndex]]
+                peakIndices = peakIndices[amplitudeSortedIndex] # NOTE: Important not to overwrite this until at least here
+
+                #
+                # initialPeakLatencies = np.linspace(0, maximumPeakLatency, k + 2)[1:-1]
+                p0 = np.concatenate([
+                    np.array([0]),
+                    peakAmplitudes,
+                    peakLatencies,
+                    np.full(k, kwargs['initialPeakWidth'])
+                ])
+                bounds = np.vstack([
+                    np.array([-kwargs['maximumBaselineShift'], kwargs['maximumBaselineShift']]),
+                    np.repeat([[-1 * np.abs(yStandard).max(), np.abs(yStandard).max()]], k, axis=0),
+                    np.repeat([[minimumPeakLatency, maximumPeakLatency]], k, axis=0),
+                    np.repeat([[kwargs['minimumPeakWidth'], kwargs['maximumPeakWidth']]], k, axis=0)
+                ]).T
+                if p0.size != bounds.shape[1]:
+                    print('Warning: Wrong number of initial parameters')
+                    continue
+                gmm = GaussianMixturesModel(k=k)
+                gmm.fit(self.tProbe, yStandard, p0=p0, bounds=bounds)
+                yFit = gmm.predict(self.tProbe)
+                rss = np.sum(np.power(yFit - yStandard, 2)) / np.sum(np.power(yStandard, 2))
+                if rss <= tolerance:
+                    break
+
+            #
+            self.model['k'][iUnit] = k
+            self.model['rss'][iUnit] = rss
+            self.model['fits'][iUnit] = yFit
+
+            #
+            yFit = gmm.predict(np.linspace(minimumPeakLatency, maximumPeakLatency, 1000))
+            # TODO: Finish writing code that extracts peaks of response components
 
             # Extract the parameters of the fit GMM
             d, abc = gmm._popt[0], gmm._popt[1:]
@@ -563,10 +688,10 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 params[:-1]
             ])
             gmm._popt = paramsOrdered
-            yFit = gmm.predict(self.t)
+            yFit = gmm.predict(self.tProbe)
 
             #
-            axs[i].plot(self.t, yRaw, color='k', alpha=0.3)
+            axs[i].plot(self.tProbe, yRaw, color='k', alpha=0.3)
 
             #
             A, B, C = np.split(params[:-1], 3)
@@ -668,7 +793,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             stop = start + maskByLabel.sum()
             y = np.arange(0, maskByLabel.sum(), 1)[::-1]
             axs[i, 0].pcolor(
-                self.t,
+                self.tProbe,
                 y,
                 pethsReverseLatencySorted[start: stop, :],
                 vmin=vrange[0],
@@ -682,7 +807,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             n = np.arange(maskByLabel.sum())
             index = np.argsort(latency[maskByLabel])
             axs[i, 1].pcolor(
-                self.t,
+                self.tProbe,
                 n,
                 peths[maskByLabel][index],
                 vmin=vrange[0],

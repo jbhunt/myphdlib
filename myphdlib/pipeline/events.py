@@ -618,16 +618,12 @@ class EventsProcessingMixin(object):
 
         if self.hasDataset('labjack/matrix') == False or redo:
             self._createLabjackDataMatrix()
-        if self.hasDataset('labjack/timespace') == False or redo:
-            self._extractLabjackTimespace()
-        if self.hasDataset('barcodes') == False or redo:
-            self._extractBarcodeSignals()
-            self._decodeBarcodeSignals()
-        if self.hasDataset('tfp') == False or redo:
-            self._estimateTimestampingFunction()
+        self._extractLabjackTimespace()
+        self._extractBarcodeSignals()
+        self._decodeBarcodeSignals()
+        self._estimateTimestampingFunction()
         self._findDroppedFrames()
-        if self.hasDataset('labjack/cameras/timestamps') == False or redo:
-            self._timestampCameraTrigger()
+        self._timestampCameraTrigger()
         self._timestampVideoFrames()
         self._timestampSaccades()
         self._computeRelativeEventTiming()
