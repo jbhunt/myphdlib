@@ -41,6 +41,13 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         self.mi = None
         self.tProbe = None
 
+        # Example neurons
+        self.examples = (
+            ('2023-07-12', 'mlati9', 710),
+            ('2023-07-20', 'mlati9', 337),
+            ('2023-05-26', 'mlati7', 336)
+        )
+
         return
 
     def saveNamespace(
@@ -106,9 +113,10 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             'clustering/features/d': ('features', 'd'),
             'clustering/model/k': ('model', 'k'),
             'clustering/model/params': ('model', 'params1'),
+            'clustering/model/labels': ('model', 'labels'),
             'clustering/filter': ('filter', None),
             'modulation/windows': ('windows', None),
-            'modulation/mi': ('mi', None)
+            'modulation/mi': ('mi', None),
         }
         with h5py.File(self.hdf, 'r') as stream:
             for path, (attr, key) in datasets.items():
@@ -320,7 +328,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         labels=(1, 2, 3, -1),
         normalize=True,
         xrange=(-2, 2),
-        iWindow=-1,
+        iWindow=5,
         ):
         """
         """
@@ -331,26 +339,29 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
         #
         cmap = LinearSegmentedColormap.from_list('mycmap', colorspace, N=3)
-
-        #
         fig, ax = plt.subplots()
 
         #
+        polarity = np.array([
+            -1 if self.mi[i, iWindow, 0] < 0 else 1
+                for i in range(len(self.ukeys))
+        ])
+        polarity[np.isnan(self.mi[:, iWindow, 0])]
         samples = ([], [], [])
         for i, l in enumerate(labels):
-            for polarity in [-1, 1]:
-                m = np.vstack([
-                    self.msign[:, iWindow, 0] == polarity,
-                    np.ravel(self.labels) == l,
-                    np.abs(self.params[:, 0]) >= minimumResponseAmplitude,
+            for sign in [-1, 1]:
+                mask = np.vstack([
+                    polarity == sign,
+                    self.model['labels'] == l,
+                    np.abs(self.model['params1'][:, 0]) >= minimumResponseAmplitude,
                 ]).all(0)
-                for dr, p, iUnit in zip(self.modulation[m, 0, iWindow], self.pvalues[m, iWindow, 0], np.arange(len(self.ukeys))[m]):
+                for dr, p, iUnit in zip(self.mi[mask, iWindow, 0], self.p[mask, 0], np.arange(len(self.ukeys))[mask]):
                     if l == -1:
                         dr *= -1
                     if normalize:
-                        dr /= self.params[iUnit, 0]
+                        dr /= self.model['params1'][iUnit, 0]
                     if p < a:
-                        if polarity == -1:
+                        if sign == -1:
                             samples[0].append(dr)
                         else:
                             samples[1].append(dr)
@@ -366,7 +377,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             histtype='barstacked',
             color=cmap(np.arange(3)),
         )
-        ax.hist(
+        binCounts_, binEdges, patches = ax.hist(
             [np.clip(sample, xmin, xmax) for sample in samples],
             range=(xmin, xmax),
             bins=nBins,
@@ -374,9 +385,29 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             facecolor='none',
             edgecolor='k',
         )
+        binCounts = binCounts_.max(0)
+        binCenters = binEdges[:-1] + ((binEdges[1] - binEdges[0]) / 2)
+        leftEdges = binEdges[:-1]
+        rightEdges = binEdges[1:]
 
         #
-        ax.set_xlabel(r'$\Delta$R')
+        for ukey in self.examples:
+            iUnit = self._indexUnitKey(ukey)
+            mi = self.mi[iUnit, iWindow, 0] / self.model['params1'][iUnit, 0]
+            binIndex = np.where(np.logical_and(
+                mi >= leftEdges,
+                mi <  rightEdges
+            ))[0].item()
+            ax.scatter(
+                binCenters[binIndex],
+                binCounts[binIndex] + 10,
+                marker='v',
+                color='k',
+                s=20
+            )
+
+        #
+        ax.set_xlabel(f'Modulation index (MI)')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
