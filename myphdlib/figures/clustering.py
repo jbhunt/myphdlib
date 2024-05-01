@@ -415,6 +415,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         kmax=10,
         tolerance=0.1,
         maximumPeakCount=5,
+        minimumPeakHeight=0.5,
+        nPointsForEvaluation=1000,
         **kwargs_,
         ):
         """
@@ -434,7 +436,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         self.model['k'] = np.full(nUnits, np.nan)
         self.model['rss'] = np.full(nUnits, np.nan)
         self.model['params'] = np.full([nUnits, int(3 * kmax + 1)], np.nan)
-        self.model['fits'] = np.full([nUnits, nBins], np.nan)
+        self.model['fits'] = np.full([nUnits, nPointsForEvaluation], np.nan)
         self.model['peaks'] = np.full([nUnits, maximumPeakCount], np.nan)
         maximumPeakLatency = self.tProbe.max() + (self.tProbe[1] - self.tProbe[0]) / 2
         minimumPeakLatency = self.tProbe.min() - (self.tProbe[1] - self.tProbe[0]) / 2
@@ -451,6 +453,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
             #
             yStandard = self.peths['standard'][iUnit]
+            result = False
 
             #
             for k in range(1, kmax + 1, 1):
@@ -502,28 +505,37 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 yFit = gmm.predict(self.tProbe)
                 rss = np.sum(np.power(yFit - yStandard, 2)) / np.sum(np.power(yStandard, 2))
                 if rss <= tolerance:
+                    result = True
                     break
 
             #
-            self.model['k'][iUnit] = k
-            self.model['rss'][iUnit] = rss
-            self.model['fits'][iUnit] = yFit
+            if result:
+                self.model['k'][iUnit] = k
+                self.model['rss'][iUnit] = rss
 
-            #
-            yFit = gmm.predict(np.linspace(minimumPeakLatency, maximumPeakLatency, 1000))
-            # TODO: Finish writing code that extracts peaks of response components
+                # Locate peaks in the fit
+                t = np.linspace(minimumPeakLatency, maximumPeakLatency, nPointsForEvaluation)
+                yFit = gmm.predict(t)
+                self.model['fits'][iUnit] = yFit
+                peakIndices, peakProps = findPeaks(yFit, height=minimumPeakHeight)
+                if peakIndices.size > maximumPeakCount:
+                    peakAmplitudes = yFit[peakIndices]
+                    amplitudeSortedIndex = np.argsort(peakAmplitudes)[::-1][:maximumPeakCount]
+                    peakIndices = peakIndices[amplitudeSortedIndex]
+                if peakIndices.size != 0:
+                    self.model['peaks'][iUnit, :peakIndices.size] = t[peakIndices]
 
-            # Extract the parameters of the fit GMM
-            d, abc = gmm._popt[0], gmm._popt[1:]
-            A, B, C = np.split(abc, 3)
-            order = np.argsort(np.abs(A))[::-1] # Sort by amplitude
-            params = np.concatenate([
-                A[order],
-                B[order],
-                C[order],
-            ])
-            self.model['params'][iUnit, :params.size] = params
-            self.model['params'][iUnit, -1] = d
+                # Extract the parameters of the fit GMM
+                d, abc = gmm._popt[0], gmm._popt[1:]
+                A, B, C = np.split(abc, 3)
+                order = np.argsort(np.abs(A))[::-1] # Sort by amplitude
+                params = np.concatenate([
+                    A[order],
+                    B[order],
+                    C[order],
+                ])
+                self.model['params'][iUnit, :params.size] = params
+                self.model['params'][iUnit, -1] = d
 
         return
 
