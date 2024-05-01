@@ -36,6 +36,8 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         }
         self.model = {
             'k': None,
+            'fits': None,
+            'peaks': None,
             'labels': None,
             'params1': None,
             'params2': None
@@ -71,6 +73,8 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             'clustering/model/params': (self.model, 'params1'),
             'clustering/model/labels': (self.model, 'labels'),
             'clustering/model/k': (self.model, 'k'),
+            'clustering/model/fits': (self.model, 'fits'),
+            'clustering/model/peaks': (self.model, 'peaks'),
             'clustering/features/d': (self.features, 'd'),
             'clustering/features/m': (self.features, 'm'),
             'clustering/features/s': (self.features, 's'),
@@ -394,8 +398,8 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
     def _fitPerisaccadicPeth2(
         self,
         ukey=None,
-        maximumAmplitudeShift=100,
-        peth=None
+        peth=None,
+        maximumAmplitudeShift=300,
         ):
         """
         """
@@ -415,12 +419,54 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         abcd = params1[np.invert(np.isnan(params1))]
         abc, d = abcd[:-1], abcd[-1]
         A1, B1, C1 = np.split(abc, 3)
+        k = A1.size
 
         #
-        gmm = GaussianMixturesModel(k=A1.size)
-        # TODO: Finish coding this method
+        nComponents = int(np.nanmax(self.model['k']))
+        dr = np.full(nComponents, np.nan)
 
-        return
+        #
+        maximumPeakLatency = self.tProbe.max() + (self.tProbe[1] - self.tProbe[0]) / 2
+        minimumPeakLatency = self.tProbe.min() - (self.tProbe[1] - self.tProbe[0]) / 2
+        nPointsForEvaluation = self.model['fits'].shape[1]
+        t = np.linspace(minimumPeakLatency, maximumPeakLatency, nPointsForEvaluation)
+
+        #
+        p0 = np.concatenate([
+            np.array([d]),
+            A1,
+            B1,
+            C1
+        ])
+        bounds = np.vstack([
+            np.array([[-5, 5]]),
+            np.repeat([[-np.inf, np.inf]], k, axis=0),
+            np.repeat([[minimumPeakLatency, maximumPeakLatency]], k, axis=0),
+            np.repeat([[0.001, 0.2]], k, axis=0)
+        ]).T
+
+        #
+        gmm = GaussianMixturesModel(k=k)
+        gmm.fit(self.tProbe, peth, p0=p0, bounds=bounds)
+        params2 = np.full_like(params1, np.nan) # TODO: Determine the new GMM parameters
+        d, abc = gmm._popt[0], gmm._popt[1:]
+        A, B, C = np.split(abc, 3)
+        nParams = abc.size + 1
+        params2[:nParams] = np.concatenate([A, B, C, np.array([d,])])
+
+        #
+
+        yFitPeri = gmm.predict(t)
+        yFitExtra = self.model['fits'][self.iUnit]
+
+        #
+        peakLatencies = self.model['peaks'][self.iUnit]
+        for iPeak, latency in enumerate(peakLatencies):
+            a1 = np.interp(latency, t, yFitExtra).item()
+            a2 = np.interp(latency, t, yFitPeri).item()
+            dr[iPeak] = a1 - a2
+
+        return dr, params2
 
     def computePerisaccadicPeths(
         self,
@@ -530,7 +576,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                 peth = self.peths['peri'][self.iUnit, :, iWin]
                 if np.isnan(peth).all():
                     continue
-                dr, params2 = self._fitPerisaccadicPeth(
+                dr, params2 = self._fitPerisaccadicPeth2(
                     ukey=self.ukeys[self.iUnit],
                     peth=peth,
                     maximumAmplitudeShift=maximumAmplitudeShift
@@ -538,7 +584,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                 if all([dr is None, params2 is None]):
                     continue
                 self.mi[self.iUnit, iWin, :] = dr
-                self.model['params2'][self.iUnit, :, iWin, :] = params2.T
+                # self.model['params2'][self.iUnit, :, iWin, :] = params2.T
 
         return
 

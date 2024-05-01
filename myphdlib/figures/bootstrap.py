@@ -10,6 +10,7 @@ import seaborn as sns
 import pandas as pd
 from itertools import product
 from scipy.stats import spearmanr
+from multiprocessing import Pool
 
 class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
     """
@@ -241,11 +242,33 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 self.peths[iUnit, :, iRun] = (fr - mu) / sigma
 
         return
+    
+    def _generateNullSample(
+        self,
+        iUnit,
+        ):
+        """
+        """
+
+        ukey = self.ukeys[iUnit]
+        peths = self.peths[iUnit]
+        nRuns = peths.shape[0]
+        sample = np.full(nRuns, np.nan)
+        for iRun in range(nRuns):
+            peth = peths[iRun]
+            dr, params2 = super()._fitPerisaccadicPeth(
+                ukey,
+                peth=peth
+            )
+            sample[iRun] = dr
+
+        return sample
 
     def generateNullSamples(
         self,
         nRuns=None,
-        useFilter=True
+        useFilter=True,
+        parallelize=True,
         ):
         """
         """
@@ -256,36 +279,43 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             nRuns = nRuns_
         nComponents = int(np.nanmax(self.model['k']))
         self.samples = np.full([nUnits, nRuns, nComponents], np.nan)
-        for iUnit in range(nUnits):
 
-            #
-            if useFilter and self.filter[iUnit] == False:
-                continue
-
-            #
-            self.ukey = self.ukeys[iUnit]
-            end = '\r' if iUnit + 1 != nUnits else None
-            print(f'Generating null samples for unit {iUnit + 1} out of {nUnits}', end=end)
-
-            #
-            sample = np.full([nRuns, nComponents], np.nan)
-
-            # Skip units without a modulation index
-            # if np.isnan(self.modulation[self.iUnit, :, -1]).all():
-            #     continue
-
-            for iRun in range(nRuns):
-                peth = self.peths[iUnit, :, iRun]
-                if np.isnan(peth).all():
-                    continue
-                dr, params2 = super()._fitPerisaccadicPeth(
-                    self.ukey,
-                    peth=peth
+        #
+        if parallelize:
+            with Pool(-1) as pool:
+                samples = pool.map(
+                    self._generateNullSample,
+                    np.arange(len(self.ukeys))
                 )
-                sample[iRun, :] = dr
+            self.samples = np.array(samples)
 
-            #
-            self.samples[iUnit, :, :] = sample
+        #
+        else:
+            for iUnit in range(nUnits):
+
+                #
+                if useFilter and self.filter[iUnit] == False:
+                    continue
+
+                #
+                self.ukey = self.ukeys[iUnit]
+                end = '\r' if iUnit + 1 != nUnits else None
+                print(f'Generating null samples for unit {iUnit + 1} out of {nUnits}', end=end)
+
+                #
+                sample = np.full([nRuns, nComponents], np.nan)
+                for iRun in range(nRuns):
+                    peth = self.peths[iUnit, :, iRun]
+                    if np.isnan(peth).all():
+                        continue
+                    dr, params2 = super()._fitPerisaccadicPeth(
+                        self.ukey,
+                        peth=peth
+                    )
+                    sample[iRun, :] = dr
+
+                #
+                self.samples[iUnit, :, :] = sample
 
     def computeProbabilityValues(self):
         """
