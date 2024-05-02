@@ -3,6 +3,8 @@ from myphdlib.pipeline.events import EventsProcessingMixin
 from myphdlib.pipeline.saccades import SaccadesProcessingMixin
 from myphdlib.general.labjack import filterPulsesFromPhotologicDevice
 import pathlib as pl
+import numpy as np
+import re
 
 class StimuliProcessingMixinDreadds2(
     ):
@@ -13,14 +15,14 @@ class StimuliProcessingMixinDreadds2(
         self, 
         ):
         """
-        Computes interval between pulses in the stimulus channel of the LabJack data
+        Computes interval between pulses in the stimulus channel of the LabJack data!
         """
 
         #this if else clause will have to be edited to reflect hdf format
-        if 'labjackData' not in session.keys():
+        if self.hasDataset('labjack/matrix') == False:
             raise Exception('Labjack data not extracted')
         else:
-            labjackData = session.read('labjackData')
+            labjackData = self.load('labjack/matrix')
         #defining the labjack data should also be edited to pull from hdf
         timestamps = labjackData[:, 0]
         TTLdata = labjackData[:, 6]
@@ -31,10 +33,9 @@ class StimuliProcessingMixinDreadds2(
         iIntervals2 = iPulses[iIntervals]
         pulseTimestamps = timestamps[iPulses]
         intervalTimestamps = (timestamps[iIntervals2] + 3)
-        return pulseTimestamps, intervalTimestamps
+        return pulseTimestamps, intervalTimestamps, iPulses
 
-    def _createMetadataFileList(pulseTimestamps, intervalTimestamps,
-        self,
+    def _createMetadataFileList(self, pulseTimestamps, intervalTimestamps
         ):
         """
         Creates chronological list of metadata files & asserts that the number of files equals the number of stimulus blocks
@@ -63,7 +64,7 @@ class StimuliProcessingMixinDreadds2(
 
         fileList = []
         for f in partialFileList:
-            fileList.append(parentDir + f)
+            fileList.append(parentDir.joinpath(f))
 
         # Quick check for file # mismatch w/ interval timestamps
         assert len(fileList) == intervalTimestamps.shape[0] + 1
@@ -75,6 +76,8 @@ class StimuliProcessingMixinDreadds2(
     
     def _processDriftingGratingProtocol(
         self,
+        file,
+        fileList,
         eventIndex,
         metadataHolder,
         fileIndex,
@@ -83,6 +86,9 @@ class StimuliProcessingMixinDreadds2(
         ):
         """
         """
+        with open(file, 'r') as stream:
+            lines = stream.readlines()
+        orientation = int(re.findall('\s\d*\s', lines[2]).pop().strip()) # TODO: Place this in the metadata holder
         metadata = np.genfromtxt(file, skip_header = 5, delimiter=',')
         blockLength = metadata.shape[0]
         if fileIndex == 0:
@@ -106,13 +112,16 @@ class StimuliProcessingMixinDreadds2(
         metadataHolder[eventIndex:eventIndex + blockLength, 0:5] = metadata
 
         # adding a column that is 0 if drifting grating, 1 if fictive saccade
-        metadataHolder[eventIndex:eventIndex + blockLength, 5:6] = 0
+        metadataHolder[eventIndex:eventIndex + blockLength, 5] = 0
+        metadataHolder[eventIndex:eventIndex + blockLength, 7] = orientation
         eventIndex += blockLength
 
         return eventIndex, metadataHolder
 
     def _processFictiveSaccadesProtocol(
         self,
+        file,
+        fileList,
         eventIndex,
         metadataHolder,
         fileIndex,
@@ -150,14 +159,14 @@ class StimuliProcessingMixinDreadds2(
                 assert (trialType[2] == 'probe') or (trialType[2] == 'saccade'), \
                     "Good error message!"
                 if trialType[2] == 'probe':
-                    metadataHolder[eventIndex, 0:1] = 3.0
-                    metadataHolder[eventIndex, 1:2] = allTrials[trialIndex][1]
-                    metadataHolder[eventIndex, 5:6] = 1
+                    metadataHolder[eventIndex, 0] = 3.0
+                    metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
+                    metadataHolder[eventIndex, 5] = 1
                     metadataHolder[eventIndex, 6] = 0
                 elif trialType[2] == 'saccade':
-                    metadataHolder[eventIndex, 0:1] = 5.0
-                    metadataHolder[eventIndex, 1:2] = allTrials[trialIndex][1]
-                    metadataHolder[eventIndex, 5:6] = 1
+                    metadataHolder[eventIndex, 0] = 5.0
+                    metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
+                    metadataHolder[eventIndex, 5] = 1
                     metadataHolder[eventIndex, 6] = 1
                 eventIndex += 1
                 pulseIndex    += 1 
@@ -165,13 +174,13 @@ class StimuliProcessingMixinDreadds2(
             else:
                 assert trialType[2] == 'combined', "Invalid trialtype found : " + str(trialType[2])
                 assert pulseIndex != thisBlockPulses.shape[0] - 1, "Combined trial is last pulse, but only one found."
-                metadataHolder[eventIndex, 0:1] = 5.0
-                metadataHolder[eventIndex, 1:2] = allTrials[trialIndex][1]
-                metadataHolder[eventIndex, 5:6] = 1
+                metadataHolder[eventIndex, 0] = 5.0
+                metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
+                metadataHolder[eventIndex, 5] = 1
                 metadataHolder[eventIndex, 6] = 2
-                metadataHolder[eventIndex + 1, 0:1] = 3.0
-                metadataHolder[eventIndex + 1, 1:2] = allTrials[trialIndex][1]
-                metadataHolder[eventIndex + 1, 5:6] = 1
+                metadataHolder[eventIndex + 1, 0] = 3.0
+                metadataHolder[eventIndex + 1, 1] = allTrials[trialIndex][1]
+                metadataHolder[eventIndex + 1, 5] = 1
                 metadataHolder[eventIndex + 1, 6] = 2
                 pulseIndex    += 2 # Two associated pulses within the index.
                 trialIndex    += 1
@@ -179,21 +188,66 @@ class StimuliProcessingMixinDreadds2(
 
         return eventIndex, metadataHolder
 
+    def _parseMetadataHolder(self, metadataHolder, iPulses):
+        """
+        """
+
+        # Compute probe timestamps
+        pulseIndex = np.where(metadataHolder[:, 0] == 3)[0]
+        probeIndex = iPulses[pulseIndex]
+        probeTimestamps = self.computeTimestamps(probeIndex)
+        self.save('stimuli/dg/probe/timestamps')
+
+        # Compute timestamps of grating initialization (DG Only)
+        pulseIndex = np.where(metadataHolder[:, 0] == 1)[0]
+        gratingIndex = iPulses[pulseIndex]
+        gratingTimestamps = self.computeTimestamps(gratingIndex)
+        self.save('stimuli/dg/grating/timestamps')
+
+        #Compute timestamps of motion initialization (DG Only)
+        pulseIndex = np.where(metadataHolder[:, 0] == 2)[0]
+        motionIndex = iPulses[pulseIndex]
+        motionTimestamps = self.computeTimestamps(motionIndex)
+        self.save('stimuli/dg/motion/timestamps')
+
+        #Compute timestamps for end of each block (DG Only)
+        pulseIndex = np.where(metadataHolder[:, 0] == 4)[0]
+        itiIndex = iPulses[pulseIndex]
+        itiTimestamps = self.computeTimestamps(itiIndex)
+        self.save('stimuli/dg/iti/timestamps')
+
+        #Compute fictive saccade timestamps
+        pulseIndex = np.where(metadataHolder[:, 0] == 5)[0]
+        saccadeIndex = iPulses[pulseIndex]
+        saccadeTimestamps = self.computeTimestamps(saccadeIndex)
+        self.save('stimuli/fs/saccades/timestamps')
+
     def _runStimuliModule(self):
         """
         """
 
-        pulseTimestamps, intervalTimestamps = self._calculatePulseIntervalTimestamps()
+        pulseTimestamps, intervalTimestamps, iPulses = self._calculatePulseIntervalTimestamps()
         fileList = self._createMetadataFileList(pulseTimestamps, intervalTimestamps)
         eventIndex = 0
-        metadataHolder = np.full((len(pulseTimestamps), 7), np.nan)
+        #Columns in metadataHolder: 
+        #0: Event Type - 1 = Grating Start, 2 = Motion Start, 3 = Probe, 4 = Grating End, 5 = Fictive Saccade
+        #1: Motion Direction (DG Only)
+        #2: Probe Contrast (DG Only)
+        #3: Probe Phase (DG Only)
+        #4: Event Timestamps (DG Only)
+        #5: Block Type - 0 = Drifting Grating, 1 = Fictive Saccade
+        #6: Trial Type (FS Only) - 0 = Probe, 1 = Fictive Saccade, 2 = Both
+        #7: Orientation (DG Only)
+        metadataHolder = np.full((len(pulseTimestamps), 8), np.nan)
         for fileIndex, file in enumerate(fileList):
 
             # DG metadata
             if pl.Path(file).suffix == '.txt':
-                eventIndex, eventHolder = self._processFictiveSaccadesProtocol(
+                eventIndex, metadataHolder = self._processDriftingGratingProtocol( 
+                    file, 
+                    fileList,
                     eventIndex,
-                    eventHolder,
+                    metadataHolder,
                     fileIndex,
                     pulseTimestamps,
                     intervalTimestamps
@@ -201,13 +255,18 @@ class StimuliProcessingMixinDreadds2(
 
             # FS metadata
             elif pl.Path(file).suffix == '.pkl':
-                eventIndex, eventHolder = self._processFictiveSaccadesProtocol(
+                eventIndex, metadataHolder = self._processFictiveSaccadesProtocol(
+                    file,
+                    fileList,
                     eventIndex,
-                    eventHolder,
-                    fileIndex
+                    metadataHolder,
+                    fileIndex,
+                    pulseTimestamps,
+                    intervalTimestamps
                 )
 
-        return
+        self._parseMetadataHolder(metadataHolder, iPulses)
+        return metadataHolder
 
 class Dreadds2Session(
     EventsProcessingMixin,
