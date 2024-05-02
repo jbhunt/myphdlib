@@ -385,22 +385,33 @@ class AnalysisBase():
 
         return
 
-def findOverlappingUnits(ukeys1, hdf):
-    """
-    """
+    def createFilter(
+        self,
+        minimumResponseLatency=0.03,
+        minimumResponseAmplitude=5,
+        ):
+        """
+        """
 
-    with h5py.File(hdf, 'r') as stream:
-        dates = np.array(stream['date'])
-        animals = np.array(stream['animal'])
-        clusters = np.array(stream['unitNumber'])
-    ukeys2 = [
-        (date.item().decode(), animal.item().decode(), cluster.item()) for (date, animal, cluster)
-            in zip(dates, animals, clusters)
-    ]
+        # Make sure the model data is loaded
+        try:
+            assert hasattr(self, 'model')
+            assert ('params' in self.model.keys() or 'params1' in self.model.keys())
+        except AssertionError:
+            raise Exception('Model data is not available') from None
 
-    mask = np.full(len(ukeys2), False)
-    for i, ukey in enumerate(ukeys2):
-        if ukey in ukeys1:
-            mask[i] = True
+        # Create the filter
+        nUnits = len(self.ukeys)
+        self.filter = np.full(nUnits, False)
+        for iUnit in range(nUnits):
+            params = self.model['params'][iUnit]
+            mask = np.invert(np.isnan(params))
+            if np.all(np.isnan(params)):
+                continue
+            abcd = params[mask]
+            abc, d = abcd[:-1], abcd[-1]
+            A, B, C = np.split(abc, 3)
+            if np.max(np.abs(A)) >= minimumResponseAmplitude and B.min() >= minimumResponseLatency:
+                self.filter[iUnit] = True
 
-    return mask
+        return

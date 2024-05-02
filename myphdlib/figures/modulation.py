@@ -3,7 +3,7 @@ import numpy as np
 from scipy.signal import find_peaks as findPeaks
 from matplotlib import pylab as plt
 from myphdlib.general.toolkit import psth2
-from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g, findOverlappingUnits
+from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g
 
 class BasicSaccadicModulationAnalysis(AnalysisBase):
     """

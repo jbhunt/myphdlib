@@ -14,7 +14,7 @@ from scipy.signal import find_peaks as findPeaks
 from scipy.signal import peak_prominences
 from scipy.ndimage import gaussian_filter1d as smooth2
 from scipy.ndimage import gaussian_filter as gaussianFilter
-from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g, findOverlappingUnits
+from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g
 
 class GaussianMixturesFittingAnalysis(AnalysisBase):
     """
@@ -565,29 +565,6 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             # Positive (Mono- or Biphasic)
             else:
                 self.model['labels'][i] = self.model['k'][i]
-
-        return
-
-    def createFilter(
-        self,
-        minimumResponseLatency=0.03,
-        minimumResponseAmplitude=5,
-        ):
-        """
-        """
-
-        nUnits = len(self.ukeys)
-        self.filter = np.full(nUnits, False)
-        for iUnit in range(nUnits):
-            params = self.model['params'][iUnit]
-            mask = np.invert(np.isnan(params))
-            if np.all(np.isnan(params)):
-                continue
-            abcd = params[mask]
-            abc, d = abcd[:-1], abcd[-1]
-            A, B, C = np.split(abc, 3)
-            if np.max(np.abs(A)) >= minimumResponseAmplitude and B.min() >= minimumResponseLatency:
-                self.filter[iUnit] = True
 
         return
 

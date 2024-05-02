@@ -3,8 +3,9 @@ import numpy as np
 from scipy import stats
 from scipy.interpolate import interp1d
 from scipy.optimize import fmin
+from scipy.ndimage import gaussian_filter
 from matplotlib import pyplot as plt
-from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g, findOverlappingUnits
+from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
 from myphdlib.general.toolkit import psth2
 
@@ -21,46 +22,99 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
 
         super().__init__(**kwargs)
 
-        self.latencies = None
         self.peths = { # Standardized PSTHs
-            'extrasaccadic': None,
-            'perisaccadic': None
+            'extra': None,
+            'peri': None
         }
-        self.terms = { # Raw PSTHs
-            'rProbe': {
-                'extrasaccadic': None,
-                'perisaccadic': None
-            },
-            'rMixed': None,
-            'rSaccade': None,
+        self.terms = {
+            'rpp': None,
+            'rps': None,
+            'rs':  None,
         }
+        self.features = {
+            'm': None,
+            's': None,
+            'd': None
+        }
+        self.model = {
+            'k': None,
+            'fits': None,
+            'peaks': None,
+            'labels': None,
+            'params1': None,
+            'params2': None
+        }
+        self.templates = {
+            'nasal': None,
+            'temporal': None
+        }
+        self.tProbe = None
+        self.tSaccade = None
         self.windows = None
-        self.utypes = None
+        self.mi = None # Modulation index
+        self.filter = None
+        self.speed = None
+
+        # Example neurons
+        self.examples = (
+            ('2023-05-24', 'mlati7', 337),
+            ('2023-05-17', 'mlati7', 237),
+        )
 
         return
 
-    def loadNamespace(self, hdf):
+    def loadNamespace(self):
         """
         """
-        m = findOverlappingUnits(self.ukeys, hdf)
-        datasets = {
-            'boostrap/sign': 'msigns',
-            'boostrap/p': 'pvalues',
-        }
-        with h5py.File(hdf, 'r') as stream:
-            for path, attribute in datasets.items():
-                if path in stream:
-                    ds = np.array(stream[path][m])
-                    self.__setattr__(attribute, ds)
 
         #
-        super().loadNamespace(hdf)
+        datasets = {
+            'clustering/peths/standard': (self.peths, 'extra'),
+            'clustering/model/params': (self.model, 'params'),
+            'clustering/model/labels': (self.model, 'labels'),
+            'clustering/model/k': (self.model, 'k'),
+            'clustering/model/fits': (self.model, 'fits'),
+            'clustering/model/peaks': (self.model, 'peaks'),
+            'clustering/features/d': (self.features, 'd'),
+            'clustering/features/m': (self.features, 'm'),
+            'clustering/features/s': (self.features, 's'),
+            'clustering/filter': ('filter', None),
+            'modulation/mi': ('mi', None),
+            'modulation/windows': ('windows', None),
+            'modulation/peths/peri': (self.peths, 'peri'),
+            'modulation/terms/rps': (self.terms, 'rps'),
+            'modulation/terms/rs': (self.terms, 'rs')
+        }
+
+        with h5py.File(self.hdf, 'r') as stream:
+            for path, (attr, key) in datasets.items():
+                parts = path.split('/')
+                if path in stream:
+                    ds = stream[path]
+                    if path == 'modulation/peths/peri':
+                        self.tProbe = ds.attrs['t']
+                    if path == 'modulation/templates/nasal':
+                        self.tSaccade = ds.attrs['t']
+                    value = np.array(ds)
+                    if 'filter' in parts:
+                        value = value.astype(bool)
+                    if len(value.shape) == 2 and value.shape[-1] == 1:
+                        value = value.flatten()
+                    if key is None:
+                        setattr(self, attr, value)
+                    else:
+                        attr[key] = value
+
+        return
+    
+    def saveNamespace(self):
+        """
+        """
 
         return
 
-    def sortUnitsByResponseLatency(
+    def _sortUnitsByPeakLatency(
         self,
-        threshold=0.1,
         ):
         """
         """
@@ -68,29 +122,29 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         nUnits = len(self.ukeys)
         latencies = np.full(nUnits, np.nan)
         for iUnit in range(nUnits):
-            m = np.invert(np.isnan(self.params[iUnit, :]))
-            if m.sum() == 0:
+            mask = np.invert(np.isnan(self.params[iUnit, :]))
+            if mask.sum() == 0:
                 continue
-            abcd = self.params[iUnit, m]
+            abcd = self.model['params'][iUnit, mask]
             abc, d = abcd[:-1], abcd[-1]
             A, B, C = np.split(abc, 3)
-            latencies[iUnit] = B[0]
+            latencies[iUnit] = B[0] # Latency of the largest component
 
-        #
-        self.utypes = np.full(nUnits, np.nan)
-        self.utypes[latencies <  threshold] = -1
-        self.utypes[latencies >= threshold] =  1
+        # Use the median to split units into slow and fast types
+        threshold = np.nanmedian(latencies)
+        self.speed = np.full(nUnits, np.nan)
+        self.speed[latencies <  threshold] = -1
+        self.speed[latencies >= threshold] =  1
 
         return
 
     def plotHeatmap(
         self,
-        minimumResponseAmplitude=1,
-        figsize=(3, 3),
         nBins=7,
-        cmap='coolwarm',
         transform=True,
-        yIntercepts=(0, 0.1, 0.2, 0.3, 0.4, 0.5),
+        intercepts=np.arange(-1, 1, 0.1),
+        figsize=(3, 3),
+        cmap='coolwarm',
         vrange=(-0.5, 0.5),
         xticks=np.array([0.05, 0.1, 0.2])
         ):
@@ -98,75 +152,78 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         """
 
         fig, ax = plt.subplots()
+
+        # Extract peak latencies
         windowIndices = np.arange(10)
-        l = np.full(len(self.ukeys), np.nan)
+        peakLatencies = np.full(len(self.ukeys), np.nan)
         for iUnit in range(len(self.ukeys)):
-            params = self.params[iUnit, :]
+            params = self.model['params'][iUnit, :]
             abcd = params[np.invert(np.isnan(params))]
             if len(abcd) == 0:
                 continue
             abc, d = abcd[:-1], abcd[-1]
             A, B, C = np.split(abc, 3)
-            l[iUnit] = B[0]
-        l = np.array(l)
+            peakLatencies[iUnit] = B[0]
+        peakLatencies = np.array(peakLatencies)
 
-        #
-        leftEdges = np.array([np.nanpercentile(l, i / nBins * 100) for i in range(nBins)])
-        rightEdges = np.concatenate([leftEdges[1:], [np.nanmax(l)]])
+        # Define the bins that specify N quantiles
+        leftEdges = np.array([np.nanpercentile(peakLatencies, i / nBins * 100) for i in range(nBins)])
+        rightEdges = np.concatenate([leftEdges[1:], [np.nanmax(peakLatencies)]])
         binEdges = np.vstack([leftEdges, rightEdges]).T
         
-        #
+        # Populate the heatmap
         Z = np.full([10, binEdges.shape[0]], np.nan)
-        m1 = self.params[:, 0] >= minimumResponseAmplitude
         for i in windowIndices:
-            mi = self.modulation[:, 0, i] / self.params[:, 0]
+            mi = self.mi[:, i, 0] / self.model['params'][:, 0]
             for j in range(binEdges.shape[0]):
                 leftEdge, rightEdge = binEdges[j]
-                m2 = np.vstack([
-                    m1,
+                mask = np.vstack([
+                    self.filter,
                     np.logical_and(
-                        l >= leftEdge,
-                        l <  rightEdge
+                        peakLatencies >= leftEdge,
+                        peakLatencies <  rightEdge
                     )
                 ]).all(0)
-                Z[i, j] = np.nanmean(mi[m2])
+                Z[i, j] = np.nanmean(mi[mask])
 
-        #
+        # Plot the heatmap
         x = np.concatenate([leftEdges, [rightEdges[-1]]])
-        y = np.concatenate([self.windows[:-1, 0], [self.windows[-2, 1]]])
+        y = np.concatenate([self.windows[:, 0], [self.windows[-1, 1]]])
         if transform:
-            f = interp1d(x, np.arange(leftEdges.size + 1), kind='linear')
+            tf = interp1d(x, np.arange(leftEdges.size + 1), kind='linear')
         else:
-            f = lambda x: x
-        X, Y = np.meshgrid(f(x), y)
-        mesh = ax.pcolormesh(X, Y, Z, vmin=vrange[0], vmax=vrange[1], cmap=cmap)
+            tf = lambda x: x
+        X, Y = np.meshgrid(tf(x), y)
+        mesh = ax.pcolor(X, Y, Z, vmin=vrange[0], vmax=vrange[1], cmap=cmap)
 
         #
-        # x_ = np.mean(binEdges, axis=1)
-        x_ = np.linspace(np.nanmin(l), np.nanmax(l), nBins + 1)
-        xt = f(x_)
-        for yIntercept in yIntercepts:
+        xlim = (tf(x.min()), tf(x.max()))
+        ylim = (y.min(), y.max())
+
+        # Plot contours
+        xTrans = tf(x)
+        for y in intercepts:
             ax.plot(
-                xt,
-                -1 * x_ + yIntercept,
+                xTrans,
+                -1 * x + y,
                 color='k',
                 lw=0.5
             )
-        # ax.hlines(peakModulationOffset, f(np.nanmin(l)), f(np.nanmax(l)), color='k')
 
         #
-        fit = list()
+        yFit = list()
         for j in range(Z.shape[1]):
             y = Z[:, j]
-            x = np.mean(self.windows[:-1], axis=1)
+            x = np.mean(self.windows, axis=1)
             p = np.polyfit(x, y, deg=9)
-            f_ = np.poly1d(p)
-            t = fmin(f_, 0)
-            fit.append(t)
-        x = f(np.mean(binEdges, axis=1))
+            f = np.poly1d(p)
+            t = fmin(f, 0).item()
+            yFit.append(t)
+        yFit = np.array(yFit)
+        xFit = tf(np.mean(binEdges, axis=1))
         ax.plot(
-            x,
-            fit,
+            xFit,
+            yFit,
             color='w',
             linestyle='-',
             marker='o',
@@ -175,9 +232,11 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
 
         #
         ax.set_xticks(
-            f(xticks)
+            tf(xticks)
         )
         ax.set_xticklabels(xticks, rotation=45)
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
 
         #
         ax.set_xlabel('Response latency (s)')
@@ -187,45 +246,9 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, ax, Z
+        return fig, ax
 
-    def plotUnitSurvivalByUnitType(
-        self,
-        arange=(0, 3),
-        figsize=(4, 7)
-        ):
-        """
-        """
-
-        fig, axs = plt.subplots(nrows=2, sharey=True, sharex=True)
-        utypes = (-1, 1)
-        for i, ax in enumerate(axs):
-            utype = utypes[i]
-            curves = ([], [], [], [])
-            for a in np.arange(*arange, 0.1):
-                for j, label in enumerate([-1, 1, 2, 3]):
-                    m = np.vstack([
-                        self.params[:, 0] >= a,
-                        self.utypes == utype,
-                        self.labels.flatten() == label
-                    ]).all(0)
-                    n = m.sum()
-                    curves[j].append(n)
-            for j in range(len(curves)):
-                ax.plot(np.arange(*arange, 0.1), curves[j])
-        
-        #
-        axs[-1].legend(['Neg.', 'Mono.', 'Bi.', 'Multi.'])
-        axs[-1].set_xlabel('Amplitude threshold')
-        axs[-1].set_ylabel('# of units')
-        axs[0].set_title('Slow-type', fontsize=10)
-        axs[1].set_title('Fast-type', fontsize=10)
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[0])
-        fig.tight_layout()
-
-        return fig, axs
-
+    # TODO: Refactor this method
     def plotModulationByPeakLatency(
         self,
         a=0.05,
@@ -408,6 +431,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         fig.tight_layout()
         return fig, axs
 
+    # TODO: Refactor this method
     def plotPerisaccadicResponsesForExamples(
         self,
         ukeys=(
@@ -429,12 +453,6 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         for j in np.arange(len(ukeys)):
             self.ukey = ukeys[j]
             for i in np.arange(len(self.windows) - 1):
-                # axs[j, 9 - i].plot(
-                #     self.t,
-                #     self.peths['extra'][self.iUnit],
-                #     color=colors[j],
-                #     alpha=0.5
-                #)
                 axs[j, i].plot(
                     self.t,
                     self.peths['peri'][self.iUnit, :, i],
@@ -464,22 +482,19 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         return fig, axs
 
     
-    def _plotModulationByIntegratedLatency(
+    def plotModulationByIntegratedLatency(
         self,
         ax=None,
         perisaccadicWindow=(-0.5, 0.5),
-        interpolationWindow=(-0.35, 0.5),
         binsize=0.1,
-        minimumResponseAmplitude=2,
-        a=0.05,
-        yrange=(-1, 1),
+        interpolationWindow=(-0.3, 0.45),
+        nPointsForEvaluation=1000,
+        yrange=(-2, 2),
+        figsize=(3, 3),
         **kwargs_
         ):
         """
         """
-
-        #
-        nt = int(round(np.diff(interpolationWindow).item(), 0) * 1000) + 1
 
         #
         kwargs = {
@@ -495,73 +510,64 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         #
         leftEdges = np.arange(perisaccadicWindow[0], perisaccadicWindow[1], binsize)
         rightEdges = leftEdges + binsize
-        samples = [[] for i in range(leftEdges.shape[0])]
 
         #
-        nUnits, nBins, nWindows = self.peths['perisaccadic'].shape
-        nComponents = int(np.nanmax(self.k.flatten()))
-        binCenters = np.mean(self.windows, axis=1)
-        x = list()
-        y = list()
+        nUnits, nBins, nWindows = self.peths['peri'].shape
+        windowCenters = np.mean(self.windows, axis=1)
         lines = list()
         for iUnit in range(nUnits):
-            date, animal, cluster = self.ukeys[iUnit]
-            if self.params[iUnit, 0] < minimumResponseAmplitude:
+
+            #
+            if self.filter[iUnit] == False:
                 continue
-            for iComp in range(nComponents):
-                if date == '2023-05-12' and animal == 'mlati7' and cluster == 224 and False:
-                    color = 'r'
-                    alpha = 1
-                    lw = 1
-                    zorder = 3
-                else:
-                    color = '0.5'
-                    alpha = 0.2
-                    lw = 0.5
-                    zorder = -1
-                ln = list()
-                ps = list()
-                t = list()
-                for iWin in range(nWindows - 1):
-                    ps.append(self.pvalues[iUnit, iWin, iComp])
-                    l = self.latencies[iUnit, iComp, iWin] + binCenters[iWin]
-                    t.append(l)
-                    dr = self.modulation[iUnit, iComp, iWin]
-                    dr /= self.params[iUnit, 0]
-                    ln.append(dr)
-                if np.sum(np.array(ps) < a) < 1:
-                    continue
-                ax.plot(t, np.clip(ln, *yrange), color=color, alpha=alpha, lw=lw, zorder=zorder)
-                interpolated = np.interp(
-                    np.linspace(*interpolationWindow, nt),
-                    t,
-                    ln,
-                    left=np.nan,
-                    right=np.nan
-                )
-                lines.append(interpolated)
-                for dr, ti in zip(ln, t):
-                    binIndices = np.where(np.logical_and(
-                        ti > leftEdges,
-                        ti <= rightEdges
-                    ))[0]
-                    if len(binIndices) == 1:
-                        binIndex = binIndices.item()
-                        samples[binIndex].append(dr)
+
+            # TODO: Exclude enhanced or unmodulated units
+
+            # Extract peak latency and amplitude for the largest component
+            abcd = np.delete(self.model['params'][iUnit], np.isnan(self.model['params'][iUnit]))
+            abc, d = abcd[:-1], abcd[-1]
+            A, B, C = np.split(abc, 3)
+            peakLatency = B[0]
+            peakAmplitude = A[0]
+
+            # Plot shifted curves
+            y = list()
+            t = list()
+            for iWindow in range(nWindows):
+                t.append(windowCenters[iWindow] + peakLatency)
+                y.append(self.mi[iUnit, iWindow, 0] / peakAmplitude)
+            ax.plot(t, np.clip(y, *yrange), color='0.5', alpha=0.3, lw=0.5)
+
+            # Interpolate
+            interpolated = np.interp(
+                np.linspace(*interpolationWindow, nPointsForEvaluation),
+                t,
+                y,
+                left=np.nan,
+                right=np.nan
+            )
+            lines.append(interpolated)
 
         #
-        binCenters = leftEdges + (binsize / 2)
-        binMeans = list()
-        for i, sample in enumerate(samples):
-            if len(sample) == 0:
-                binMeans.append(np.nan)
-                continue
-            binMeans.append(np.mean(sample))
-        # ax.plot(binCenters, binMeans, color='k')
         ax.plot(
-            np.linspace(*interpolationWindow, nt),
+            np.linspace(*interpolationWindow, nPointsForEvaluation),
             np.nanmean(lines, axis=0),
             color='k'
         )
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        ax.vlines(0, *ylim, color='k', alpha=0.7, linestyle=':')
+        ax.hlines(0, *xlim, color='k', alpha=0.7, linestyle=':')
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
 
-        return
+        #
+        ax.set_xlabel('Time from saccade (sec)')
+        ax.set_ylabel('Modulation index (MI)')
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax
