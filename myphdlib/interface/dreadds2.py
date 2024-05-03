@@ -192,11 +192,23 @@ class StimuliProcessingMixinDreadds2(
         """
         """
 
-        # Compute probe timestamps
+        # Compute drifting grating probe timestamps
         pulseIndex = np.where(metadataHolder[:, 0] == 3)[0]
-        probeIndex = iPulses[pulseIndex]
-        probeTimestamps = self.computeTimestamps(probeIndex)
+        dgPulse = np.where(metadataHolder[:, 5] == 0)[0]
+        maskPulseDG = np.logical_and(pulseIndex, dgPulse)
+        matchingIndicesDG = np.where(maskPulseDG)[0]
+        probeIndexDG = iPulses[matchingIndicesDG]
+        probeTimestampsDG = self.computeTimestamps(probeIndexDG)
         self.save('stimuli/dg/probe/timestamps')
+
+        # Computer fictive saccade probe timestamps
+        pulseIndex = np.where(metadataHolder[:, 0] == 3)[0]
+        fsPulse = np.where(metadataHolder[:, 5] == 1)[0]
+        maskPulseFS = np.logical_and(pulseIndex, fsPulse)
+        matchingIndicesFS = np.where(maskPulseFS)[0]
+        probeIndexFS = iPulses[matchingIndicesFS]
+        probeTimestampsFS = self.computeTimestamps(probeIndexFS)
+        self.save('stimuli/fs/probes/timestamps')
 
         # Compute timestamps of grating initialization (DG Only)
         pulseIndex = np.where(metadataHolder[:, 0] == 1)[0]
