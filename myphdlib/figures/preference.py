@@ -1,3 +1,4 @@
+import numpy as np
 from myphdlib.figures.analysis import AnalysisBase
 
 class DirectionSectivityAnalysis(
@@ -35,6 +36,11 @@ class DirectionSectivityAnalysis(
         ):
         """
         """
+
+        for ukey in self.ukeys():
+            self.ukey = ukey
+            for gratingMotion in (-1, 1):
+                trialIndices = np.where()
 
         return
 
