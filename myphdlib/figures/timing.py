@@ -430,6 +430,38 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         fig.set_figheight(figsize[1])
         fig.tight_layout()
         return fig, axs
+    
+    def plotPerisaccadicResponsesForExamples2(
+        self,
+        figsize=(4, 3),
+        ):
+        """
+        """
+
+        fig, grid = plt.subplots(nrows=len(self.examples), sharex=True)
+        cmap = plt.get_cmap('gist_rainbow', len(self.windows))
+        for i, ukey in enumerate(self.examples):
+            iUnit = self._indexUnitKey(ukey)
+            for j in range(len(self.windows)):
+                y = self.peths['peri'][iUnit, :, j]
+                grid[i].plot(
+                    self.tProbe + self.windows[j].mean(),
+                    y,
+                    color=cmap(j),
+                    alpha=0.7
+                )
+
+        #
+        for ax in grid:
+            for sp in ('top', 'right'):
+                ax.spines[sp].set_visible(False)
+        grid[-1].set_xlabel('Latency from saccade to probe (sec)')
+        grid[-1].set_ylabel('Firing rate (z-scored)')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, grid
 
     # TODO: Refactor this method
     def plotPerisaccadicResponsesForExamples(
