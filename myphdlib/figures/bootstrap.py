@@ -5,7 +5,7 @@ from scipy.signal import find_peaks as findPeaks
 from matplotlib.colors import LinearSegmentedColormap
 from myphdlib.general.toolkit import psth2
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
-from myphdlib.figures.analysis import findOverlappingUnits, GaussianMixturesModel
+from myphdlib.figures.analysis import GaussianMixturesModel
 import seaborn as sns
 import pandas as pd
 from itertools import product
@@ -26,9 +26,15 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         self.iw = iw
 
         #
-        self.peths = None
-        self.p = None
-        self.samples = None
+        self.peths = {
+            'resampled': None,
+        }
+        self.p = {
+            'real': None,
+        }
+        self.samples = {
+            'real': None
+        }
         self.features = {
             'm': None,
             's': None,
@@ -39,7 +45,9 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         }
         self.windows = None
         self.filter = None
-        self.mi = None
+        self.mi = {
+            'real': None,
+        }
         self.tProbe = None
 
         # Example neurons
@@ -59,7 +67,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         """
 
         datasets = {
-            'bootstrap/p': self.p,
+            'bootstrap/p': self.p['real'],
         }
 
         #
@@ -83,7 +91,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         self._saveLargeDataset(
             self.hdf,
             path='bootstrap/peths',
-            dataset=self.peths,
+            dataset=self.peths['resampled'],
             nUnitsPerChunk=nUnitsPerChunk,
         )
 
@@ -91,7 +99,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         self._saveLargeDataset(
             self.hdf,
             path='bootstrap/samples',
-            dataset=self.samples,
+            dataset=self.samples['real'],
             nUnitsPerChunk=nUnitsPerChunk
         )
 
@@ -106,9 +114,9 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         #
         mask = self._intersectUnitKeys(self.ukeys)
         datasets = {
-            'bootstrap/peths': ('peths', None),
-            'bootstrap/samples': ('samples', None),
-            'bootstrap/p': ('p', None),
+            'bootstrap/peths': ('peths', 'resampled'),
+            'bootstrap/samples': ('samples', 'real'),
+            'bootstrap/p': ('p', 'real'),
             'clustering/features/m': ('features', 'm'),
             'clustering/features/s': ('features', 's'),
             'clustering/features/d': ('features', 'd'),
@@ -117,7 +125,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             'clustering/model/labels': ('model', 'labels'),
             'clustering/filter': ('filter', None),
             'modulation/windows': ('windows', None),
-            'modulation/mi': ('mi', None),
+            'modulation/mi': ('mi', 'real'),
         }
         with h5py.File(self.hdf, 'r') as stream:
             for path, (attr, key) in datasets.items():
@@ -161,7 +169,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             returnShape=True
         )
         nUnits = len(self.ukeys)
-        self.peths = np.full([nUnits, nBins, nRuns], np.nan)
+        self.peths['resampled'] = np.full([nUnits, nBins, nRuns], np.nan)
         for iUnit in range(nUnits):
 
             #
@@ -247,7 +255,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                     continue
 
                 # Standardize PSTH
-                self.peths[iUnit, :, iRun] = (fr - mu) / sigma
+                self.peths['resampled'][iUnit, :, iRun] = (fr - mu) / sigma
 
         return
     
@@ -259,7 +267,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         """
 
         ukey = self.ukeys[iUnit]
-        peths = self.peths[iUnit]
+        peths = self.peths['resampled'][iUnit]
         nRuns = peths.shape[0]
         sample = np.full(nRuns, np.nan)
         for iRun in range(nRuns):
@@ -277,25 +285,26 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         nRuns=None,
         useFilter=True,
         parallelize=True,
+        key='real',
         ):
         """
         """
 
         #
-        nUnits, nBins, nRuns_ = self.peths.shape
+        nUnits, nBins, nRuns_ = self.peths['resampled'].shape
         if nRuns is None:
             nRuns = nRuns_
         nComponents = int(np.nanmax(self.model['k']))
-        self.samples = np.full([nUnits, nRuns, nComponents], np.nan)
+        samples = np.full([nUnits, nRuns, nComponents], np.nan)
 
         #
         if parallelize:
-            with Pool(-1) as pool:
-                samples = pool.map(
+            with Pool(None) as pool:
+                samples_ = pool.map(
                     self._generateNullSample,
                     np.arange(len(self.ukeys))
                 )
-            self.samples = np.array(samples)
+            samples = np.array(samples_)
 
         #
         else:
@@ -313,7 +322,7 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 #
                 sample = np.full([nRuns, nComponents], np.nan)
                 for iRun in range(nRuns):
-                    peth = self.peths[iUnit, :, iRun]
+                    peth = self.peths['resampled'][iUnit, :, iRun]
                     if np.isnan(peth).all():
                         continue
                     dr, params2 = super()._fitPerisaccadicPeth(
@@ -323,15 +332,23 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                     sample[iRun, :] = dr
 
                 #
-                self.samples[iUnit, :, :] = sample
+                samples[iUnit, :, :] = sample
 
-    def computeProbabilityValues(self):
+        #
+        self.samples[key] = samples
+
+        return
+
+    def computeProbabilityValues(
+        self,
+        key='real',
+        ):
         """
         """
 
-        nUnits, nBins, nRuns = self.peths.shape
+        nUnits, nBins, nRuns = self.peths['resampled'].shape
         nComponents = int(np.nanmax(self.model['k']))
-        self.p = np.full([nUnits, nComponents], np.nan)
+        self.p[key] = np.full([nUnits, nComponents], np.nan)
 
         for ukey in self.ukeys:
 
@@ -340,11 +357,11 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             end = '\n' if self.iUnit + 1 == nUnits else '\r'
             print(f'Computing p-values for unit {self.iUnit + 1} out of {nUnits}', end=end)
             for iComp in range(nComponents):
-                sample = self.samples[self.iUnit, :, iComp]
-                tv = self.mi[self.iUnit, self.iw, iComp]
+                sample = self.samples[key][self.iUnit, :, iComp]
+                tv = self.mi[key][self.iUnit, self.iw, iComp]
                 mask = np.invert(np.isnan(sample))
                 p = np.sum(np.abs(sample[mask]) > np.abs(tv)) / mask.sum()
-                self.p[self.iUnit, iComp] = p
+                self.p[key][self.iUnit, iComp] = p
 
         return
 

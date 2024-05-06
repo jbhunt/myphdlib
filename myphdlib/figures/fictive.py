@@ -3,9 +3,10 @@ import numpy as np
 from scipy.signal import find_peaks as findPeaks
 from scipy.stats import pearsonr
 from matplotlib import pyplot as plt
-from myphdlib.figures.analysis import AnalysisBase, findOverlappingUnits, GaussianMixturesModel, g
+from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
 from myphdlib.figures.bootstrap import BoostrappedSaccadicModulationAnalysis
+from myphdlib.figures.clustering import GaussianMixturesFittingAnalysis
 from myphdlib.general.toolkit import psth2
 
 def convertGratingMotionToSaccadeDirection(
@@ -29,244 +30,226 @@ def convertGratingMotionToSaccadeDirection(
 
     return saccadeDirection
 
-class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccadicModulationAnalysis):
+class FictiveSaccadesAnalysis(
+    GaussianMixturesFittingAnalysis,
+    BoostrappedSaccadicModulationAnalysis,
+    BasicSaccadicModulationAnalysis,
+    ):
     """
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        **kwargs,
+        ):
         """
         """
 
+        super().__init__(**kwargs)
+
+        self.peths = {
+            'extra': None,
+            'peri': None,
+            'resampled': None,
+            'normal': None,
+            'standard': None,
+        }
+        self.terms = {
+            'rpe': None,
+            'rpp': None,
+            'rps': None,
+            'rs': None
+        }
+        self.features = {
+            'm': None,
+            's': None,
+            'd': None
+        }
+        self.model = {
+            'k': None,
+            'fits': None,
+            'peaks': None,
+            'labels': None,
+            'params1': None, # Extra-saccadic, fictive
+            'params2': None, # Peri-saccadic, fictive
+            'params3': None, # Extra-saccadic, real
+        }
         self.templates = {
             'nasal': None,
             'temporal': None
         }
+        self.tProbe = None
         self.tSaccade = None
-        self.t = None
-        self.ambc = None
-        self.peths = {
-            'extra': None,
-            'peri': None
+        self.windows = None
+        self.mi ={
+            'real': None,
+            'fictive': None,
         }
-        self.terms = {
-            'rMixed': None,
-            'rProbe': {
-                'peri': None,
-                'extra': None,
-            },
-            'rSaccade': None
+        self.p = {
+            'real': None,
+            'fictive': None,
         }
-        self.pethsRaw = {
-            'extra': None,
-            'peri': None,
+        self.samples = {
+            'real': None,
+            'fictive': None,
         }
-        self.params = None
-        self.paramsRefit = None
-        self.latencies = None
-        self.modulation = None
-
-        #
-        self.paramsActual = None
-        self.modualtionActual= None
-
-        #
-        self.pethsResampled = None
-        self.pvalues = None
-        self.samples = None
-        self.msign = None
+        self.filter = None
 
         #
         self.windows = np.array([
             [0, 0.1]
         ])
 
-        super().__init__()
-
-        return
-
-    def saveNamespace(
-        self,
-        hdf,
-        nUnitsPerChunk=100,
-        ):
-        """
-        """
-
         #
-        m = findOverlappingUnits(self.ukeys, hdf)
+        self.examples = (
 
-        #
-        datasets = {
-
-            #
-            'temps/fs/nasal/fr': self.templates['nasal'],
-            'temps/fs/temporal/fr': self.templates['temporal'],
-
-            #
-            'peths/fs/extra/fr': self.peths['extra'],
-            'peths/fs/peri/fr': self.peths['peri'],
-
-            #
-            'terms/fs/extra/rProbe': self.terms['rProbe']['extra'],
-            'terms/fs/peri/rProbe': self.terms['rProbe']['peri'],
-            'terms/fs/peri/rSaccade': self.terms['rSaccade'],
-            'terms/fs/peri/rMixed': self.terms['rMixed'],
-            
-            #
-            'gmm/fs/extra/k': self.k.reshape(-1, 1),
-            'gmm/fs/extra/params': self.params,
-            'gmm/fs/peri/params': self.paramsRefit,
-            'gmm/fs/extra/latencies': self.latencies,
-            'gmm/fs/extra/modulation': self.modulation,
-
-            #
-            'peths/fs/extra/params': self.ambc,
-
-            #
-            'bootstrap/fs/p': self.pvalues,
-
-        }
-
-        with h5py.File(hdf, 'a') as stream:
-            for path, dense in datasets.items():
-                if dense is None:
-                    continue
-                if path in stream:
-                    del stream[path]
-                sparse = np.full([m.size, *dense.shape[1:]], np.nan)
-                sparse[m] = dense
-                ds = stream.create_dataset(
-                    path,
-                    shape=sparse.shape,
-                    dtype=sparse.dtype,
-                    data=sparse
-                )
-                if 'temps' in path.split('/'):
-                    ds.attrs['t'] = self.tSaccade
-
-        #
-        self._saveLargeDataset(
-            hdf,
-            path='bootstrap/fs/peths',
-            dataset=self.pethsResampled,
-            nUnitsPerChunk=nUnitsPerChunk,
-        )
-
-        #
-        self._saveLargeDataset(
-            hdf,
-            path='bootstrap/fs/samples',
-            dataset=self.samples,
-            nUnitsPerChunk=nUnitsPerChunk
         )
 
         return
 
     def loadNamespace(
         self,
-        hdf
         ):
         """
         """
 
         #
-        m = findOverlappingUnits(self.ukeys, hdf)
-
-        # Load saccade response templates
-        paths = (
-            'temps/fs/nasal/fr',
-            'temps/fs/temporal/fr'
-        )
-        keys = (
-            'nasal',
-            'temporal'
-        )
-        self.templates = dict()
-
-        #
-        with h5py.File(hdf, 'r') as stream:
-            for path, key in zip(paths, keys):
-                if path in stream:
-                    ds = stream[path]
-                    if 't' in ds.attrs.keys() and self.tSaccade is None:
-                        self.tSaccade = ds.attrs['t']
-                    self.templates[key] = np.array(ds)[m]
-
-        # Load extra and peri-saccadic PETHs
-        self.peths = {
-            'peri': None,
-            'extra': None,
-        }
-        paths = (
-            'peths/fs/peri/fr',
-            'peths/fs/extra/fr',
-        )
-        with h5py.File(hdf, 'r') as stream:
-            for tt, path in zip(self.peths.keys(), paths):
-                if path in stream:
-                    ds = stream[path]
-                    if 't' in ds.attrs.keys() and self.t is None:
-                        self.t = ds.attrs['t']
-                    self.peths[tt] = np.array(ds[m])
-
-        #
-        self.terms = {
-            'rProbe': {
-                'peri': None,
-                'extra': None,
-            },
-            'rMixed': None,
-            'rSaccade': None
-        }
-        paths = (
-            'terms/fs/peri/rProbe',
-            'terms/fs/peri/rMixed',
-            'terms/fs/peri/rSaccade',
-            'terms/fs/extra/rProbe'
-        )
-        keySets = (
-            ('rProbe', 'peri'),
-            ('rMixed',),
-            ('rSaccade',),
-            ('rProbe', 'extra'),
-        )
-        with h5py.File(hdf, 'r') as stream:
-            for path, keySet in zip(paths, keySets):
-                if path in stream:
-                    data = np.array(stream[path][m])
-                    if len(keySet) == 1:
-                        k1 = keySet[0]
-                        self.terms[k1] = data
-                    else:
-                        k1, k2 = keySet
-                        self.terms[k1][k2] = data
-
-        #
         datasets = {
-            'gmm/fs/extra/params': 'params',
-            'gmm/dg/extra/params': 'paramsActual',
-            'gmm/fs/extra/modulation': 'modulation',
-            'gmm/dg/extra/modulation': 'modulationActual',
-            'bootstrap/p': 'pvaluesActual',
-            'peths/fs/extra/params': 'ambc',
-            'gmm/dg/extra/k': 'k',
-            'bootstrap/fs/samples': 'samples',
-            'bootstrap/fs/p': 'pvalues',
-            'bootstrap/fs/peths': 'pethsResampled',
+            'clustering/filter': ('filter', None),
+            'clustering/model/params': (self.model, 'params3'),
+            'clustering/features/s': (self.features, 's'),
+            'modulation/mi': (self.mi, 'real'),
+            'bootstrap/p': (self.p, 'real'),
+            'fictive/peths/extra': (self.peths, 'extra'),
+            'fictive/peths/extra': (self.peths, 'standard'),
+            'fictive/peths/peri': (self.peths, 'peri'),
+            'fictive/peths/resampled': (self.peths, 'resampled'),
+            'fictive/peths/normal': (self.peths, 'normal'),
+            'fictive/terms/rpe': (self.terms, 'rpe'),
+            'fictive/terms/rps': (self.terms, 'rps'),
+            'fictive/terms/rs': (self.terms, 'rs'),
+            'fictive/templates/nasal': (self.templates, 'nasal'),
+            'fictive/templates/temporal': (self.templates, 'temporal'),
+            'fictive/model/params1': (self.model, 'params1'),
+            'fictive/model/params2': (self.model, 'params2'),
+            'fictive/model/k': (self.model, 'k'),
+            'fictive/model/fits': (self.model, 'fits'),
+            'fictive/model/peaks': (self.model, 'peaks'),
+            'fictive/features/a': (self.features, 'a'),
+            'fictive/features/m': (self.features, 'm'),
+            'fictive/features/d': (self.features, 'd'),
+            'fictive/samples': (self.samples, 'fictive'),
+            'fictive/p': (self.p, 'fictive'),
+            'fictive/mi': (self.mi, 'fictive'),
         }
-        with h5py.File(hdf, 'r') as stream:
-            for path, name in datasets.items():
+        with h5py.File(self.hdf, 'r') as stream:
+            for path, (attr, key) in datasets.items():
+                parts = path.split('/')
                 if path in stream:
-                    data = np.array(stream[path][m])
-                    self.__setattr__(name, data)
+                    ds = stream[path]
+                    if path == 'fictive/peths/extra':
+                        self.tProbe = ds.attrs['t']
+                    if path == 'fictive/templates/nasal':
+                        self.tSaccade = ds.attrs['t']
+                    value = np.array(ds)
+                    if 'filter' in parts:
+                        value = value.astype(bool)
+                    if len(value.shape) == 2 and value.shape[-1] == 1:
+                        value = value.flatten()
+                    if key is None:
+                        setattr(self, attr, value)
+                    else:
+                        attr[key] = value
+
+        return
+
+    def saveNamespace(
+        self,
+        nUnitsPerChunk=100,
+        ):
+        """
+        """
+
+        datasets = {
+            'fictive/peths/extra': (self.peths['extra'], True),
+            'fictive/peths/peri': (self.peths['peri'], True),
+            'fictive/peths/resampled': (self.peths['resampled'], True),
+            'fictive/peths/normal': (self.peths['normal'], True),
+            'fictive/terms/rpe': (self.terms['rpe'], True),
+            'fictive/terms/rps': (self.terms['rps'], True),
+            'fictive/terms/rs': (self.terms['rs'], True),
+            'fictive/templates/nasal': (self.templates['nasal'], True),
+            'fictive/templates/temporal': (self.templates['temporal'], True),
+            'fictive/model/params1': (self.model['params1'], True),
+            'fictive/model/params2': (self.model['params2'], True),
+            'fictive/model/k': (self.model['k'], True),
+            'fictive/model/fits': (self.model['fits'], True),
+            'fictive/model/peaks': (self.model['peaks'], True),
+            'fictive/features/a': (self.features['a'], True),
+            'fictive/features/m': (self.features['m'], True),
+            'fictive/features/d': (self.features['d'], True),
+            'fictive/p': (self.p['fictive'], True),
+            'fictive/mi': (self.mi['fictive'], True)
+        }
+
+        mask = self._intersectUnitKeys(self.ukeys)
+        with h5py.File(self.hdf, 'a') as stream:
+
+            #
+            for k, (v, f) in datasets.items():
+
+                #
+                if v is None:
+                    continue
+                if np.isnan(v).sum() == v.size:
+                    continue
+
+                #
+                if f:
+                    nd = len(v.shape)
+                    if nd == 1:
+                        data = np.full([mask.size, 1], np.nan)
+                        data[mask, :] = v.reshape(-1, 1)
+                    else:
+                        data = np.full([mask.size, *v.shape[1:]], np.nan)
+                        data[mask] = v
+                else:
+                    data = v
+
+                #
+                if k in stream:
+                    del stream[k]
+                ds = stream.create_dataset(
+                    k,
+                    data.shape,
+                    data.dtype,
+                    data=data
+                )
+
+                #
+                parts = k.split('/')
+                if 'peths' in parts:
+                    ds.attrs['t'] = self.tProbe
+                if 'templates' in parts:
+                    ds.attrs['t'] = self.tSaccade
 
         #
-        with h5py.File(hdf, 'r') as stream:
-            path = 'gmm/fs/extra/k'
-            if path in stream:
-                self.k = np.array(stream[path][m]).flatten()
+        if self.peths['resampled'] is not None:
+            self._saveLargeDataset(
+                self.hdf,
+                path='fictive/peths/resampled',
+                dataset=self.peths['resampled'],
+                nUnitsPerChunk=nUnitsPerChunk,
+            )
 
-        # TODO: Define "t" attribute
+        #
+        if self.samples['fictive'] is not None:
+            self._saveLargeDataset(
+                self.hdf,
+                path='fictive/samples',
+                dataset=self.samples['fictive'],
+                nUnitsPerChunk=nUnitsPerChunk
+            )
 
         return
 
@@ -311,15 +294,165 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
             saccadeLabels[iTrial] = gratingMotionDuringSaccades[iSaccade] * -1
 
         #
+        if self.ukey is None:
+            gratingMotionMask = np.full(gratingMotionDuringProbes.size, True)
+        else:
+            gratingMotionMask = gratingMotionDuringProbes == self.features['d'][self.iUnit]
         trialIndices = np.where(np.vstack([
             probeLatencies >= perisaccadicWindow[0],
             probeLatencies <= perisaccadicWindow[1],
-            gratingMotionDuringProbes == self.ambc[self.iUnit, 1]
+            gratingMotionMask
         ]).all(0))[0]
 
         return trialIndices, probeTimestamps, probeLatencies, saccadeLabels, gratingMotionDuringProbes
 
-    def computeSaccadeResponseTemplates(
+    def computeExtrasaccadicPeths(
+        self,
+        responseWindow=(-0.2, 0.5),
+        perisaccadicWindow=(-0.5, 0.5),
+        baselineWindow=(-0.7, -0.5),
+        binsize=0.01,
+        smoothingKernelWidth=0.01,
+        ):
+        """
+        """
+
+        self.tProbe, nTrials, nBins = psth2(
+            np.zeros(1),
+            np.zeros(1),
+            window=responseWindow,
+            binsize=binsize,
+            returnShape=True
+        )
+
+        #
+        nUnits = len(self.ukeys)
+        for key in ('a', 'm', 'd'):
+            self.features[key] = np.full(nUnits, np.nan)
+        self.peths['extra'] = np.full([nUnits, nBins], np.nan)
+        self.peths['normal'] = np.full([nUnits, nBins], np.nan)
+
+        for session in self.sessions:
+
+            #
+            if session.hasDataset('stimuli/fs') == False:
+                continue
+
+            #
+            self._session = session # NOTE: This is ugly
+            trialIndices_, probeTimestamps, probeLatencies, saccadeLabels, gratingMotionDuringProbes = self._loadEventDataForProbes()
+
+            #
+            for ukey in self.ukeys:
+
+                # Look for units in the target session
+                if ukey[0] == str(session.date) and ukey[1] == session.animal:
+                    self.ukey = ukey
+                else:
+                    continue
+
+                #
+                end = None if self.iUnit + 1 == nUnits else '\r'
+                print(f'Copmuting extra-saccadic PSTHs for unit {self.iUnit + 1} out of {nUnits}', end=end)
+
+                # Initialize feature set
+                y = np.full(nBins, np.nan)
+                a = None # Amplitude
+                d = None # Probe direction
+                m = None # Mean FR
+                s = self.features['s'][self.iUnit] # Standard deviation (from DG protocol)
+
+                #
+                for gratingMotion in (-1, 1):
+
+                    # Select just the extra-saccadic trials
+                    trialIndices = np.where(np.vstack([
+                        gratingMotionDuringProbes == gratingMotion,
+                        np.logical_or(
+                            probeLatencies > perisaccadicWindow[1],
+                            probeLatencies < perisaccadicWindow[0]
+                        )
+                    ]).all(0))[0]
+                    if trialIndices.size == 0:
+                        continue
+
+                    # 
+                    try:
+
+                        #Compute firing rate
+                        t, y_ = self.unit.kde(
+                            probeTimestamps[trialIndices],
+                            responseWindow=responseWindow,
+                            binsize=binsize,
+                            sigma=smoothingKernelWidth,
+                        )
+
+                        # Estimate baseline firing rate
+                        t, bl1 = self.unit.kde(
+                            probeTimestamps[trialIndices],
+                            responseWindow=baselineWindow,
+                            binsize=binsize,
+                            sigma=smoothingKernelWidth
+                        )
+                        m_ = bl1.mean()
+
+                        # Estimate standard deviation of firing rate
+                        # t, bl2 = self.unit.kde(
+                        #     probeTimestamps[trialIndices],
+                        #     responseWindow=standardizationWindow,
+                        #     binsize=binsize,
+                        #     sigma=smoothingKernelWidth
+                        # )
+                        # s_ = bl2.std()
+
+                    #
+                    except:
+                        continue
+
+                    # Compute new features
+                    a_ = np.abs(y_[self.tProbe > 0] - m_).max()
+                    d_ = gratingMotion
+
+                    # Override current feature set if amplitude is greater
+                    if a is None or a_ > a:
+                        y = y_
+                        a = a_
+                        d = d_
+                        m = m_
+
+                #
+                if a is None:
+                    continue
+
+                #
+                self.features['a'][self.iUnit] = a
+                self.features['d'][self.iUnit] = d
+                self.features['m'][self.iUnit] = m
+
+                # Store the raw PSTH
+                if np.isnan(s) == False:
+                    self.peths['extra'][self.iUnit] = (y - m) / s
+
+                # Normalize
+                self.peths['normal'][self.iUnit] = (y - m) / a
+
+        # Copy the PETHs (for fitting)
+        self.peths['standard'] = self.peths['extra']
+
+        return
+
+    def fitExtrasaccadicPeths(
+        self,
+        kmax=5,
+        key='params1',
+        **kwargs_
+        ):
+        """
+        """
+        super().fitExtrasaccadicPeths(kmax, key, **kwargs_)
+        return
+
+    def _computeSaccadeResponseTemplates(
         self,
         responseWindow=(-0.2, 0.5),
         perisaccadicWindow=(-0.2, 0.2),
@@ -330,7 +463,7 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
         """
         """
 
-        super().computeSaccadeResponseTemplates(
+        super()._computeSaccadeResponseTemplates(
             responseWindow=responseWindow,
             perisaccadicWindow=perisaccadicWindow,
             binsize=binsize,
@@ -342,284 +475,98 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
 
     def computePerisaccadicPeths(
         self,
-        binsize=None,
         trange=(-0.5, 0.5),
-        perisaccadicWindow=(-0.2, 0.2),
+        tstep=0.1,
+        responseWindow=(-0.2, 0.5),
         baselineWindow=(-0.2, 0),
+        binsize=0.01,
         zeroBaseline=True
         ):
         """
         """
 
         super().computePerisaccadicPeths(
-            binsize,
-            trange,
-            perisaccadicWindow,
-            baselineWindow,
-            zeroBaseline
+            trange=trange,
+            tstep=tstep,
+            responseWindow=responseWindow,
+            baselineWindow=baselineWindow,
+            binsize=binsize,
+            zeroBaseline=zeroBaseline
         )
 
         return
 
-    def computeExtrasaccadicPeths(
+    def fitPerisaccadicPeths(
         self,
-        responseWindow=(-0.2, 0.5),
-        perisaccadicWindow=(-0.5, 0.5),
-        baselineWindow=(-0.7, -0.5),
-        binsize=0.01,
-        gaussianKernelWidth=0.01,
+        maximumAmplitudeShift=200,
+        key='fictive'
         ):
         """
         """
-
-        self.t, nTrials, nBins = psth2(
-            np.zeros(1),
-            np.zeros(1),
-            window=responseWindow,
-            binsize=binsize,
-            returnShape=True
-        )
-
-        #
-        nUnits = len(self.ukeys)
-        self.ambc = np.full([nUnits, 4], np.nan)
-        for k in self.peths.keys():
-            self.peths[k] = np.full([nUnits, nBins], np.nan)
-            self.pethsRaw[k] = np.full([nUnits, nBins], np.nan)
-
-        for session in self.sessions:
-
-            #
-            if session.hasDataset('stimuli/fs') == False:
-                continue
-
-            #
-            # probeTimestamps = session.load('stimuli/fs/probe/timestamps')
-            # gratingMotion = session.load('stimuli/fs/probe/motion')
-            # saccadeTimestamps = session.load('stimuli/fs/saccade/timestamps')
-
-            #
-            # probeLatencies = np.full(probeTimestamps.size, np.nan)
-            # for iTrial in range(probeTimestamps.size):
-            #     iSaccade = np.argmin(np.abs(probeTimestamps[iTrial] - saccadeTimestamps))
-            #    probeLatencies[iTrial] = probeTimestamps[iTrial] - saccadeTimestamps[iSaccade]
-
-            #
-            self._session = session # NOTE: This is ugly
-            trialIndices_, probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes()
-
-            #
-            for ukey in self.ukeys:
-                if ukey[0] == str(session.date) and ukey[1] == session.animal:
-                    self.ukey = ukey
-                else:
-                    continue
-
-                #
-                # if self.iUnit == 500:
-                #     import pdb; pdb.set_trace()
-
-                #
-                end = None if self.iUnit + 1 == nUnits else '\r'
-                print(f'Copmuting extra-saccadic PSTHs for unit {self.iUnit + 1} out of {nUnits}', end=end)
-
-                # Initialize parameters
-                x = np.full(nBins, np.nan)
-                a = np.nan # Amplitude of preferred direction
-                m = np.nan # Probe direction
-                b = np.nan # Baseline
-                c = np.nan # Scaling factor
-
-                #
-                for gm in np.unique(gratingMotion):
-                    trialIndices = np.where(np.vstack([
-                        np.logical_or(
-                            probeLatencies > perisaccadicWindow[1],
-                            probeLatencies < perisaccadicWindow[0],
-                        ),
-                        gratingMotion == gm
-                    ]).all(0))[0]
-                    if trialIndices.size == 0:
-                        continue
-                    try:
-                        t, fr = self.unit.kde(
-                            probeTimestamps[trialIndices],
-                            responseWindow=responseWindow,
-                            binsize=binsize,
-                            sigma=gaussianKernelWidth
-                        )
-                    except:
-                        continue
-
-                    #
-                    t, M = psth2(
-                        probeTimestamps[trialIndices],
-                        self.unit.timestamps,
-                        window=baselineWindow,
-                        binsize=None
-                    )
-                    bl = M.flatten() / np.diff(baselineWindow).item()
-                    if np.isnan(a) or np.abs(fr - bl.mean()).max() > a:
-                        x = fr
-                        a = np.abs(fr - bl.mean()).max()
-                        m = gm
-                        b = bl.mean()
-                        c = bl.std()
-
-                #
-                if np.isnan(c) or c == 0:
-                    c = np.nan
-                else:
-                    self.peths['extra'][self.iUnit, :] = (x - b) / c
-                self.ambc[self.iUnit] = np.array([a, m, b, c])
-                self.pethsRaw['extra'][self.iUnit] = x
-
+        super().fitPerisaccadicPeths(maximumAmplitudeShift, key)
         return
 
-    def fitExtrasaccadicPeths(
+    def downsampleExtrasaccadicPeths(
         self,
-        kmax=5,
+        minimumTrialCount=10,
+        rate=0.05,
         **kwargs_
         ):
         """
-        Algorithm
-        ---------
-        1. Find peaks using the normalized PSTH
-        2. Discard all but the k largest peaks
-        3. Use peak positions and amplitudes from the standardized PSTHs to initialize the GMM
         """
-
         kwargs = {
-            'minimumPeakHeight': 0.15,
-            'maximumPeakHeight': 1,
-            'minimumPeakProminence': 0.05,
-            'minimumPeakWidth': 0.001,
-            'maximumPeakWidth': 0.02,
-            'minimumPeakLatency': -0.2,
-            'initialPeakWidth': 0.001,
-            'maximumLatencyShift': 0.003,
-            'maximumBaselineShift': 0.001,
-            'maximumAmplitudeShift': 0.01 
+            'minimumTrialCount': minimumTrialCount,
+            'rate': rate,
         }
         kwargs.update(kwargs_)
+        self.iw = 0
+        super().downsampleExtrasaccadicPeths(**kwargs)
+        return
 
-        #
-        nUnits, nBins = self.peths['extra'].shape
-        self.k = np.full(nUnits, np.nan)
-        self.rss = np.full(nUnits, np.nan)
-        self.params = np.full([nUnits, int(3 * kmax + 1)], np.nan)
-        self.fits = np.full([nUnits, nBins], np.nan)
+    def generateNullSamples(
+        self,
+        nRuns=None,
+        useFilter=True,
+        parallelize=True,
+        key='fictive',
+        ):
+        """
+        """
+        super().generateNullSamples(nRuns, useFilter, parallelize, key)
+        return
 
-        #
-        for iUnit in range(nUnits):
+    def computeProbabilityValues(
+        self,
+        key='fictive'
+        ):
+        """
+        """
+        super().computeProbabilityValues(key)
+        return
 
-            end = None if iUnit + 1 == nUnits else '\r'
-            print(f'Fitting GMM for unit {iUnit + 1} out of {nUnits} units', end=end)
+    def run(
+        self,
+        ):
+        """
+        """
 
-            #
-            yRaw = self.pethsRaw['extra'][iUnit]
-            bl = self.ambc[iUnit, 2]
-            a = self.ambc[iUnit, 0]
-            yNormed = (yRaw - bl) / a
-            yStandard = self.peths['extra'][iUnit]
+        # Get extra-saccadic responses
+        self.computeExtrasaccadicPeths()
+        self.fitExtrasaccadicPeths()
 
-            #
-            if np.isnan(yStandard).all():
-                continue
+        # Get peri-saccadic responses and measure modulation
+        self._computeSaccadeResponseTemplates()
+        self.computePerisaccadicPeths()
+        self.fitPerisaccadicPeths()
 
-            #
-            peakIndices = list()
-            peakProminences = list()
-            for coef in (-1, 1):
-                peakIndices_, peakProperties = findPeaks(
-                    coef * yNormed,
-                    height=kwargs['minimumPeakHeight'],
-                    prominence=kwargs['minimumPeakProminence']
-                )
-                if peakIndices_.size == 0:
-                    continue
-                for iPeak in range(peakIndices_.size):
-
-                    # Exclude peaks detected before the stimulus  onset
-                    if self.t[peakIndices_[iPeak]] <= 0:
-                        continue
-
-                    #
-                    peakIndices.append(peakIndices_[iPeak])
-                    peakProminences.append(peakProperties['prominences'][iPeak])
-
-            # 
-            peakIndices = np.array(peakIndices)
-            if peakIndices.size == 0:
-                continue
-            peakProminences = np.array(peakProminences)
-            peakAmplitudes = yStandard[peakIndices]
-            peakLatencies = self.t[peakIndices]
-
-            # Use only the k largest peaks
-            if peakIndices.size > kmax:
-                index = np.argsort(np.abs(peakAmplitudes))[::-1]
-                peakIndices = peakIndices[index][:kmax]
-                peakProminences = peakProminences[index][:kmax]
-                peakAmplitudes = peakAmplitudes[index][:kmax]
-                peakLatencies = peakLatencies[index][:kmax]
-            
-            #
-            k = peakIndices.size
-            self.k[iUnit] = k
-
-            # Initialize the parameter space
-            p0 = np.concatenate([
-                np.array([0]),
-                peakAmplitudes,
-                peakLatencies,
-                np.full(k, kwargs['initialPeakWidth'])
-            ])
-            bounds = np.vstack([
-                np.array([[
-                    -1 * kwargs['maximumBaselineShift'],
-                    kwargs['maximumBaselineShift']
-                ]]),
-                np.vstack([
-                    peakAmplitudes - kwargs['maximumAmplitudeShift'],
-                    peakAmplitudes + kwargs['maximumAmplitudeShift']
-                ]).T,
-                np.vstack([
-                    peakLatencies - kwargs['maximumLatencyShift'],
-                    peakLatencies + kwargs['maximumLatencyShift']
-                ]).T,
-                np.repeat([[
-                    kwargs['minimumPeakWidth'],
-                    kwargs['maximumPeakWidth']
-                ]], k, axis=0)
-            ]).T
-
-            # Fit the GMM and compute the residual sum of squares (rss)
-            gmm = GaussianMixturesModel(k)
-            gmm.fit(
-                self.t,
-                yStandard,
-                p0=p0,
-                bounds=bounds
-            )
-            yFit = gmm.predict(self.t)
-            self.fits[iUnit, :] = yFit
-            self.rss[iUnit] = np.sum(np.power(yFit - yStandard, 2)) / np.sum(np.power(yStandard, 2))
-
-            # Extract the parameters of the fit GMM
-            d, abc = gmm._popt[0], gmm._popt[1:]
-            A, B, C = np.split(abc, 3)
-            order = np.argsort(np.abs(A))[::-1] # Sort by amplitude
-            params = np.concatenate([
-                A[order],
-                B[order],
-                C[order],
-            ])
-            self.params[iUnit, :params.size] = params
-            self.params[iUnit, -1] = d
+        # Compute p-values
+        self.downsampleExtrasaccadicPeths()
+        self.generateNullSamples()
+        self.computeProbabilityValues()
 
         return
 
+    # TODO: Refactor this method
     def measureResponseCorrelation(
         self,
         ):
@@ -645,23 +592,6 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
             )
             self.similarity[i] = r
 
-        return
-
-    def downsampleExtrasaccadicPeths(
-        self,
-        perisaccadicWindow=(-0.5, 0.5),
-        minimumTrialCount=10,
-        rate=0.05,
-        **kwargs
-        ):
-        """
-        """
-        kwargs.update({
-            'perisaccadicWindow': perisaccadicWindow,
-            'minimumTrialCount': minimumTrialCount,
-            'rate': rate,
-        })
-        super().downsampleExtrasaccadicPeths(**kwargs)
         return
 
     def plotAnalysisDemo(
@@ -849,12 +779,33 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
 
         return fig, axs
 
+    def plotExamples(
+        self,
+        windowIndex=5,
+        ):
+        """
+        """
+
+        with h5py.File(self.hdf, 'r') as stream:
+            pethsRealExtra = np.array(stream['clustering/peths/standard'])
+            pethsRealPeri = np.array(stream['modulation/peths/peri'])
+
+        fig, grid = plt.subplots(nrows=len(self.examples), ncols=2, sharey=True)
+        if len(self.examples) == 1:
+            grid = np.atleast_2d(grid)
+
+        for i, ukey in enumerate(self.examples):
+            iUnit = self._indexUnitKey(ukey)
+            grid[i, 0].plot(pethsRealExtra[iUnit])
+            grid[i, 0].plot(pethsRealPeri[iUnit, :, windowIndex])
+            grid[i, 1].plot(self.peths['standard'][iUnit])
+            grid[i, 1].plot(self.peths['peri'][iUnit, :, windowIndex])
+
+        return fig, grid
+
     def plotModulationBySaccadeType(
         self,
-        minimumResponseAmplitude=1,
-        alphaLevel=0.05,
-        bounds=(-1.7, 1.7),
-        colors=('tab:red', 'tab:purple', 'tab:blue'),
+        bounds=(-2, 2),
         windowIndex=5,
         figsize=(3, 3),
         ):
@@ -863,17 +814,15 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
 
         fig, ax = plt.subplots()
 
-        m = np.vstack([
-            self.params[:, 0] >= minimumResponseAmplitude,
-            self.paramsActual[:, 0] >= minimumResponseAmplitude,
-            self.pvaluesActual[:, windowIndex, 0] < alphaLevel,
-            # np.logical_or(
-            #     self.pvaluesActual[:, windowIndex, 0] < alphaLevel,
-            #     self.pvalues[:, 0, 0] < alphaLevel
-            # )
+        mask = np.vstack([
+            self.filter,
+            np.logical_or(
+                self.p['real'][:, 0] < 0.05,
+                self.p['fictive'][:, 0] < 0.05
+            ),
         ]).all(0)
-        x = np.clip(self.modulation[m, 0, 0] / self.params[m, 0], *bounds)
-        y = np.clip(self.modulationActual[m, 0, windowIndex] / self.paramsActual[m, 0], *bounds)
+        x = np.clip(self.mi['real'][mask, windowIndex, 0] / self.model['params3'][mask, 0], *bounds)
+        y = np.clip(self.mi['fictive'][mask, windowIndex, 0] / self.model['params1'][mask, 0], *bounds)
         c = np.full(x.size, 'k')
         
         ax.scatter(
@@ -882,14 +831,16 @@ class FictiveSaccadesAnalysis(BoostrappedSaccadicModulationAnalysis, BasicSaccad
             marker='.',
             s=10,
             c=c,
-            alpha=0.7
+            alpha=0.7,
+            clip_on=False,
         )
         ax.vlines(0, *bounds, color='k', alpha=0.5)
         ax.hlines(0, *bounds, color='k', alpha=0.5)
         ax.set_ylim(bounds)
         ax.set_xlim(bounds)
-        ax.set_xlabel('Modulation (Fictive)')
-        ax.set_ylabel('Modulation (Actual)')
+        ax.set_aspect('equal')
+        ax.set_xlabel('Modulation Index (Real)')
+        ax.set_ylabel('Modulation Index (Fictive)')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()

@@ -389,6 +389,7 @@ class AnalysisBase():
         self,
         minimumResponseLatency=0.03,
         minimumResponseAmplitude=5,
+        key='params'
         ):
         """
         """
@@ -404,7 +405,7 @@ class AnalysisBase():
         nUnits = len(self.ukeys)
         self.filter = np.full(nUnits, False)
         for iUnit in range(nUnits):
-            params = self.model['params'][iUnit]
+            params = self.model[key][iUnit]
             mask = np.invert(np.isnan(params))
             if np.all(np.isnan(params)):
                 continue

@@ -275,6 +275,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
     def fitExtrasaccadicPeths(
         self,
         kmax=5,
+        key='params',
         **kwargs_
         ):
         """
@@ -305,7 +306,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         self.model['k'] = np.full(nUnits, np.nan)
         self.model['rss'] = np.full(nUnits, np.nan)
         self.model['fits'] = np.full([nUnits, nBins], np.nan)
-        self.model['params'] = np.full([nUnits, int(3 * kmax + 1)], np.nan)
+        self.model[key] = np.full([nUnits, int(3 * kmax + 1)], np.nan)
 
         #
         for iUnit in range(nUnits):
@@ -405,8 +406,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 B[order],
                 C[order],
             ])
-            self.model['params'][iUnit, :params.size] = params
-            self.model['params'][iUnit, -1] = d
+            self.model[key][iUnit, :params.size] = params
+            self.model[key][iUnit, -1] = d
 
         return
 

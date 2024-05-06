@@ -49,7 +49,9 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         self.tProbe = None
         self.tSaccade = None
         self.windows = None
-        self.mi = None # Modulation index
+        self.mi = {
+            'real': None,
+         } # Modulation index
         self.filter = None
 
         #
@@ -79,7 +81,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
             'clustering/features/m': (self.features, 'm'),
             'clustering/features/s': (self.features, 's'),
             'clustering/filter': ('filter', None),
-            'modulation/mi': ('mi', None),
+            'modulation/mi': ('mi', 'real'),
             'modulation/windows': ('windows', None),
             'modulation/model/params': (self.model, 'params2'),
             'modulation/templates/nasal': (self.templates, 'nasal'),
@@ -117,7 +119,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         """
 
         datasets = {
-            'modulation/mi': (self.mi, True),
+            'modulation/mi': (self.mi['real'], True),
             'modulation/windows': (self.windows, False),
             'modulation/model/params': (self.model['params2'], True),
             'modulation/templates/nasal': (self.templates['nasal'], True),
@@ -350,7 +352,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         #
         params1 = self.model['params1'][self.iUnit]
         if np.isnan(params1).all():
-            return None, None, None
+            return None, None
         abcd = params1[np.invert(np.isnan(params1))]
         abc, d = abcd[:-1], abcd[-1]
         A1, B1, C1 = np.split(abc, 3)
@@ -550,6 +552,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
     def fitPerisaccadicPeths(
         self,
         maximumAmplitudeShift=200,
+        key='real',
         ):
         """
         """
@@ -558,7 +561,7 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
         nUnits, nBins, nWindows = self.peths['peri'].shape
         nParams = self.model['params1'].shape[1]
         nComponents = int((nParams - 1) / 3)
-        self.mi = np.full([nUnits, nWindows, nComponents], np.nan)
+        self.mi[key] = np.full([nUnits, nWindows, nComponents], np.nan)
         self.model['params2'] = np.full([nUnits, nParams, nWindows, nComponents], np.nan)
 
         #
@@ -576,14 +579,14 @@ class BasicSaccadicModulationAnalysis(AnalysisBase):
                 peth = self.peths['peri'][self.iUnit, :, iWin]
                 if np.isnan(peth).all():
                     continue
-                dr, params2 = self._fitPerisaccadicPeth2(
+                dr, params2 = self._fitPerisaccadicPeth(
                     ukey=self.ukeys[self.iUnit],
                     peth=peth,
                     maximumAmplitudeShift=maximumAmplitudeShift
                 )
                 if all([dr is None, params2 is None]):
                     continue
-                self.mi[self.iUnit, iWin, :] = dr
+                self.mi[key][self.iUnit, iWin, :] = dr
                 # self.model['params2'][self.iUnit, :, iWin, :] = params2.T
 
         return
