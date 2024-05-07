@@ -39,7 +39,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         self.peths = {
             'raw': None,
             'normal': None,
-            'standard': None
+            'standard': None,
         }
         self.model = {
             'params': None,
