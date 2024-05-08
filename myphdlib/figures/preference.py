@@ -1,5 +1,6 @@
 import h5py
 import numpy as np
+import pathlib as pl
 from scipy.signal import find_peaks as findPeaks
 from matplotlib import pyplot as plt
 from myphdlib.general.toolkit import psth2
@@ -65,6 +66,8 @@ class DirectionSectivityAnalysis(
             'clustering/peths/standard': (self.peths, 'preferred'),
             'clustering/model/params': (self.model, 'params1'),
             'preference/peths/null': (self.peths, 'null'),
+            'preference/peths/normal': (self.peths, 'normal'),
+            'preference/peths/standard': (self.peths, 'standard'),
             'preference/model/params2': (self.model, 'params2'),
             'preference/dsi/bar': (self.dsi, 'bar'),
             'preference/dsi/probe': (self.dsi, 'probe'),
@@ -101,6 +104,8 @@ class DirectionSectivityAnalysis(
 
         datasets = {
             'preference/peths/null': (self.peths['null'], True),
+            'preference/peths/normal': (self.peths['normal'], True),
+            'preference/peths/standard': (self.peths['standard'], True),
             'preference/model/params2': (self.model['params2'], True),
             'preference/dsi/bar': (self.dsi['bar'], True),
             'preference/dsi/probe': (self.dsi['probe'], True),
@@ -112,7 +117,7 @@ class DirectionSectivityAnalysis(
 
         #
         with h5py.File(self.hdf, 'a') as stream:
-            for k, v in datasets.items():
+            for k, (v, f) in datasets.items():
                 if v is None:
                     continue
                 nCols = 1 if len(v.shape) == 1 else v.shape[1]
@@ -175,7 +180,7 @@ class DirectionSectivityAnalysis(
             #
             a1 = self.model['params1'][self.iUnit, 0]
             a2 = self.model['params2'][self.iUnit, 0]
-            t1 = np.deg2rad(180 if self.features['d'] == -1 else 0)
+            t1 = np.deg2rad(180 if self.features['d'][self.iUnit] == -1 else 0)
             t2 = np.deg2rad(0 if t1 == 180 else 180)
             vectors = np.array([
                 [a1, t1],
@@ -187,6 +192,9 @@ class DirectionSectivityAnalysis(
                 vectors[:, 0] * np.cos(vectors[:, 1]),
                 vectors[:, 0] * np.sin(vectors[:, 1])
             ]).T
+            return vertices, vectors
+
+            import pdb; pdb.set_trace()
 
             # Compute direction selectivity index
             a, b = vertices.sum(0) / vectors[:, 0].sum()
