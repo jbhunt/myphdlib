@@ -164,6 +164,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
     def computeExtrasaccadicPeths(
         self,
+        preferred=True,
         responseWindow=(-0.2, 0.5),
         baselineWindow=(-0.2, 0),
         standardizationWindow=(-20, -10),
@@ -245,7 +246,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 d_ = gratingMotion
 
                 # Override current feature set if amplitude is greater
-                if a is None or a_ > a:
+                if a is None or (a_ > a and preferred) or (a_ < a and preferred == False):
                     y = y_
                     a = a_
                     d = d_
