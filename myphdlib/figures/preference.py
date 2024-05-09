@@ -172,15 +172,29 @@ class DirectionSectivityAnalysis(
 
         self.dsi['probe'] = np.full(len(self.ukeys), np.nan)
         self.pd['probe'] = np.full(len(self.ukeys), np.nan)
-        for ukey in self.ukeys:
+        for iUnit in range(len(self.ukeys)):
 
             #
-            self.ukey = ukey
+            a1 = self.model['params1'][iUnit, 0]
+            params = self.model['params1'][iUnit, :]
+            params = np.delete(params, np.isnan(params))
+            abc, d = params[:-1], params[-1]
+            A1, B1, C1 = np.split(abc, 3)
 
             #
-            a1 = self.model['params1'][self.iUnit, 0]
-            a2 = self.model['params2'][self.iUnit, 0]
-            t1 = np.deg2rad(180 if self.features['d'][self.iUnit] == -1 else 0)
+            params = self.model['params2'][iUnit, :]
+            params = np.delete(params, np.isnan(params))
+            abc, d = params[:-1], params[-1]
+            A2, B2, C2 = np.split(abc, 3)
+            iComp = np.argmin(B2 - B1[0])
+            a2 = A2[iComp]
+
+            #
+            if (a1 < 0 and a2 > 0) or (a1 > 0 and a2 < 0):
+                a2 = 0
+
+            #
+            t1 = np.deg2rad(180 if self.features['d'][iUnit] == -1 else 0)
             t2 = np.deg2rad(0 if t1 == 180 else 180)
             vectors = np.array([
                 [a1, t1],
@@ -192,15 +206,12 @@ class DirectionSectivityAnalysis(
                 vectors[:, 0] * np.cos(vectors[:, 1]),
                 vectors[:, 0] * np.sin(vectors[:, 1])
             ]).T
-            return vertices, vectors
-
-            import pdb; pdb.set_trace()
 
             # Compute direction selectivity index
             a, b = vertices.sum(0) / vectors[:, 0].sum()
-            dsi = np.sqrt(np.power(a, 2) + np.power(b, 2))
-            self.dsi['probe'][self.iUnit] = dsi
-            self.pd['probe'][self.iUnit] = t1
+            dsi = np.sqrt(np.power(a - 0, 2) + np.power(b - 0, 2))
+            self.dsi['probe'][iUnit] = dsi
+            self.pd['probe'][iUnit] = t1
 
         return
 
@@ -217,14 +228,11 @@ class DirectionSectivityAnalysis(
         ))[0]
         self.dsi['saccade'] = np.full(len(self.ukeys), np.nan)
         self.pd['saccade'] = np.full(len(self.ukeys), np.nan)
-        for ukey in self.ukeys:
+        for iUnit in range(len(self.ukeys)):
 
             #
-            self.ukey = ukey
-
-            #
-            a1 = np.max(np.abs(self.templates['nasal'][self.iUnit, binIndices]))
-            a2 = np.max(np.abs(self.templates['temporal'][self.iUnit, binIndices]))
+            a1 = np.max(np.abs(self.templates['nasal'][iUnit, binIndices]))
+            a2 = np.max(np.abs(self.templates['temporal'][iUnit, binIndices]))
             pd = 'nasal' if a1 > a2 else 'temporal'
 
             #
@@ -233,11 +241,11 @@ class DirectionSectivityAnalysis(
                 if pd == 'nasal':
                     vectors[:, 0] = np.array([a1, a2]).T
                     vectors[:, 1] = np.array([np.deg2rad(180), np.deg2rad(0)]).T
-                    self.pd['saccade'][self.iUnit] = np.deg2rad(180)
+                    self.pd['saccade'][iUnit] = np.deg2rad(180)
                 elif pd == 'temporal':
                     vectors[:, 0] = np.array([a2, a1]).T
                     vectors[:, 1] = np.array([np.deg2rad(0), np.deg2rad(180)]).T
-                    self.pd['saccade'][self.iUnit] = np.deg2rad(0)
+                    self.pd['saccade'][iUnit] = np.deg2rad(0)
             elif self.session.eye == 'right':
                 raise Exception('Right eye sessions not implemented yet')
 
@@ -250,7 +258,7 @@ class DirectionSectivityAnalysis(
             # Compute direction selectivity index
             a, b = vertices.sum(0) / vectors[:, 0].sum()
             dsi = np.sqrt(np.power(a, 2) + np.power(b, 2))
-            self.dsi['saccade'][self.iUnit] = dsi
+            self.dsi['saccade'][iUnit] = dsi
             
         return
 
