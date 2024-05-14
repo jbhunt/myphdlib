@@ -10,45 +10,95 @@ import seaborn as sns
 import pandas as pd
 from itertools import product
 from scipy.stats import spearmanr
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 
-class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
+def _generateNullSampleForSingleUnit(
+    peths,
+    params1,
+    tProbe,
+    nComponents,
+    iUnit,
+    nUnits,
+    maximumAmplitudeShift=100,
+    ):
+    """
+    Worker function (for parallelization) that refits the peri-saccadic PPTHs for a single unit
+    """
+
+    #
+    end = '\r' if iUnit + 1 != nUnits else '\n'
+    print(f'Generating null sample for unit {iUnit + 1} out of {nUnits}', end=end, flush=True)
+    nBins, nRuns = peths.shape
+    sample = np.full([nRuns, nComponents], np.nan)
+
+    #
+    if np.isnan(params1).all():
+        return sample
+
+    #
+    abcd = np.delete(params1, np.isnan(params1))
+    abc, d = abcd[:-1], abcd[-1]
+    A1, B1, C1 = np.split(abc, 3)
+
+    #
+    for iRun in range(nRuns):
+
+        #
+        peth = peths[:, iRun]
+        if np.isnan(peth).all():
+            continue
+
+        #
+        mi = np.full(nComponents, np.nan)
+
+        #
+        params2 = np.full([nComponents, params1.size], np.nan)
+        for iComp in range(A1.size):
+
+            # Refit
+            amplitudeBoundaries = np.vstack([A1 - 0.001, A1 + 0.001]).T
+            amplitudeBoundaries[iComp, 0] -= maximumAmplitudeShift
+            amplitudeBoundaries[iComp, 1] += maximumAmplitudeShift
+            bounds = np.vstack([
+                [[d - 0.001, d + 0.001]],
+                amplitudeBoundaries,
+                np.vstack([B1 - 0.001, B1 + 0.001]).T,
+                np.vstack([C1 - 0.001, C1 + 0.001]).T,
+            ]).T
+            p0 = np.concatenate([
+                np.array([d]),
+                A1,
+                B1,
+                C1
+            ])
+            gmm = GaussianMixturesModel(A1.size)
+            gmm.fit(tProbe, peth, p0, bounds)
+
+            # Save the refit parameters
+            d, abc = gmm._popt[0], gmm._popt[1:]
+            params2[iComp, :abc.size + 1] = np.concatenate([
+                abc,
+                np.array([d,])
+            ])
+
+            # Compute modulation index (Normalized to response amplitude)
+            A2 = np.split(gmm._popt[1:], 3)[0]
+            mi[iComp] = (A2[iComp] - A1[iComp]) / A1[iComp]
+
+        #
+        sample[iRun] = mi
+
+    return iUnit, sample
+
+class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
     """
     """
 
-    def __init__(self, iw=5, **kwargs):
+    def __init__(self, **kwargs):
         """
         """
 
         super().__init__(**kwargs)
-
-        # Window index
-        self.iw = iw
-
-        #
-        self.peths = {
-            'resampled': None,
-        }
-        self.p = {
-            'real': None,
-        }
-        self.samples = {
-            'real': None
-        }
-        self.features = {
-            'm': None,
-            's': None,
-            'd': None,
-        }
-        self.model = {
-            'k': None,
-        }
-        self.windows = None
-        self.filter = None
-        self.mi = {
-            'real': None,
-        }
-        self.tProbe = None
 
         # Example neurons
         self.examples = (
@@ -59,104 +109,17 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
         return
 
-    def saveNamespace(
+    def resampleExtrasaccadicPeths(
         self,
-        nUnitsPerChunk=100,
-        ):
-        """
-        """
-
-        datasets = {
-            'bootstrap/p': self.p['real'],
-        }
-
-        #
-        mask = self._intersectUnitKeys(self.ukeys)
-        with h5py.File(self.hdf, 'a') as stream:
-            for path, attr in datasets.items():
-                if attr is None:
-                    continue
-                if path in stream:
-                    del stream[path]
-                data = np.full([mask.size, *attr.shape[1:]], np.nan)
-                data[mask] = attr
-                ds = stream.create_dataset(
-                    path,
-                    dtype=data.dtype,
-                    shape=data.shape,
-                    data=data
-                )
-
-        #
-        self._saveLargeDataset(
-            self.hdf,
-            path='bootstrap/peths',
-            dataset=self.peths['resampled'],
-            nUnitsPerChunk=nUnitsPerChunk,
-        )
-
-        #
-        self._saveLargeDataset(
-            self.hdf,
-            path='bootstrap/samples',
-            dataset=self.samples['real'],
-            nUnitsPerChunk=nUnitsPerChunk
-        )
-
-        return
-
-    def loadNamespace(
-        self,
-        ):
-        """
-        """
-
-        #
-        mask = self._intersectUnitKeys(self.ukeys)
-        datasets = {
-            'bootstrap/peths': ('peths', 'resampled'),
-            'bootstrap/samples': ('samples', 'real'),
-            'bootstrap/p': ('p', 'real'),
-            'clustering/features/m': ('features', 'm'),
-            'clustering/features/s': ('features', 's'),
-            'clustering/features/d': ('features', 'd'),
-            'clustering/model/k': ('model', 'k'),
-            'clustering/model/params': ('model', 'params1'),
-            'clustering/model/labels': ('model', 'labels'),
-            'clustering/filter': ('filter', None),
-            'modulation/windows': ('windows', None),
-            'modulation/mi': ('mi', 'real'),
-        }
-        with h5py.File(self.hdf, 'r') as stream:
-            for path, (attr, key) in datasets.items():
-                if path in stream:
-                    if 'windows' in path.split('/'): # Do not apply unit mask
-                        ds = np.array(stream[path])
-                    else:
-                        ds = np.array(stream[path][mask])
-                    if len(ds.shape) == 2 and ds.shape[-1] == 1:
-                        ds = ds.flatten()
-                    if key is None:
-                        self.__setattr__(attr, ds)
-                    else:
-                        self.__getattribute__(attr)[key] = ds
-
-            #
-            ds = stream['clustering/peths/standard']
-            if 't' in ds.attrs.keys():
-                self.tProbe = np.array(ds.attrs['t'])
-
-        return
-
-    def downsampleExtrasaccadicPeths(
-        self,
-        nRuns=30,
+        nRuns=100,
+        rate=0.05,
+        minimumTrialCount=10,
         responseWindow=(-0.2, 0.5),
+        perisaccadicWindow=(-0.5, 0.5),
         binsize=0.01,
         smoothingKernelWidth=0.01,
         buffer=1,
-        rate=None,
-        minimumTrialCount=1,
+        saccadeType='real',
         ):
         """
         """
@@ -169,199 +132,175 @@ class BoostrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             returnShape=True
         )
         nUnits = len(self.ukeys)
-        self.peths['resampled'] = np.full([nUnits, nBins, nRuns], np.nan)
+        for probeDirection in ('pref', 'null'):
+            self.ns[f'ppths/{probeDirection}/{saccadeType}/resampled'] = np.full([nUnits, nBins, nRuns], np.nan)
+
+        #
         for iUnit in range(nUnits):
 
             #
+            self.ukey = self.ukeys[iUnit]
             end = '\r' if iUnit + 1 != nUnits else None
             print(f'Re-sampling PETHs for unit {iUnit + 1} out of {nUnits}', end=end)
 
             #
-            self.ukey = self.ukeys[iUnit]
-            mu, sigma = self.features['m'][iUnit], self.features['s'][iUnit]
+            for probeDirection in ('pref', 'null'):
 
-            #
-            perisaccadicWindow = self.windows[self.iw]
-            trialIndicesPerisaccadic, probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes(
-                perisaccadicWindow
-            )
+                # Load baseline FR
+                bl = self.ns[f'stats/{probeDirection}/{saccadeType}/extra'][iUnit, 0]
 
-            # Extra-saccadic trial indices
-            trialIndicesExtrasaccadic = np.where(np.vstack([
-                gratingMotion == self.features['d'][self.iUnit],
-                np.logical_or(
-                    probeLatencies < perisaccadicWindow[0],
-                    probeLatencies > perisaccadicWindow[1]
-                )
-            ]).all(0))[0]
-            if trialIndicesExtrasaccadic.size == 0:
-                continue
-
-            #
-            if rate is None:
-                nTrialsForResampling = trialIndicesPerisaccadic.size
-                if nTrialsForResampling == 0:
-                    continue
-        
-            else:
-                nTrialsForResampling = int(round(trialIndicesExtrasaccadic.size * rate, 0))
-            
-            #
-            if minimumTrialCount is not None and nTrialsForResampling < minimumTrialCount:
-                nTrialsForResampling = minimumTrialCount
-
-            # Compute relative spike timestamps
-            responseWindowBuffered = (
-                responseWindow[0] - buffer,
-                responseWindow[1] + buffer
-            )
-            t, M, spikeTimestamps = psth2(
-                probeTimestamps[trialIndicesExtrasaccadic],
-                self.unit.timestamps,
-                window=responseWindowBuffered,
-                binsize=binsize,
-                returnTimestamps=True
-            )
-
-            #
-            for iRun in range(nRuns):
-
-                # Use kernel density estimation (takes a long time)
-                trialIndices = np.random.choice(
-                    np.arange(trialIndicesExtrasaccadic.size),
-                    size=nTrialsForResampling,
-                    replace=False
+                # Load event data
+                trialIndicesPerisaccadic, probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes(
+                    perisaccadicWindow,
+                    probeDirection=probeDirection
                 )
 
-                # Use raw PSTH
-                # sample = list()
-                # for iTrial in trialIndices:
-                #     for ts in spikeTimestamps[iTrial]:
-                #         sample.append(ts)
-                # sample = np.array(sample)
-
-                # Use KDE
-                sample = np.concatenate([spikeTimestamps[i] for i in trialIndices])
-                try:
-                    t, fr = self.unit.kde(
-                        probeTimestamps[trialIndices],
-                        responseWindow=responseWindow,
-                        binsize=binsize,
-                        sigma=smoothingKernelWidth,
-                        sample=sample,
-                        nTrials=nTrialsForResampling,
+                # Extra-saccadic trial indices
+                trialIndicesExtrasaccadic = np.where(np.vstack([
+                    gratingMotion == self.preference[self.iUnit],
+                    np.logical_or(
+                        probeLatencies < perisaccadicWindow[0],
+                        probeLatencies > perisaccadicWindow[1]
                     )
-                except:
+                ]).all(0))[0]
+                if trialIndicesExtrasaccadic.size == 0:
                     continue
 
-                # Standardize PSTH
-                self.peths['resampled'][iUnit, :, iRun] = (fr - mu) / sigma
+                # Total number of trials in the target direction
+                nTrialsTotal = np.sum(gratingMotion == self.preference[self.iUnit])
+
+                # Determine the number of trials to sample
+                nTrialsForResampling = int(round(nTrialsTotal * rate, 0))
+                if minimumTrialCount is not None and nTrialsForResampling < minimumTrialCount:
+                    nTrialsForResampling = minimumTrialCount
+                if trialIndicesExtrasaccadic.size < nTrialsForResampling:
+                    raise Exception('Not enough extra-saccadic trials to re-sample')
+
+                # Compute relative spike timestamps
+                responseWindowBuffered = (
+                    responseWindow[0] - buffer,
+                    responseWindow[1] + buffer
+                )
+                t, M, spikeTimestamps = psth2(
+                    probeTimestamps[trialIndicesExtrasaccadic],
+                    self.unit.timestamps,
+                    window=responseWindowBuffered,
+                    binsize=binsize,
+                    returnTimestamps=True
+                )
+
+                #
+                for iRun in range(nRuns):
+
+                    # Use kernel density estimation (takes a long time)
+                    trialIndices = np.random.choice(
+                        np.arange(trialIndicesExtrasaccadic.size),
+                        size=nTrialsForResampling,
+                        replace=False
+                    )
+
+                    # Use KDE
+                    sample = np.concatenate([spikeTimestamps[i] for i in trialIndices])
+                    try:
+                        t, fr = self.unit.kde(
+                            probeTimestamps[trialIndices],
+                            responseWindow=responseWindow,
+                            binsize=binsize,
+                            sigma=smoothingKernelWidth,
+                            sample=sample,
+                            nTrials=nTrialsForResampling,
+                        )
+                    except:
+                        continue
+
+                    # Standardize PSTH
+                    self.ns[f'ppths/{probeDirection}/{saccadeType}/resampled'][iUnit, :, iRun] = (fr - bl) / self.factor[iUnit]
 
         return
-    
-    def _generateNullSample(
-        self,
-        iUnit,
-        ):
-        """
-        """
-
-        ukey = self.ukeys[iUnit]
-        peths = self.peths['resampled'][iUnit]
-        nRuns = peths.shape[0]
-        sample = np.full(nRuns, np.nan)
-        for iRun in range(nRuns):
-            peth = peths[iRun]
-            dr, params2 = super()._fitPerisaccadicPeth(
-                ukey,
-                peth=peth
-            )
-            sample[iRun] = dr
-
-        return sample
 
     def generateNullSamples(
         self,
         nRuns=None,
-        useFilter=True,
-        parallelize=True,
-        key='real',
+        maximumAmplitudeShift=100,
+        saccadeType='real',
+        nCores=8,
         ):
         """
         """
 
         #
-        nUnits, nBins, nRuns_ = self.peths['resampled'].shape
+        nUnits, nBins, nRuns_ = self.ns[f'ppths/pref/{saccadeType}/resampled'].shape
         if nRuns is None:
             nRuns = nRuns_
-        nComponents = int(np.nanmax(self.model['k']))
-        samples = np.full([nUnits, nRuns, nComponents], np.nan)
+        nComponents = int((self.ns[f'params/pref/{saccadeType}/extra'].shape[1] - 1) // 3)
 
         #
-        if parallelize:
-            with Pool(None) as pool:
-                samples_ = pool.map(
-                    self._generateNullSample,
-                    np.arange(len(self.ukeys))
-                )
-            samples = np.array(samples_)
+        for probeDirection in ('pref', 'null'):
 
-        #
-        else:
+            #
+            samples = np.full([nUnits, nRuns, nComponents], np.nan)
+
+            #
+            args = list()
             for iUnit in range(nUnits):
+                args.append((
+                    self.ns[f'ppths/pref/{saccadeType}/resampled'][iUnit],
+                    self.ns[f'params/pref/{saccadeType}/extra'][iUnit],
+                    self.tProbe,
+                    nComponents,
+                    iUnit,
+                    nUnits,
+                    maximumAmplitudeShift,
+                ))
+            with Pool(nCores) as pool:
+                result = pool.starmap(_generateNullSampleForSingleUnit, args)
+            for iUnit, sample in result:
+                samples[iUnit] = sample
 
-                #
-                if useFilter and self.filter[iUnit] == False:
-                    continue
-
-                #
-                self.ukey = self.ukeys[iUnit]
-                end = '\r' if iUnit + 1 != nUnits else None
-                print(f'Generating null samples for unit {iUnit + 1} out of {nUnits}', end=end)
-
-                #
-                sample = np.full([nRuns, nComponents], np.nan)
-                for iRun in range(nRuns):
-                    peth = self.peths['resampled'][iUnit, :, iRun]
-                    if np.isnan(peth).all():
-                        continue
-                    dr, params2 = super()._fitPerisaccadicPeth(
-                        self.ukey,
-                        peth=peth
-                    )
-                    sample[iRun, :] = dr
-
-                #
-                samples[iUnit, :, :] = sample
-
-        #
-        self.samples[key] = samples
+            #
+            self.ns[f'samples/{probeDirection}/{saccadeType}'] = samples
 
         return
 
     def computeProbabilityValues(
         self,
-        key='real',
+        saccadeType='real',
         ):
         """
         """
 
-        nUnits, nBins, nRuns = self.peths['resampled'].shape
-        nComponents = int(np.nanmax(self.model['k']))
-        self.p[key] = np.full([nUnits, nComponents], np.nan)
+        #
+        nUnits, nBins, nRuns = self.ns[f'ppths/pref/{saccadeType}/resampled'].shape
+        nWindows = len(self.windows)
+        nComponents = int((self.ns[f'params/pref/{saccadeType}/extra'].shape[1] - 1) // 3)
+        for probeDirection in ('pref', 'null'):
+            self.ns[f'p/{probeDirection}/{saccadeType}'] = np.full([nUnits, nWindows, nComponents], np.nan)
 
+        #
         for ukey in self.ukeys:
 
             #
             self.ukey = ukey
             end = '\n' if self.iUnit + 1 == nUnits else '\r'
             print(f'Computing p-values for unit {self.iUnit + 1} out of {nUnits}', end=end)
-            for iComp in range(nComponents):
-                sample = self.samples[key][self.iUnit, :, iComp]
-                tv = self.mi[key][self.iUnit, self.iw, iComp]
-                mask = np.invert(np.isnan(sample))
-                p = np.sum(np.abs(sample[mask]) > np.abs(tv)) / mask.sum()
-                self.p[key][self.iUnit, iComp] = p
+
+            #
+            for probeDirection in ('pref', 'null'):
+
+                #
+                for iWindow in range(nWindows):
+
+                    #
+                    for iComp in range(nComponents):
+
+                        #
+                        sample = self.ns[f'samples/{probeDirection}/{saccadeType}'][self.iUnit, :, iComp]
+                        mi = self.ns[f'mi/{probeDirection}/{saccadeType}'][self.iUnit, iWindow, iComp]
+                        mask = np.invert(np.isnan(sample))
+                        if mask.sum() == 0:
+                            continue
+                        p = np.sum(np.abs(sample[mask]) > np.abs(mi)) / mask.sum()
+                        self.ns[f'p/{probeDirection}/{saccadeType}'][self.iUnit, iWindow, iComp] = p
 
         return
 

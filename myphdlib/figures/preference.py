@@ -1,15 +1,12 @@
 import h5py
 import numpy as np
 import pathlib as pl
-from scipy.signal import find_peaks as findPeaks
 from matplotlib import pyplot as plt
 from myphdlib.general.toolkit import psth2
-from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel
-from myphdlib.figures.clustering import GaussianMixturesFittingAnalysis
+from myphdlib.figures.analysis import AnalysisBase
+from myphdlib.figures.fictive import convertSaccadeDirectionToGratingMotion
 
-class DirectionSectivityAnalysis(
-    GaussianMixturesFittingAnalysis,
-    ):
+class DirectionSectivityAnalysis(AnalysisBase):
     """
     """
 
@@ -19,265 +16,143 @@ class DirectionSectivityAnalysis(
 
         super().__init__(**kwargs)
 
-        self.dsi = {
-            'bar': None,
-            'probe': None,
-            'saccade': None,
-        }
-        self.pd = {
-            'bar': None,
-            'probe': None,
-            'saccade': None,
-        }
-        self.peths = {
-            'standard': None,
-            'normal': None,
-            'raw': None,
-            'preferred': None,
-            'null': None,
-        }
-        self.tProbe = None
-        self.tSaccade = None
-        self.features = {
-            'a': None,
-            'd': None,
-            'm': None,
-            's': None,
-        }
-        self.model = {
-            'params1': None, # Preferred
-            'params2': None, # Null
-        }
-        self.templates = {
-            'nasal': None,
-            'temporal': None,
-        }
-        self.mi = {
-            'real': None,
-        }
-        self.p = {
-            'real': None,
-        }
-
-        return
-
-    def loadNamespace(
-        self,
-        ):
-        """
-        """
-
-        datasets = {
-            'clustering/features/d': (self.features, 'd'),
-            'clustering/peths/standard': (self.peths, 'preferred'),
-            'clustering/model/params': (self.model, 'params1'),
-            'preference/peths/null': (self.peths, 'null'),
-            'preference/peths/normal': (self.peths, 'normal'),
-            'preference/peths/standard': (self.peths, 'standard'),
-            'preference/model/params2': (self.model, 'params2'),
-            'preference/dsi/bar': (self.dsi, 'bar'),
-            'preference/dsi/probe': (self.dsi, 'probe'),
-            'preference/dsi/saccade': (self.dsi, 'saccade'),
-            'preference/pd/bar': (self.pd, 'bar'),
-            'preference/pd/probe': (self.pd, 'probe'),
-            'preference/pd/saccade': (self.pd, 'saccade'),
-            'modulation/templates/nasal': (self.templates, 'nasal'),
-            'modulation/templates/temporal': (self.templates, 'temporal'),
-            'modulation/mi': (self.mi, 'real'),
-            'bootstrap/p': (self.p, 'real'),
-        }
-        with h5py.File(self.hdf, 'r') as stream:
-            for path, (attr, key) in datasets.items():
-                parts = path.split('/')
-                if path in stream:
-                    ds = stream[path]
-                    if path == 'clustering/peths/standard':
-                        self.tProbe = ds.attrs['t']
-                    if path == 'modulation/templates/nasal':
-                        self.tSaccade = ds.attrs['t']
-                    value = np.array(ds)
-                    if 'filter' in parts:
-                        value = value.astype(bool)
-                    if len(value.shape) == 2 and value.shape[-1] == 1:
-                        value = value.flatten()
-                    if key is None:
-                        setattr(self, attr, value)
-                    else:
-                        attr[key] = value
-
-        return
-
-    def saveNamespace(
-        self,
-        ):
-        """
-        """
-
-        datasets = {
-            'preference/peths/null': (self.peths['null'], True),
-            'preference/peths/normal': (self.peths['normal'], True),
-            'preference/peths/standard': (self.peths['standard'], True),
-            'preference/model/params2': (self.model['params2'], True),
-            'preference/dsi/bar': (self.dsi['bar'], True),
-            'preference/dsi/probe': (self.dsi['probe'], True),
-            'preference/dsi/saccade': (self.dsi['saccade'], True),
-            'preference/pd/bar': (self.pd['bar'], True),
-            'preference/pd/probe': (self.pd['probe'], True),
-            'preference/pd/saccade': (self.pd['saccade'], True),
-        }
-
-        #
-        mask = self._intersectUnitKeys(self.ukeys)
-
-        #
-        with h5py.File(self.hdf, 'a') as stream:
-            for k, (v, f) in datasets.items():
-                if v is None:
-                    continue
-                nCols = 1 if len(v.shape) == 1 else v.shape[1]
-                data = np.full([mask.size, nCols], np.nan)
-                data[mask, :] = v.reshape(-1, nCols)
-                if k in stream:
-                    del stream[k]
-                ds = stream.create_dataset(
-                    k,
-                    data.shape,
-                    data.dtype,
-                    data=data
-                )
-
-                # Save the bin centers for all PETH datasets
-                if 'peths' in pl.Path(k).parts:
-                    ds.attrs['t'] = self.tProbe
-
-        return
-
-    def computeNullPeths(
-        self,
-        **kwargs
-        ):
-        """
-        """
-
-        super().computeExtrasaccadicPeths(
-            preferred=False,
-            **kwargs
-        )
-        self.peths['null'] = np.copy(self.peths['standard'])
-
-        return
-
-    def fitNullPeths(self, **kwargs):
-        """
-        """
-
-        super().fitExtrasaccadicPeths(
-            key='params2',
-            **kwargs
-        )
-
         return
 
     def measureDirectionSelectivityForProbes(
         self,
-        responseWindow=(0, 0.5),
+        method='ratio'
         ):
         """
         """
 
-        binIndices = np.where(np.logical_and(
-            self.tProbe >= responseWindow[0],
-            self.tProbe <= responseWindow[1]
-        ))[0]
-        self.dsi['probe'] = np.full(len(self.ukeys), np.nan)
-        self.pd['probe'] = np.full(len(self.ukeys), np.nan)
+        #
+        self.ns['dsi/probe'] = np.full(len(self.ukeys), np.nan)
+
+        #
         for iUnit in range(len(self.ukeys)):
 
             #
-            a1 = np.abs(self.peths['preferred'][iUnit, binIndices]).max()
-            a2 = np.abs(self.peths['null'][iUnit, binIndices]).max()
-            pd = self.features['d'][iUnit]
+            aPref = self.ns[f'params/pref/real/extra'][iUnit][:, 0]
+            aNull = self.ns[f'params/null/real/extra'][iUnit][:, 0]
+
+            # Clip null direction if sign reverses
+            if aPref > 0:
+                if aNull < 0:
+                    aNull = 0
+            else:
+                if aNull > 0:
+                    aNull = 0
 
             #
-            vectors = np.full([2, 2], np.nan)
-            vectors[:, 0] = np.array([a1, a2]).T
-            vectors[:, 1] = np.array([
-                np.pi if pd == -1 else 0,
-                0 if pd == -1 else np.pi
-            ]).T
+            if self.preference[iUnit] == -1:
+                aLeft = aPref
+                aRight = aNull
+            else:
+                aLeft = aNull
+                aRight = aPref
 
-            # Compute the coordinates of the polar plot vertices
-            vertices = np.vstack([
-                vectors[:, 0] * np.cos(vectors[:, 1]),
-                vectors[:, 0] * np.sin(vectors[:, 1])
-            ]).T
+            # Ratio of difference and sum
+            if method == 'ratio':
+                dsi = (aRight - aLeft) / (aRight + aLeft)
 
-            # Compute direction selectivity index
-            a, b = vertices.sum(0) / vectors[:, 0].sum()
-            dsi = np.sqrt(np.power(a, 2) + np.power(b, 2))
-            self.dsi['probe'][iUnit] = dsi
-            self.pd['probe'][iUnit] = vectors[0, 1]
+
+            # Normalized vector sum
+            elif method == 'vector-sum':
+                vectors = np.full([2, 2], np.nan)
+                vectors[:, 0] = np.array([aPref, aNull]).T
+                vectors[:, 1] = np.array([
+                    np.pi if self.preference[iUnit] == -1 else 0,
+                    0 if self.preference[iUnit] == -1 else np.pi
+                ]).T
+
+                # Compute the coordinates of the polar plot vertices
+                vertices = np.vstack([
+                    vectors[:, 0] * np.cos(vectors[:, 1]),
+                    vectors[:, 0] * np.sin(vectors[:, 1])
+                ]).T
+
+                # Compute direction selectivity index
+                a, b = vertices.sum(0) / vectors[:, 0].sum()
+                dsi = np.sqrt(np.power(a, 2) + np.power(b, 2))
+            
+            #
+            self.ns['dsi/probe'][iUnit] = dsi
 
         return
 
     def measureDirectionSelectivityForSaccades(
         self,
+        method='ratio',
         responseWindow=(-0.2, 0.5),
         ):
         """
         """
 
+        #
         binIndices = np.where(np.logical_and(
             self.tSaccade >= responseWindow[0],
             self.tSaccade <= responseWindow[1]
         ))[0]
-        self.dsi['saccade'] = np.full(len(self.ukeys), np.nan)
-        self.pd['saccade'] = np.full(len(self.ukeys), np.nan)
+        self.ns['dsi/saccade'] = np.full(len(self.ukeys), np.nan)
+
+        #
         for iUnit in range(len(self.ukeys)):
 
             #
             self.ukey = self.ukeys[iUnit]
 
-            #
-            a1 = np.max(np.abs(self.templates['nasal'][iUnit, binIndices]))
-            a2 = np.max(np.abs(self.templates['temporal'][iUnit, binIndices]))
-            pd = 'nasal' if a1 > a2 else 'temporal'
+            # Determine which saccade is preferred
+            aNasal = np.max(np.abs(self.templates['nasal'][iUnit, binIndices]))
+            aTemporal = np.max(np.abs(self.templates['temporal'][iUnit, binIndices]))
+            if aNasal > aTemporal:
+                aPref = aNasal
+                aNull = aTemporal
+                saccadeDirection = 'nasal'
+            else:
+                aPref = aTemporal
+                aNull = aNasal
+                saccadeDirection = 'tempoarl'
+
+            # Clip null direction if sign reverses
+            if aPref > 0:
+                if aNull < 0:
+                    aNull = 0
+            else:
+                if aNull > 0:
+                    aNull = 0
+
+            # Convert saccade direction to probe direction
+            probeDirection = convertSaccadeDirectionToGratingMotion(
+                saccadeDirection,
+                self.session.eye,
+            )
+            if probeDirection == -1:
+                aLeft = aPref
+                aRight = aNull
+            else:
+                aLeft = aNull
+                aRight = aPref
 
             #
-            vectors = np.full([2, 2], np.nan)
-            if self.session.eye == 'left':
-                if pd == 'nasal':
-                    vectors[:, 0] = np.array([a1, a2]).T
-                    vectors[:, 1] = np.array([np.deg2rad(180), np.deg2rad(0)]).T
-                    self.pd['saccade'][iUnit] = np.deg2rad(180)
-                elif pd == 'temporal':
-                    vectors[:, 0] = np.array([a2, a1]).T
-                    vectors[:, 1] = np.array([np.deg2rad(0), np.deg2rad(180)]).T
-                    self.pd['saccade'][iUnit] = np.deg2rad(0)
-
-            # Compute the coordinates of the polar plot vertices
-            vertices = np.vstack([
-                vectors[:, 0] * np.cos(vectors[:, 1]),
-                vectors[:, 0] * np.sin(vectors[:, 1])
-            ]).T
-
-            # Compute direction selectivity index
-            a, b = vertices.sum(0) / vectors[:, 0].sum()
-            dsi = np.sqrt(np.power(a, 2) + np.power(b, 2))
-            self.dsi['saccade'][iUnit] = dsi
+            if method == 'ratio':
+                dsi = (aRight - aLeft) / (aRight + aLeft)
+            
+            #
+            self.ns['dsi/saccade'][iUnit] = dsi
             
         return
 
+    # TODO: Project vector sum onto the horizontal axis (so that I can compare
+    #       DSI from probes/saccades to DSI for the moving bars)
     def measureDirectionSelectivityForMovingBars(
         self,
+        method='ratio',
         ):
         """
         Compute DSI for the moving bars stimulus
         """
 
-        self.dsi['bar'] = np.full(len(self.ukeys), np.nan)
-        self.pd['bar'] = np.full(len(self.ukeys), np.nan)
-        date = None
+        self.ns['dsi/bar'] = np.full(len(self.ukeys), np.nan)
         for session in self.sessions:
 
             #
@@ -325,33 +200,29 @@ class DirectionSectivityAnalysis(
                     vectors[rowIndex, 0] = np.mean(amplitudes)
                     vectors[rowIndex, 1] = np.deg2rad(orientation)
 
-                # Compute the coordinates of the polar plot vertices
-                vertices = np.vstack([
-                    vectors[:, 0] * np.cos(vectors[:, 1]),
-                    vectors[:, 0] * np.sin(vectors[:, 1])
-                ]).T
+                #
+                if method == 'vector-sum':
 
-                # Compute direction selectivity index
-                a, b = vertices.sum(0) / vectors[:, 0].sum()
-                self.dsi['bar'][self.iUnit] = np.sqrt(np.power(a, 2) + np.power(b, 2))
-                self.pd['bar'][self.iUnit] = np.arctan2(b, a) % (2 * np.pi)
+                    # Compute the coordinates of the polar plot vertices
+                    vertices = np.vstack([
+                        vectors[:, 0] * np.cos(vectors[:, 1]),
+                        vectors[:, 0] * np.sin(vectors[:, 1])
+                    ]).T
 
+                    # Compute direction selectivity index
+                    a, b = vertices.sum(0) / vectors[:, 0].sum()
+                    dsi = np.sqrt(np.power(a, 2) + np.power(b, 2))
+                    # preferredDirection = np.arctan2(b, a) % (2 * np.pi)
+                
+                #
+                elif method == 'ratio':
+                    
+                    # TODO: Project vectors onto the horizontal axis
+                    # I think the formula is cos(theta) * (a.b / |b|)
+                    dsi = np.nan
 
-        return
-
-    def run(
-        self,
-        ):
-        """
-        """
-
-        self.loadNamespace()
-        self.computeNullPeths()
-        self.fitNullPeths()
-        self.measureDirectionSelectivityForMovingBars()
-        self.measureDirectionSelectivityForProbes()
-        self.measureDirectionSelectivityForSaccades()
-        self.saveNamespace()
+                #
+                self.nm['dsi/bar'][self.iUnit] = dsi
 
         return
 
@@ -359,88 +230,88 @@ class DirectionSectivityAnalysis(
         self,
         threshold=0.3,
         nBins=50,
+        windowIndex=5,
         figsize=(4, 5),
         ):
         """
         """
 
         #
-        fig, grid = plt.subplots(nrows=3, sharex=True)
-        mi = self.mi['real'][:, 5, 0] / self.model['params1'][:, 0]
-        modulated = self.p['real'][:, 0] < 0.05
-        for i, ev in enumerate(['bar', 'probe', 'saccade']):
-            samples = (
-                mi[np.vstack([self.filter, modulated, self.dsi[ev] >= threshold]).all(0)],
-                mi[np.vstack([self.filter, modulated, self.dsi[ev] <  threshold]).all(0)],
-            )
-            counts, edges, patches = grid[i].hist(
-                samples,
-                range=(-3, 3),
-                bins=nBins,
-                histtype='barstacked'
-            )
-            for patch in patches[0]:
-                patch.set_facecolor('k')
-                patch.set_edgecolor('k')
-            for patch in patches[1]:
-                patch.set_facecolor('w')
-                patch.set_edgecolor('k')
+        fig, ax = plt.subplots()
+        mi = self.ns[f'mi/pref/real'][:, windowIndex, 0]
+        ds = np.abs(self.ns[f'dsi/probe']) >= threshold
+        samples = (
+            mi[np.invert(ds)],
+            mi[ds]
+        )
+        counts, edges, patches = ax.hist(
+            samples,
+            range=(-3, 3),
+            bins=nBins,
+            histtype='barstacked'
+        )
+        for patch in patches[0]:
+            patch.set_facecolor('k')
+            patch.set_edgecolor('k')
+        for patch in patches[1]:
+            patch.set_facecolor('w')
+            patch.set_edgecolor('k')
 
         #
-        titles = (
-            'Moving bars',
-            'Probe',
-            'Saccade'
-        )
-        for i, ax in enumerate(grid):
-            ax.set_ylabel('N units')
-            ax.set_title(titles[i], fontsize=10)
-        grid[-1].set_xlabel('Modualtion index (MI)')
-        grid[0].legend([r'$DSI\geq 0.3$', r'$DSI<0.3$'])
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, grid
-
-    def scatterDirectionSelectivityIndices(
-        self,
-        events=('probe', 'saccade'),
-        figsize=(4, 4),
-        ):
-        """
-        """
-
-        ev1, ev2 = events
-        fig, ax = plt.subplots()
-        data = {
-            events[0]: list(),
-            events[1]: list()
-        }
-        for iUnit in range(len(self.ukeys)):
-            if self.filter[iUnit] == False:
-                continue
-            for ev in events:
-                xRad = self.pd[ev][iUnit]
-                xSigned = -1 if xRad > 1.5 else +1
-                xNorm = xSigned * self.dsi[ev][iUnit]
-                data[ev].append(xNorm)
-
-        ax.scatter(
-            *data.values(),
-            marker='.',
-            s=7,
-            color='k',
-            alpha=0.5,
-            clip_on=False
-        )
-        ax.set_xlim([-1, 1])
-        ax.set_ylim([-1, 1])
-        ax.set_aspect('equal')
-        ax.set_xlabel(r'$DSI_{Probe}\cdot PD_{Probe}$')
-        ax.set_ylabel(r'$DSI_{Saccade}\cdot PD_{Saccade}$')
+        ax.set_ylabel('N units')
+        ax.set_xlabel('Modualtion index (MI)')
+        ax.legend([fr'$DSI\geq{threshold}$', fr'$DSI<{threshold}$'])
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
         return fig, ax
+
+    def scatterModulationByPreference(
+        self,
+        alpha=0.5,
+        windowIndex=5,
+        figsize=(4, 4),
+        ):
+        """
+        """
+
+        fig, ax = plt.subplots()
+
+        #
+        significant = np.logical_or(
+            self.ns[f'p/pref/real'][:, windowIndex, 0] < alpha,
+            self.ns[f'p/null/real'][:, windowIndex, 0] < alpha
+        )
+        x = self.ns[f'mi/pref/real'][significant, windowIndex, 0]
+        y = self.ns[f'mi/null/real'][significant, windowIndex, 0]
+
+        #
+        colors = list()
+        for iUnit in range(len(self.ukeys)):
+            fPref = self.ns[f'p/pref/real'][iUnit, windowIndex, 0] < alpha
+            fNull = self.ns[f'p/pref/null'][iUnit, windowIndex, 0] < alpha
+            if fNull and fPref:
+                color = (1, 1, 0, 1)
+            elif fNull:
+                color = (0, 1, 0, 1)
+            else:
+                color = (1, 0, 0, 1)
+            colors.append(color)
+
+        #
+        ax.scatter(
+            x,
+            y,
+            marker='.',
+            s=10,
+            color=colors,
+            alpha=0.5,
+        )
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return

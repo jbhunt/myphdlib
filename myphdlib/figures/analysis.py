@@ -1,4 +1,5 @@
 import numpy as np
+import pathlib as pl
 from myphdlib.interface.factory import SessionFactory
 from scipy.optimize import curve_fit as fitCurve
 import h5py
@@ -80,6 +81,123 @@ class GaussianMixturesModel():
     def k(self, value):
         self._k = value
 
+class Namespace():
+    """
+    """
+
+    def __init__(self):
+        """
+        """
+
+        self._data = {
+
+            # Peri-probe time histograms
+            'ppths/pref/real/extra': None,
+            'ppths/pref/real/peri': None,
+            'ppths/pref/fictive/extra': None,
+            'ppths/pref/fictive/peri': None,
+            'ppths/null/real/extra': None,
+            'ppths/null/real/peri': None,
+            'ppths/null/fictive/extra': None,
+            'ppths/null/fictive/peri': None,
+            'ppths/pref/real/resampled': None,
+            'ppths/pref/fictive/resampled': None,
+            'ppths/null/real/resampled': None,
+            'ppths/null/fictive/resampled': None,
+
+            # Model (GMM) parameters
+            'params/pref/real/extra': None,
+            'params/pref/real/peri': None,
+            'params/pref/fictive/extra': None,
+            'params/pref/fictive/peri': None,
+            'params/null/real/extra': None,
+            'params/null/real/peri': None,
+            'params/null/fictive/extra': None,
+            'params/null/fictive/peri': None,
+
+            # Mean and standard deviation of baseline FR
+            'stats/pref/real/extra': None,
+            'stats/pref/real/peri': None,
+            'stats/pref/fictive/extra': None,
+            'stats/pref/fictive/peri': None,
+            'stats/null/real/extra': None,
+            'stats/null/real/peri': None,
+            'stats/null/fictive/extra': None,
+            'stats/null/fictive/peri': None,
+
+            # Peri-saccade time histograms
+            'psths/nasal/real': None,
+            'psths/temporal/real': None,
+            'psths/nasal/fictive': None,
+            'psths/temporal/fictive': None,
+
+            # Response terms
+            'terms/pref/real/extra': None,
+            'terms/pref/real/mixed': None,
+            'terms/pref/real/saccade': None,
+            'terms/pref/real/peri': None,
+            'terms/null/real/extra': None,
+            'terms/null/real/mixed': None,
+            'terms/null/real/saccade': None,
+            'terms/null/real/peri': None,
+            'terms/pref/fictive/extra': None,
+            'terms/pref/fictive/mixed': None,
+            'terms/pref/fictive/saccade': None,
+            'terms/pref/fictive/peri': None,
+            'terms/null/fictive/extra': None,
+            'terms/null/fictive/mixed': None,
+            'terms/null/fictive/saccade': None,
+            'terms/null/fictive/peri': None,
+
+            # Modulation index
+            'mi/pref/real': None,
+            'mi/pref/fictive': None,
+            'mi/null/real': None,
+            'mi/null/fictive': None,
+
+            # Boostrapped null samples
+            'samples/pref/real': None,
+            'samples/pref/fictive': None,
+            'samples/null/real': None,
+            'samples/null/fictive': None,
+
+            # p-values from boostrap
+            'p/pref/real': None,
+            'p/pref/fictive': None,
+            'p/null/real': None,
+            'p/null/fictive': None,
+
+            # Global variables
+            'globals/factor': None, # Scaling factor (standard deviation of baseline firing rate for preferred direction)
+            'globals/preference': None, # Preferred direction of motion
+            'globals/labels': None, # Response complexity categories
+            'globals/windows': None, # Peri-saccadic time windows
+
+        }
+
+        return
+
+    @property
+    def data(self):
+        return self._data
+
+    @property
+    def paths(self):
+        return list(self.data)
+
+    def __getitem__(self, name):
+        if name in self.data.keys():
+            return self.data[name]
+        else:
+            raise Exception(f'{name} is not available')
+
+    def __setitem__(self, name, value):
+        if name in self.data.keys():
+            self.data[name] = value
+        else:
+            raise Exception(f'{name} is not available')
+
+
 class AnalysisBase():
     """
     """
@@ -105,12 +223,122 @@ class AnalysisBase():
         self._unit = None
         if ukey is not None:
             self.ukey = ukey
-        if hdf is not None:
-            self._hdf = hdf
+        self._hdf = hdf
+        self.ns = Namespace()
 
         #
         self._loadSessions(experiments)
         self._loadUnitKeys()
+
+        # Globals
+        self.tProbe = None
+        self.tSaccade = None
+        self.windows = None
+        self.factor = None
+        self.filter = None
+        self.labels = None
+
+        return
+
+    def loadNamespace(
+        self,
+        ):
+        """
+        """
+
+        if pl.Path(self.hdf).exists() == False:
+            raise Exception('h5 file does not exist')
+
+        mask = self._intersectUnitKeys(self.ukeys)
+        with h5py.File(self.hdf, 'r') as stream:
+            for path in self.ns.paths:
+                if path in stream.keys():
+
+                    #
+                    ds = stream[path]
+                    data = np.array(ds)
+
+                    #
+                    if 'ppths' in pl.Path(path).parts and self.tProbe is None:
+                        if 't' in ds.attrs.keys():
+                            self.tProbe = ds.attrs['t']
+                    if 'psths' in pl.Path(path).parts and self.tSaccade is None:
+                        if 't' in ds.attrs.keys():
+                            self.tSaccade = ds.attrs['t']
+            
+                    # Assign global variables to attributes
+                    if 'globals' in pl.Path(path).parts:
+                        name = path.split('/')[-1]
+                        self.__setattr__(name, data)
+
+                    #
+                    else:
+                        if data.size == data.shape[0]:
+                            data = data.flatten()
+                        self.ns[path] = data[mask]
+
+        return
+
+    def saveNamespace(
+        self,
+        ):
+        """
+        """
+
+        if pl.Path(self.hdf).exists() == False:
+            raise Exception('h5 file does not exist')
+
+        mask = self._intersectUnitKeys(self.ukeys)
+        with h5py.File(self.hdf, 'a') as stream:
+            for path in self.ns.paths:
+
+                #
+                data = self.ns[path]
+                if data is None:
+                    continue
+
+                #
+                if path in stream.keys():
+                    del stream[path]
+
+                #
+                if 'globals' in pl.Path(path).parts:
+                    
+                    #
+                    ds = stream.create_dataset(
+                        path,
+                        data.shape,
+                        data.dtype,
+                        data=data,
+                    )
+
+                else:
+
+                    # Re-shape into single column
+                    if len(data.shape) == 1:
+                        data = data.reshape(-1, 1)
+
+                    #
+                    filled = np.full([mask.size, *data.shape[1:]], np.nan)
+                    filled[mask] = data
+
+                    #
+                    ds = stream.create_dataset(
+                        path,
+                        filled.shape,
+                        filled.dtype,
+                        data=filled,
+                    )
+
+                    #
+                    metadata = None
+                    if 'ppths' in pl.Path(path).parts and self.tProbe is not None:
+                        metadata = {'t': self.tProbe}
+                    if 'psths' in pl.Path(path).parts and self.tSaccade is not None:
+                        metadata = {'t': self.tSaccade}
+                    if metadata is not None:
+                        for k, v in metadata.items():
+                            ds.attrs[k] = v
 
         return
 
@@ -239,23 +467,26 @@ class AnalysisBase():
                 if kwargs['maximumProbabilityValue'] is not None and probabilityValues[iUnit] > kwargs['maximumProbabilityValue']:
                     continue
 
-                #
+                # Exclude noise units (based on firing rate)
                 if kwargs['minimumFiringRate'] is not None and firingRate[iUnit] <  kwargs['minimumFiringRate']:
                     continue
 
-                # Check if unit was labeled as "good"
-                if qualityLabels[iUnit] == 0:
+                # Exclude incomplete units (based on presence ratio)
+                if kwargs['minimumPresenceRatio'] is not None and  presenceRatio[iUnit] < kwargs['minimumPresenceRatio']:
+                    continue
 
-                    #
-                    if kwargs['minimumPresenceRatio'] is not None and  presenceRatio[iUnit] < kwargs['minimumPresenceRatio']:
-                        continue
+                # Exclude incomplete units (based on amplitude cutoff)
+                if kwargs['maximumAmplitudeCutoff'] is not None and amplitudeCutoff[iUnit] > kwargs['maximumAmplitudeCutoff']:
+                    continue
 
-                    #
-                    if kwargs['maximumAmplitudeCutoff'] is not None and amplitudeCutoff[iUnit] > kwargs['maximumAmplitudeCutoff']:
-                        continue
+                # Exclude contaminated units
+                if kwargs['maximumIsiViolations'] is not None and isiViolations[iUnit] > kwargs['maximumIsiViolations']:
+                    continue
 
-                    if kwargs['maximumIsiViolations'] is not None and isiViolations[iUnit] > kwargs['maximumIsiViolations']:
-                        continue
+                # Exclude units Anna identified as noise or multi-unit
+                # NOTE: 0 codes noise units and 1 codes multi-units
+                if qualityLabels[iUnit] in (0, 1):
+                    continue
                 
                 #
                 ukey = (
@@ -382,37 +613,5 @@ class AnalysisBase():
 
         #
         self._hdf = filename
-
-        return
-
-    def createFilter(
-        self,
-        minimumResponseLatency=0.03,
-        minimumResponseAmplitude=5,
-        key='params'
-        ):
-        """
-        """
-
-        # Make sure the model data is loaded
-        try:
-            assert hasattr(self, 'model')
-            assert ('params' in self.model.keys() or 'params1' in self.model.keys())
-        except AssertionError:
-            raise Exception('Model data is not available') from None
-
-        # Create the filter
-        nUnits = len(self.ukeys)
-        self.filter = np.full(nUnits, False)
-        for iUnit in range(nUnits):
-            params = self.model[key][iUnit]
-            mask = np.invert(np.isnan(params))
-            if np.all(np.isnan(params)):
-                continue
-            abcd = params[mask]
-            abc, d = abcd[:-1], abcd[-1]
-            A, B, C = np.split(abc, 3)
-            if np.max(np.abs(A)) >= minimumResponseAmplitude and B.min() >= minimumResponseLatency:
-                self.filter[iUnit] = True
 
         return

@@ -90,28 +90,28 @@ class SpikesProcessingMixin(object):
         with open(clusterInfoFile, 'r') as stream:
             lines = stream.readlines()
         columnNames = lines[0].split('\t')
-        j = columnNames.index('KSLabel')
-        kilosortLabels = np.array([
-            row.split('\t')[j] for row in lines[1:]
-        ])
+        # j = columnNames.index('KSLabel')
+        # kilosortLabels = np.array([
+        #     row.split('\t')[j] for row in lines[1:]
+        # ])
         j = columnNames.index('group')
         userLabels = np.array([
             row.split('\t')[j] for row in lines[1:]
         ])
-        nUnits = len(kilosortLabels)
+        nUnits = len(userLabels)
         qualityLabels = list()
         for iUnit in range(nUnits):
             if userLabels[iUnit] == '':
-                ql = kilosortLabels[iUnit]
-            else:
-                ql = userLabels[iUnit]
+                ql = np.nan
+            elif userLabels[iUnit] == 'noise':
+                ql = 0
+            elif userLabels[iUnit] == 'mua':
+                ql = 1
+            elif userLabels[iUnit] == 'good':
+                ql = 2
             qualityLabels.append(ql)
         qualityLabels = np.array(qualityLabels)
-        qualityLabelsCoded = np.array([
-            0 if ql == 'mua' else 1
-                for ql in qualityLabels
-        ])
-        self.save('metrics/ql', qualityLabelsCoded)
+        self.save('metrics/ql', qualityLabels)
 
         return
 
