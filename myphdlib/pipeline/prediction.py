@@ -340,9 +340,17 @@ def predictSaccadeDirection(
     #
     for session in sessionsToAnalyze:
         for eye in ('left', 'right'):
+
+            #
             xTest, saccadeWaveforms, frameIndices = list(), list(), list()
             saccadeWaveformsUnlabeled = session.load(f'saccades/putative/{eye}/waveforms')
             saccadeIndicesUnlabeled = session.load(f'saccades/putative/{eye}/indices')
+
+            # Skip prediction if no saccades extracted
+            if saccadeWaveformsUnlabeled is None or saccadeWaveformsUnlabeled.shape[0] == 0:
+                continue
+
+            #
             for saccadeIndex, saccadeWaveform in enumerate(saccadeWaveformsUnlabeled):
                 x = np.diff(saccadeWaveform)
                 if np.isnan(x).sum() != 0:
