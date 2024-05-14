@@ -424,6 +424,10 @@ def predictSaccadeEpochs(
 
             # Load datasets
             saccadeLabels = session.load(f'saccades/predicted/{eye}/labels')
+            if saccadeLabels is None or len(saccadeLabels) == 0:
+                continue
+
+            #
             saccadeWaveforms = session.load(f'saccades/predicted/{eye}/waveforms')
             frameIndices = session.load(f'saccades/predicted/{eye}/indices').reshape(-1, 1)
             nSaccades = saccadeLabels.shape[0]
@@ -459,6 +463,8 @@ def predictSaccadeEpochs(
 
         #
         for eye in ('left', 'right'):
+            if saccadeEpochs[eye] is None:
+                continue
             session.save(f'saccades/predicted/{eye}/epochs', saccadeEpochs[eye])
 
     return
