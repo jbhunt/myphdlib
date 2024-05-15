@@ -48,24 +48,13 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
     
     def _loadEventDataForProbes(
         self,
-        perisaccadicWindow=(-0.05, 0.1),
-        probeDirection='pref'
         ):
         """
         """
 
-        gratingMotion = self.preference[self.iUnit]
-        if probeDirection == 'null':
-            gratingMotion *= -1
-        trialIndices = np.where(self.session.parseEvents(
-            eventName='probe',
-            coincident=True,
-            eventDirection=gratingMotion,
-            coincidenceWindow=perisaccadicWindow,
-        ))[0]
         saccadeLabels = self.session.load('stimuli/dg/probe/dos')
 
-        return trialIndices, self.session.probeTimestamps, self.session.probeLatencies, saccadeLabels, self.session.gratingMotionDuringProbes
+        return self.session.probeTimestamps, self.session.probeLatencies, saccadeLabels, self.session.gratingMotionDuringProbes
 
     def _computeResponseTerms(
         self,
@@ -76,7 +65,6 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         binsize=0.01,
         smoothingKernelWidth=0.01,
         saccadeType='real',
-        probeDirection='pref',
         ):
         """
         """
@@ -95,15 +83,17 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             self.ukey = ukey
 
         # Compute peri-saccadic response
-        trialIndices, probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes(
-            perisaccadicWindow=perisaccadicWindow,
-            probeDirection=probeDirection
-        )
+        probeTimestamps, probeLatencies, saccadeLabels, gratingMotionDuringProbes = self._loadEventDataForProbes()
+        trialIndicesPerisaccadic = np.vstack([
+            probeLatencies >= perisaccadicWindow[0],
+            probeLatencies <= perisaccadicWindow[1],
+            gratingMotionDuringProbes == self.preference[self.iUnit]
+        ])
 
         # NOTE: This might fail with not enough spikes in the peri-saccadic window
         try:
             t_, rMixed = self.unit.kde(
-                probeTimestamps[trialIndices],
+                probeTimestamps[trialIndicesPerisaccadic],
                 responseWindow=responseWindow,
                 binsize=binsize,
                 sigma=smoothingKernelWidth
@@ -116,8 +106,8 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
 
         # Compute latency-shifted saccade response
         iterable = zip(
-            probeLatencies[trialIndices],
-            saccadeLabels[trialIndices]
+            probeLatencies[trialIndicesPerisaccadic],
+            saccadeLabels[trialIndicesPerisaccadic]
         )
         rSaccade = list()
         rBaseline = list()
@@ -267,7 +257,6 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
                         ukey=self.ukeys[self.iUnit],
                         responseWindow=responseWindow,
                         perisaccadicWindow=perisaccadicWindow,
-                        probeDirection=probeDirection
                     )
 
                     # Standardize the PETHs

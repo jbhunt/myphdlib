@@ -150,10 +150,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 bl = self.ns[f'stats/{probeDirection}/{saccadeType}/extra'][iUnit, 0]
 
                 # Load event data
-                trialIndicesPerisaccadic, probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes(
-                    perisaccadicWindow,
-                    probeDirection=probeDirection
-                )
+                probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes( )
 
                 # Extra-saccadic trial indices
                 trialIndicesExtrasaccadic = np.where(np.vstack([

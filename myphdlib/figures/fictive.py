@@ -100,7 +100,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
             
         return saccadeTimestamps, saccadeLatencies, saccadeLabels, gratingMotion
 
-    def _loadEventDataForProbes(self, perisaccadicWindow=(-0.2, 0.2)):
+    def _loadEventDataForProbes(self):
         """
         """
 
@@ -118,18 +118,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
             probeLatencies[iTrial] = probeTimestamps[iTrial] - saccadeTimestamps[iSaccade]
             saccadeLabels[iTrial] = gratingMotionDuringSaccades[iSaccade] * -1
 
-        #
-        if self.ukey is None:
-            gratingMotionMask = np.full(gratingMotionDuringProbes.size, True)
-        else:
-            gratingMotionMask = gratingMotionDuringProbes == self.features['d'][self.iUnit]
-        trialIndices = np.where(np.vstack([
-            probeLatencies >= perisaccadicWindow[0],
-            probeLatencies <= perisaccadicWindow[1],
-            gratingMotionMask
-        ]).all(0))[0]
-
-        return trialIndices, probeTimestamps, probeLatencies, saccadeLabels, gratingMotionDuringProbes
+        return probeTimestamps, probeLatencies, saccadeLabels, gratingMotionDuringProbes
 
     def computeExtrasaccadicPeths(
         self,
@@ -262,9 +251,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         #
         for i in range(len(examples)):
             self.ukey = examples[i]
-            trialIndices_, probeTimestamps, probeLatencies, saccadeLabels, gratingMotionDuringProbes = self._loadEventDataForProbes(
-                perisaccadicWindow=perisaccadicWindow,
-            )
+            probeTimestamps, probeLatencies, saccadeLabels, gratingMotionDuringProbes = self._loadEventDataForProbes()
             t, M, spikeTimestamps = psth2(
                 probeTimestamps,
                 self.unit.timestamps,
