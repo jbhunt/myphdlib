@@ -38,14 +38,29 @@ def _runZetaTestForBatch(
                 eventTimestamps - tOffset,
                 dblUseMaxDur=np.max(responseWindowAdjusted),
                 tplRestrictRange=responseWindowAdjusted,
+                boolReturnRate=True,
             )
+            allLatencies = dZeta['vecLatencies']
 
+            # NOTE: Sometimes this returns a list
+            if type(allLatencies) == list:
+                allLatencies = np.array(allLatencies)
+
+            # NOTE: Sometimes this returns a 2D array (single column)
+            if type(allLatencies) == np.ndarray and len(allLatencies.shape) == 2:
+                allLatencies = np.ravel(allLatencies)
+
+            #
             if latencyMetric == 'zenith':
-                tLatency = dZeta['vecLatencies'][0].item() - tOffset
+                tLatency = round(allLatencies[0] - tOffset, 3)
             elif latencyMetric == 'peak':
-                tLatency = dZeta['vecLatencies'][2].item() - tOffset
+                tLatency = round(allLatencies[2] - tOffset, 3)
+            elif latencyMetric == 'onset':
+                tLatency = round(allLatencies[3] - tOffset, 3)
             else:
                 tLatency = np.nan
+        
+        #
         result[i, :] = np.array([unit.index, p, tLatency])
 
     return result
@@ -56,10 +71,11 @@ class ActivityProcessingMixin(object):
 
     def _runZetaTests(
         self,
-        responseWindow=(-0.2, 0.5),
+        peristimulusWindow=(0, 1),
+        perisaccadicWindow=(-1, 1),
         parallelize=True,
         nUnitsPerBatch=10,
-        latencyMetric='peak',
+        latencyMetric='onset',
         minimumSpikeCount=100,
         overwrite=False
         ):
@@ -69,14 +85,20 @@ class ActivityProcessingMixin(object):
         eventNames = (
             'probe',
             'probe',
-            'saccade',
-            'saccade',
+            # 'saccade',
+            # 'saccade',
         )
         eventDirections = (
             'left',
             'right',
-            'nasal',
-            'temporal'
+            # 'nasal',
+            # 'temporal'
+        )
+        responseWindows = (
+            peristimulusWindow,
+            peristimulusWindow,
+            # perisaccadicWindow,
+            # perisaccadicWindow,
         )
 
         #
@@ -92,20 +114,20 @@ class ActivityProcessingMixin(object):
         eventTimestamps = (
             self.probeTimestamps[self.filterProbes(trialType='es', probeDirections=(-1,))],
             self.probeTimestamps[self.filterProbes(trialType='es', probeDirections=(+1,))],
-            self.saccadeTimestamps[self.saccadeLabels ==  1, 0],
-            self.saccadeTimestamps[self.saccadeLabels == -1, 0]
+            # self.saccadeTimestamps[self.saccadeLabels ==  1, 0],
+            # self.saccadeTimestamps[self.saccadeLabels == -1, 0]
         )
 
         #
-        for ev, n, d in zip(eventTimestamps, eventNames, eventDirections):
+        for ev, n, d, w in zip(eventTimestamps, eventNames, eventDirections, responseWindows):
 
             # Check if dataset already exists
             if self.hasDataset(f'zeta/{n}/{d}/p') and overwrite == False:
-                self.log(f'Skipping ZETA test for activity related to {n}s (direction={d}, window=[{responseWindow[0]}, {responseWindow[1]}] sec)', level='info')
+                self.log(f'Skipping ZETA test for activity related to {n}s (direction={d}, window=[{w[0]}, {w[1]}] sec)', level='info')
                 continue
 
             #
-            self.log(f'Running ZETA test for activity related to {n}s (direction={d}, window=[{responseWindow[0]}, {responseWindow[1]}] sec)', level='info')
+            self.log(f'Running ZETA test for activity related to {n}s (direction={d}, window=[{w[0]}, {w[1]}] sec)', level='info')
 
             # Create batches of units
             batches = [
@@ -119,7 +141,7 @@ class ActivityProcessingMixin(object):
                 results = Parallel(n_jobs=-1)(delayed(_runZetaTestForBatch)(
                     batch,
                     ev,
-                    responseWindow,
+                    w,
                     latencyMetric,
                     minimumSpikeCount,
                     iBatch,
@@ -128,6 +150,19 @@ class ActivityProcessingMixin(object):
                         for iBatch, batch in enumerate(batches)
                 )
 
+                # TODO: Implement multiprocessing parallel processing
+                # args = list()
+                # for iBatch in range(len(batches)):
+                #     args.append((
+                #         batches[iBatch],
+                #         ev,
+                #         w,
+                #         latencyMetric,
+                #         minimumSpikeCount,
+                #         iBatch,
+                #         nBatches
+                #     ))
+
             # Serial processing
             else:
                 results = list()
@@ -135,7 +170,7 @@ class ActivityProcessingMixin(object):
                     result = _runZetaTestForBatch(
                         batch,
                         ev,
-                        responseWindow=responseWindow,
+                        responseWindow=w,
                         latencyMetric=latencyMetric,
                         minimumSpikeCount=minimumSpikeCount,
                         iBatch=iBatch,
@@ -159,12 +194,19 @@ class ActivityProcessingMixin(object):
         zeta=False,
         redo=False,
         parallelize=True,
+        perisaccadicWindow=(-1, 1),
+        peristimulusWindow=(0, 1),
         ):
         """
         """
 
         if zeta:
             if self.hasDataset('zeta/probe/left/p') == False or redo:
-                self._runZetaTests(overwrite=True, parallelize=parallelize)
+                self._runZetaTests(
+                    overwrite=True,
+                    parallelize=parallelize,
+                    perisaccadicWindow=perisaccadicWindow,
+                    peristimulusWindow=peristimulusWindow
+                )
 
         return

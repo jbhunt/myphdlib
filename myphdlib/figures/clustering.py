@@ -423,13 +423,16 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             self.ukey = ukey
 
             #
-            yRaw = self.peths['standard'][self.iUnit]
-            gmm = GaussianMixturesModel(k=int(self.model['k'][self.iUnit]))
-            params = self.model['params'][self.iUnit][np.invert(np.isnan(self.model['params'][self.iUnit]))]
+            yRaw = self.ns[f'ppths/pref/real/extra'][self.iUnit]
+            params = self.ns[f'params/pref/real/extra'][self.iUnit]
+            abcd = np.delete(params, np.isnan(params))
+            A, B, C = np.split(abcd[:-1], 3)
+            d = abcd[-1]
             paramsOrdered = np.concatenate([
-                np.array([params[-1],]),
-                params[:-1]
+                abcd[-1],
+                np.array([d,])
             ])
+            gmm = GaussianMixturesModel(k=A.size)
             gmm._popt = paramsOrdered
             yFit = gmm.predict(self.tProbe)
 
@@ -437,8 +440,6 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             axs[i].plot(self.tProbe, yRaw, color='k', alpha=0.3)
 
             #
-            A, B, C = np.split(params[:-1], 3)
-            d = params[-1]
             for ii in range(gmm.k):
                 t = np.linspace(-15 * C[ii], 15 * C[ii], 100) + B[ii]
                 yComponent = g(t, A[ii], B[ii], C[ii], d)
@@ -506,12 +507,10 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         """
 
         #
-        mask = np.logical_and(
-            np.invert(np.isnan(self.model['labels'])),
-            self.filter
-        )
+        labels = self.ns['globals/labels']
+        include = np.invert(np.isnan(labels))
         labelCounts = np.array([
-            np.sum(self.model['labels'][mask] == l)
+            np.sum(labels[include] == l)
                 for l in (1, 2, 3, -1)
         ])
         fig, axs = plt.subplots(
@@ -521,7 +520,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         )
 
         #
-        peths = self.peths[form][mask]
+        peths = self.ns[f'ppths/pref/real/extra'][include]
         latency = np.array([np.argmax(np.abs(y)) for y in peths])
         pethsReverseLatencySorted = peths[np.argsort(latency)[::-1]]
 
@@ -530,7 +529,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         for i, label in enumerate([1, 2, 3, -1]):
 
             #
-            maskByLabel = self.model['labels'][mask] == label
+            maskByLabel = labels[include] == label
 
             # Plot unsorted PETHs
             stop = start + maskByLabel.sum()
@@ -564,7 +563,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             xlim = axs[i, 1].get_xlim()
             x = xlim[0] - 0.05
             ukeysByLabel = [ukey
-                for ukey, flag in zip(self.ukeys, np.vstack([self.filter, self.model['labels'] == label]).all(0))
+                for ukey, flag in zip(self.ukeys, labels == label)
                     if flag
             ]
             for y, ukey in enumerate(ukeysByLabel):
@@ -595,93 +594,72 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         return fig, axs
 
-    def plotAmplitudeByComplexity(
+    def scatterAmplitudeByComplexity(
         self,
-        nBins=20,
-        levels=(5, 15, 25),
-        figsize=(3.5, 3),
-        cmap='Spectral_r'
         ):
         """
         """
 
-        fig, ax = plt.subplots(subplot_kw=dict(box_aspect=1))
-        complexity = np.abs(self.peths['normal']).sum(1) / (self.peths['normal'].shape[1])
-        amplitude = self.model['params'][:, 0]
-        H, x, y = np.histogram2d(
-            complexity[self.filter],
-            amplitude[self.filter],
-            range=np.array([[0, 0.5],[0, 200]]),
-            bins=nBins
+        #
+        amplitude = list()
+        pethsNormalized = list()
+        for iUnit in range(len(self.ukeys)):
+            peth = self.ns[f'ppths/pref/real/extra'][iUnit]
+            if np.isnan(peth).all():
+                continue
+            a = np.abs(peth).max()
+            amplitude.append(a)
+            pethNormalized = peth / a
+            pethsNormalized.append(pethNormalized)
+        pethsNormalized = np.array(pethsNormalized)
+        complexity = np.abs(pethsNormalized.sum(1)) / (pethsNormalized.shape[1])
+        amplitude = np.array(amplitude)
+
+        #
+        fig, ax = plt.subplots()
+        ax.scatter(
+            complexity,
+            amplitude,
+            marker='.',
+            color='k',
+            s=10,
+            alpha=0.5
         )
-        Z = gaussianFilter(H.T, sigma=0.55)
-        xc = x[:-1] + ((x[1] - x[0]) / 2)
-        yc = y[:-1] + ((y[1] - y[0]) / 2)
-        X, Y = np.meshgrid(xc, yc)
-        ax.pcolor(X, Y, Z, alpha=0.7, ec='none', shading='nearest', cmap=cmap)
-        ax.contour(X, Y, Z, levels=levels, colors='k')
-
-        #
-        for ukey in self.examples:
-            iUnit = self._indexUnitKey(ukey)
-            ax.scatter(complexity[iUnit], np.clip(abs(amplitude[iUnit]), 0, 200), marker='v', s=30, color='k', ec=None, zorder=3, clip_on=False)
-
-        #
-        ax.set_xlabel('Complexity index')
-        ax.set_ylabel('Response amplitude (z-scored)')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
 
         return fig, ax
-    
-    def plotPolarityByLatency(
+
+    def scatterPolarityByLatency(
         self,
-        nBins=20,
-        figsize=(3.5, 3),
-        levels=(10, 20, 30),
-        cmap='Spectral_r'
         ):
         """
         """
 
-        # Compute polarity index and extract latency
-        nUnits = len(self.ukeys)
-        polarity = self.peths['normal'].sum(1) / np.abs(self.peths['normal']).sum(1)
-        latency = np.full(nUnits, np.nan)
-        for iUnit in range(nUnits):
-            params = self.model['params'][iUnit]
-            mask = np.invert(np.isnan(params))
-            abcd = params[mask]
-            abc, d = abcd[:-1], abcd[-1]
-            A, B, C = np.split(abc, 3)
-            latency[iUnit] = B[0]
+        #
+        pethsNormalized = list()
+        latency = list()
+        for iUnit in range(len(self.ukeys)):
+            peth = self.ns[f'ppths/pref/real/extra'][iUnit]
+            if np.isnan(peth).all():
+                continue
+            pethNormalized = peth / np.abs(peth).max()
+            pethsNormalized.append(pethNormalized)
+            params = self.ns[f'params/pref/real/extra'][iUnit]
+            abcd = np.delete(params, np.isnan(params))
+            A, B, C = np.split(abcd[:-1], 3)
+            latency.append(B[0])
+        pethsNormalized = np.array(pethsNormalized)
+        polarity = pethsNormalized.sum(1) / np.abs(pethsNormalized).sum(1)
+        latency = np.array(latency)
 
         #
-        fig, ax = plt.subplots(subplot_kw=dict(box_aspect=1))
-        H, x, y = np.histogram2d(
-            latency[self.filter],
-            polarity[self.filter],
-            range=np.array([[0, 0.5],[-1, 1]]),
-            bins=nBins
+        fig, ax = plt.subplots()
+        ax.scatter(
+            polarity,
+            latency,
+            marker='.',
+            color='k',
+            s=10,
+            alpha=0.5
         )
-        Z = gaussianFilter(H.T, sigma=0.55)
-        xc = x[:-1] + ((x[1] - x[0]) / 2)
-        yc = y[:-1] + ((y[1] - y[0]) / 2)
-        X, Y = np.meshgrid(xc, yc)
-        ax.pcolor(X, Y, Z, alpha=0.7, ec='none', shading='nearest', cmap=cmap)
-        ax.contour(X, Y, Z, levels=levels, colors='k', linestyles='-')
 
-        #
-        for ukey in self.examples:
-            iUnit = self._indexUnitKey(ukey)
-            ax.scatter(latency[iUnit], polarity[iUnit], marker='v', s=30, fc='k', ec=None, zorder=3)
-
-        #
-        ax.set_xlabel('Latency from probe to response (s)')
-        ax.set_ylabel('Polarity index')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, ax
+        return
