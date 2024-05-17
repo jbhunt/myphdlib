@@ -36,27 +36,6 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         """
 
         super().__init__(**kwargs)
-        self.peths = {
-            'raw': None,
-            'normal': None,
-            'standard': None,
-        }
-        self.model = {
-            'params': None,
-            'labels': None,
-            'peaks': None,
-            'fits': None,
-            'rss': None,
-            'k': None
-        }
-        self.features = {
-            'a': None,
-            'd': None,
-            'm': None,
-            's': None,
-        }
-        self.tProbe = None
-        self.filter = None
 
         #
         self.examples = (
@@ -68,109 +47,15 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         return
 
-    def saveNamespace(
-        self,
-        ):
-        """
-        """
-
-        if pl.Path(self.hdf).exists() == False:
-            raise Exception('Data store does not exist')
-
-        #
-        d = {
-            'clustering/peths/raw': self.peths['raw'],
-            'clustering/peths/normal': self.peths['normal'],
-            'clustering/peths/standard': self.peths['standard'],
-            'clustering/model/params': self.model['params'],
-            'clustering/model/labels': self.model['labels'],
-            'clustering/model/rss': self.model['rss'],
-            'clustering/model/fits': self.model['fits'],
-            'clustering/model/k': self.model['k'],
-            'clustering/model/peaks': self.model['peaks'],
-            'clustering/features/a': self.features['a'],
-            'clustering/features/d': self.features['d'],
-            'clustering/features/m': self.features['m'],
-            'clustering/features/s': self.features['s'],
-            'clustering/filter': self.filter,
-        }
-
-        #
-        mask = self._intersectUnitKeys(self.ukeys)
-
-        #
-        with h5py.File(self.hdf, 'a') as stream:
-            for k, v in d.items():
-                if v is None:
-                    continue
-                nCols = 1 if len(v.shape) == 1 else v.shape[1]
-                data = np.full([mask.size, nCols], np.nan)
-                data[mask, :] = v.reshape(-1, nCols)
-                if k in stream:
-                    del stream[k]
-                ds = stream.create_dataset(
-                    k,
-                    data.shape,
-                    data.dtype,
-                    data=data
-                )
-
-                # Save the bin centers for all PETH datasets
-                if 'peths' in pl.Path(k).parts:
-                    ds.attrs['t'] = self.tProbe
-
-        return
-
-    def loadNamespace(
-        self,
-        ):
-        """
-        """
-
-        d = {
-            'clustering/peths/raw': (self.peths, 'raw'),
-            'clustering/peths/normal': (self.peths, 'normal'),
-            'clustering/peths/standard': (self.peths, 'standard'),
-            'clustering/model/params': (self.model, 'params'),
-            'clustering/model/labels': (self.model, 'labels'),
-            'clustering/model/rss': (self.model, 'rss'),
-            'clustering/model/k': (self.model, 'k'),
-            'clustering/model/peaks': (self.model, 'peaks'),
-            'clustering/features/a': (self.features, 'a'),
-            'clustering/features/d': (self.features, 'd'),
-            'clustering/features/m': (self.features, 'm'),
-            'clustering/features/s': (self.features, 's'),
-            'clustering/filter': ('filter', None),
-        }
-
-        with h5py.File(self.hdf, 'r') as stream:
-            for path, (attr, key) in d.items():
-                parts = path.split('/')
-                if path in stream:
-                    ds = stream[path]
-                    if 't' in ds.attrs.keys() and self.tProbe is None:
-                        self.tProbe = ds.attrs['t']
-                    value = np.array(ds)
-                    if 'filter' in parts:
-                        value = value.astype(bool)
-                    if len(value.shape) == 2 and value.shape[-1] == 1:
-                        value = value.flatten()
-                    if key is None:
-                        setattr(self, attr, value)
-                    else:
-                        attr[key] = value
-
-        return
-
     def computeExtrasaccadicPeths(
         self,
-        preferred=True,
         responseWindow=(-0.2, 0.5),
         baselineWindow=(-0.2, 0),
         standardizationWindow=(-20, -10),
         binsize=0.01,
         smoothingKernelWidth=0.01,
         perisaccadicWindow=(-0.1, 0.1),
+        saccadeType='real',
         ):
         """
         """
@@ -185,10 +70,14 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         #
         nUnits = len(self.ukeys)
-        for k in self.features.keys():
-            self.features[k] = np.full(nUnits, np.nan)
-        for k in self.peths.keys():
-            self.peths[k] = np.full([nUnits, nBins], np.nan)
+
+        #
+        for motionDirection in ('pref', 'null'):
+            self.ns[f'ppths/{motionDirection}/{saccadeType}/extra'] = np.full([nUnits, nBins], np.nan)
+            self.ns[f'stats/{motionDirection}/{saccadeType}/extra'] = np.full([nUnits, 2], np.nan)
+        self.ns[f'globals/factor'] = np.full(nUnits, np.nan)
+        self.ns[f'globals/preference'] = np.full(nUnits, np.nan)
+
         for iUnit, ukey in enumerate(self.ukeys):
 
             #
@@ -196,15 +85,15 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             print(f'Working on {iUnit + 1} out of {nUnits} units', end=end)
             self.ukey = ukey # NOTE: Very important
 
-            # Initialize feature set
-            y = np.full(nBins, np.nan)
-            a = None # Amplitude
-            d = None # Probe direction
-            m = None # Mean FR
-            s = None # Standard deviation
+            #
+            features = {
+                'ppths': np.full([2, nBins], np.nan),
+                'stats': np.full([2, 2], np.nan),
+                'amplitude': np.full(2, np.nan),
+            }
 
             #
-            for gratingMotion in (-1, 1):
+            for i, gratingMotion in enumerate([-1, 1]):
 
                 # Select just the extra-saccadic trials
                 trialIndices = np.where(np.vstack([
@@ -216,7 +105,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 ]).all(0))[0]
 
                 # Compute firing rate
-                t, y_ = self.unit.kde(
+                t, fr = self.unit.kde(
                     self.session.probeTimestamps[trialIndices],
                     responseWindow=responseWindow,
                     binsize=binsize,
@@ -230,7 +119,6 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                     binsize=binsize,
                     sigma=smoothingKernelWidth
                 )
-                m_ = bl1.mean()
 
                 # Estimate standard deviation of firing rate
                 t, bl2 = self.unit.kde(
@@ -239,44 +127,29 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                     binsize=binsize,
                     sigma=smoothingKernelWidth
                 )
-                s_ = bl2.std()
 
-                # Compute new features
-                a_ = np.abs(y_[self.tProbe > 0] - m_).max()
-                d_ = gratingMotion
-
-                # Override current feature set if amplitude is greater
-                if a is None or (a_ > a and preferred) or (a_ < a and preferred == False):
-                    y = y_
-                    a = a_
-                    d = d_
-                    m = m_
-                    s = s_
+                #
+                features['ppths'][i] = np.around(fr, 3)
+                features['stats'][i] = np.around(np.array([bl1.mean(), bl2.std()]), 3)
+                features['amplitude'][i] = np.abs(fr[self.tProbe > 0] - bl1.mean()).max()
 
             #
-            self.features['a'][iUnit] = a
-            self.features['d'][iUnit] = d
-            self.features['m'][iUnit] = m
-            self.features['s'][iUnit] = s if s != 0 else np.nan
-
-            # Store the raw PSTH
-            self.peths['raw'][iUnit] = y
-
-            # Normalize
-            self.peths['normal'][iUnit] = (y - m) / a
-
-            # Standardize
-            if np.isnan(s):
-                self.peths['standard'][iUnit] = np.full(y.size, np.nan)
-            else:
-                self.peths['standard'][iUnit] = (y - m) / s
+            iPref = np.argmax(features['amplitude'])
+            iNull = 0 if iPref == 1 else 1
+            self.ns[f'globals/preference'][iUnit] = np.array([-1, 1])[iPref]
+            self.ns[f'globals/factor'][iUnit] = features['stats'][iPref, 1]
+            for motionDirection, iRow in zip(['pref', 'null'], [iPref, iNull]):
+                z = (features['ppths'][iRow] - features['stats'][iRow, 0]) / self.ns[f'globals/factor'][iUnit]
+                self.ns[f'ppths/{motionDirection}/{saccadeType}/extra'][iUnit] = z
+                self.ns[f'stats/{motionDirection}/{saccadeType}/extra'][iUnit] = features['stats'][iRow]
 
         return
 
     def fitExtrasaccadicPeths(
         self,
         kmax=5,
-        key='params',
+        saccadeType='real',
+        probeCondition='extra',
         **kwargs_
         ):
         """
@@ -302,191 +175,67 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         kwargs.update(kwargs_)
 
         #
-        nBins = self.tProbe.size
         nUnits = len(self.ukeys)
-        self.model['k'] = np.full(nUnits, np.nan)
-        self.model['rss'] = np.full(nUnits, np.nan)
-        self.model['fits'] = np.full([nUnits, nBins], np.nan)
-        self.model[key] = np.full([nUnits, int(3 * kmax + 1)], np.nan)
+
+        #
+        for motionDirection in ('pref', 'null'):
+            self.ns[f'params/{motionDirection}/{saccadeType}/{probeCondition}'] = np.full([nUnits, int(3 * kmax + 1)], np.nan)
 
         #
         for iUnit in range(nUnits):
 
+            #
             end = None if iUnit + 1 == nUnits else '\r'
             print(f'Fitting GMM for unit {iUnit + 1} out of {nUnits} units', end=end)
 
             #
-            yNormal = self.peths['normal'][iUnit]
-            yStandard = self.peths['standard'][iUnit]
+            for motionDirection in ('pref', 'null'):
 
-            #
-            peakIndices = list()
-            peakProminences = list()
-            for coef in (-1, 1):
-                peakIndices_, peakProperties = findPeaks(
-                    coef * yNormal,
-                    height=kwargs['minimumPeakHeight'],
-                    prominence=kwargs['minimumPeakProminence']
-                )
-                if peakIndices_.size == 0:
-                    continue
-                for iPeak in range(peakIndices_.size):
+                #
+                yStandard = self.ns[f'ppths/{motionDirection}/{saccadeType}/{probeCondition}'][iUnit]
+                yNormal = yStandard / np.max(np.abs(yStandard))
 
-                    # Exclude peaks detected before the stimulus  onset
-                    if self.tProbe[peakIndices_[iPeak]] <= 0:
+                #
+                peakIndices = list()
+                peakProminences = list()
+                for coef in (-1, 1):
+                    peakIndices_, peakProperties = findPeaks(
+                        coef * yNormal,
+                        height=kwargs['minimumPeakHeight'],
+                        prominence=kwargs['minimumPeakProminence']
+                    )
+                    if peakIndices_.size == 0:
                         continue
+                    for iPeak in range(peakIndices_.size):
 
-                    #
-                    peakIndices.append(peakIndices_[iPeak])
-                    peakProminences.append(peakProperties['prominences'][iPeak])
+                        # Exclude peaks detected before the stimulus  onset
+                        if self.tProbe[peakIndices_[iPeak]] <= 0:
+                            continue
 
-            # 
-            peakIndices = np.array(peakIndices)
-            if peakIndices.size == 0:
-                continue
-            peakProminences = np.array(peakProminences)
-            peakAmplitudes = yStandard[peakIndices]
-            peakLatencies = self.tProbe[peakIndices]
+                        #
+                        peakIndices.append(peakIndices_[iPeak])
+                        peakProminences.append(peakProperties['prominences'][iPeak])
 
-            # Use only the k largest peaks
-            if peakIndices.size > kmax:
-                index = np.argsort(np.abs(peakAmplitudes))[::-1]
-                peakIndices = peakIndices[index][:kmax]
-                peakProminences = peakProminences[index][:kmax]
-                peakAmplitudes = peakAmplitudes[index][:kmax]
-                peakLatencies = peakLatencies[index][:kmax]
-            
-            #
-            k = peakIndices.size
-            self.model['k'][iUnit] = k
+                # 
+                peakIndices = np.array(peakIndices)
+                if peakIndices.size == 0:
+                    continue
+                peakProminences = np.array(peakProminences)
+                peakAmplitudes = yStandard[peakIndices]
+                peakLatencies = self.tProbe[peakIndices]
 
-            # Initialize the parameter space
-            p0 = np.concatenate([
-                np.array([0]),
-                peakAmplitudes,
-                peakLatencies,
-                np.full(k, kwargs['initialPeakWidth'])
-            ])
-            bounds = np.vstack([
-                np.array([[
-                    -1 * kwargs['maximumBaselineShift'],
-                    kwargs['maximumBaselineShift']
-                ]]),
-                np.vstack([
-                    peakAmplitudes - kwargs['maximumAmplitudeShift'],
-                    peakAmplitudes + kwargs['maximumAmplitudeShift']
-                ]).T,
-                np.vstack([
-                    peakLatencies - kwargs['maximumLatencyShift'],
-                    peakLatencies + kwargs['maximumLatencyShift']
-                ]).T,
-                np.repeat([[
-                    kwargs['minimumPeakWidth'],
-                    kwargs['maximumPeakWidth']
-                ]], k, axis=0)
-            ]).T
-
-            # Fit the GMM and compute the residual sum of squares (rss)
-            gmm = GaussianMixturesModel(k)
-            gmm.fit(
-                self.tProbe,
-                yStandard,
-                p0=p0,
-                bounds=bounds
-            )
-            yFit = gmm.predict(self.tProbe)
-            self.model['rss'][iUnit] = np.sum(np.power(yFit - yStandard, 2)) / np.sum(np.power(yStandard, 2))
-            self.model['fits'][iUnit] = yFit
-
-            # Extract the parameters of the fit GMM
-            d, abc = gmm._popt[0], gmm._popt[1:]
-            A, B, C = np.split(abc, 3)
-            order = np.argsort(np.abs(A))[::-1] # Sort by amplitude
-            params = np.concatenate([
-                A[order],
-                B[order],
-                C[order],
-            ])
-            self.model[key][iUnit, :params.size] = params
-            self.model[key][iUnit, -1] = d
-
-        return
-
-    def fitExtrasaccadicPeths2(
-        self,
-        kmax=10,
-        tolerance=0.1,
-        maximumPeakCount=5,
-        minimumPeakHeight=0.5,
-        nPointsForEvaluation=1000,
-        **kwargs_,
-        ):
-        """
-        """
-
-        kwargs = {
-            'minimumPeakWidth': 0.001,
-            'maximumPeakWidth': 0.05,
-            'initialPeakWidth': 0.002,
-            'maximumBaselineShift': 5,
-        }
-        kwargs.update(kwargs_)
-
-        #
-        nUnits = len(self.ukeys)
-        nBins = self.tProbe.size
-        self.model['k'] = np.full(nUnits, np.nan)
-        self.model['rss'] = np.full(nUnits, np.nan)
-        self.model['params'] = np.full([nUnits, int(3 * kmax + 1)], np.nan)
-        self.model['fits'] = np.full([nUnits, nPointsForEvaluation], np.nan)
-        self.model['peaks'] = np.full([nUnits, maximumPeakCount], np.nan)
-        maximumPeakLatency = self.tProbe.max() + (self.tProbe[1] - self.tProbe[0]) / 2
-        minimumPeakLatency = self.tProbe.min() - (self.tProbe[1] - self.tProbe[0]) / 2
-
-        #
-        for iUnit in range(nUnits):
-
-            #
-            # if self.filter[iUnit] == False:
-            #     continue
-
-            end = None if iUnit + 1 == nUnits else '\r'
-            print(f'Fitting GMM for unit {iUnit + 1} out of {nUnits} units', end=end)
-
-            #
-            yStandard = self.peths['standard'][iUnit]
-            result = False
-
-            #
-            for k in range(1, kmax + 1, 1):
-
+                # Use only the k largest peaks
+                if peakIndices.size > kmax:
+                    index = np.argsort(np.abs(peakAmplitudes))[::-1]
+                    peakIndices = peakIndices[index][:kmax]
+                    peakProminences = peakProminences[index][:kmax]
+                    peakAmplitudes = peakAmplitudes[index][:kmax]
+                    peakLatencies = peakLatencies[index][:kmax]
+                
                 #
-                for th in np.linspace(0, np.abs(yStandard.max()), 30)[::-1]:
-                    peakIndices = list()
-                    for coef in (-1, 1):
-                        peakIndices_, peakProps = findPeaks(
-                            yStandard * coef,
-                            height=th
-                        )
-                        for peakIndex in peakIndices_:
-                            peakIndices.append(peakIndex)
-                    peakIndices = np.array(peakIndices)
-                    if peakIndices.size >= k:
-                        break
+                k = peakIndices.size
 
-                #
-                peakAmplitudes = np.interp(
-                    self.tProbe[peakIndices],
-                    self.tProbe,
-                    yStandard
-                )
-                amplitudeSortedIndex = np.argsort(peakAmplitudes)[::-1][:k]
-                peakAmplitudes = yStandard[peakIndices[amplitudeSortedIndex]]
-                peakLatencies = self.tProbe[peakIndices[amplitudeSortedIndex]]
-                peakIndices = peakIndices[amplitudeSortedIndex] # NOTE: Important not to overwrite this until at least here
-
-                #
-                # initialPeakLatencies = np.linspace(0, maximumPeakLatency, k + 2)[1:-1]
+                # Initialize the parameter space
                 p0 = np.concatenate([
                     np.array([0]),
                     peakAmplitudes,
@@ -494,38 +243,32 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                     np.full(k, kwargs['initialPeakWidth'])
                 ])
                 bounds = np.vstack([
-                    np.array([-kwargs['maximumBaselineShift'], kwargs['maximumBaselineShift']]),
-                    np.repeat([[-1 * np.abs(yStandard).max(), np.abs(yStandard).max()]], k, axis=0),
-                    np.repeat([[minimumPeakLatency, maximumPeakLatency]], k, axis=0),
-                    np.repeat([[kwargs['minimumPeakWidth'], kwargs['maximumPeakWidth']]], k, axis=0)
+                    np.array([[
+                        -1 * kwargs['maximumBaselineShift'],
+                        kwargs['maximumBaselineShift']
+                    ]]),
+                    np.vstack([
+                        peakAmplitudes - kwargs['maximumAmplitudeShift'],
+                        peakAmplitudes + kwargs['maximumAmplitudeShift']
+                    ]).T,
+                    np.vstack([
+                        peakLatencies - kwargs['maximumLatencyShift'],
+                        peakLatencies + kwargs['maximumLatencyShift']
+                    ]).T,
+                    np.repeat([[
+                        kwargs['minimumPeakWidth'],
+                        kwargs['maximumPeakWidth']
+                    ]], k, axis=0)
                 ]).T
-                if p0.size != bounds.shape[1]:
-                    print('Warning: Wrong number of initial parameters')
-                    continue
-                gmm = GaussianMixturesModel(k=k)
-                gmm.fit(self.tProbe, yStandard, p0=p0, bounds=bounds)
-                yFit = gmm.predict(self.tProbe)
-                rss = np.sum(np.power(yFit - yStandard, 2)) / np.sum(np.power(yStandard, 2))
-                if rss <= tolerance:
-                    result = True
-                    break
 
-            #
-            if result:
-                self.model['k'][iUnit] = k
-                self.model['rss'][iUnit] = rss
-
-                # Locate peaks in the fit
-                t = np.linspace(minimumPeakLatency, maximumPeakLatency, nPointsForEvaluation)
-                yFit = gmm.predict(t)
-                self.model['fits'][iUnit] = yFit
-                peakIndices, peakProps = findPeaks(yFit, height=minimumPeakHeight)
-                if peakIndices.size > maximumPeakCount:
-                    peakAmplitudes = yFit[peakIndices]
-                    amplitudeSortedIndex = np.argsort(peakAmplitudes)[::-1][:maximumPeakCount]
-                    peakIndices = peakIndices[amplitudeSortedIndex]
-                if peakIndices.size != 0:
-                    self.model['peaks'][iUnit, :peakIndices.size] = t[peakIndices]
+                # Fit the GMM and compute the residual sum of squares (rss)
+                gmm = GaussianMixturesModel(k)
+                gmm.fit(
+                    self.tProbe,
+                    yStandard,
+                    p0=p0,
+                    bounds=bounds
+                )
 
                 # Extract the parameters of the fit GMM
                 d, abc = gmm._popt[0], gmm._popt[1:]
@@ -535,9 +278,9 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                     A[order],
                     B[order],
                     C[order],
+                    np.array([d,])
                 ])
-                self.model['params'][iUnit, :params.size] = params
-                self.model['params'][iUnit, -1] = d
+                self.ns[f'params/{motionDirection}/{saccadeType}/{probeCondition}'][iUnit, :params.size] = params
 
         return
 
@@ -548,25 +291,34 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         """
 
         nUnits = len(self.ukeys)
-        self.model['labels'] = np.full(nUnits, np.nan)
-        for i, y in enumerate(self.peths['normal']):
+        self.ns['globals/labels'] = np.full(nUnits, np.nan)
+        for i in range(nUnits):
+
+            #
+            y = self.ns[f'ppths/pref/real/extra'][i]
+
+            # Determine the number of components in the fit
+            params = self.ns[f'params/pref/real/extra'][i]
+            abcd = np.delete(params, np.isnan(params))
+            A, B, C = np.split(abcd[:-1], 3)
+            k = A.size
 
             # No peaks detected
-            if np.isnan(self.model['k'][i]):
-                self.model['labels'][i] = np.nan
+            if k == 0:
+                self.ns['globals/labels'][i] = np.nan
                 continue
 
             # Negative
             if y[np.argmax(np.abs(y))] < 0:
-                self.model['labels'][i] = -1
+                self.ns['globals/labels'][i] = -1
 
             # Positive (multiphasic)
-            elif self.model['k'][i] >= 3:
-                self.model['labels'][i] = 3
+            elif k >= 3:
+                self.ns['globals/labels'][i] = 3
 
             # Positive (Mono- or Biphasic)
             else:
-                self.model['labels'][i] = self.model['k'][i]
+                self.ns['globals/labels'][i] = k
 
         return
 
@@ -671,13 +423,16 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             self.ukey = ukey
 
             #
-            yRaw = self.peths['standard'][self.iUnit]
-            gmm = GaussianMixturesModel(k=int(self.model['k'][self.iUnit]))
-            params = self.model['params'][self.iUnit][np.invert(np.isnan(self.model['params'][self.iUnit]))]
+            yRaw = self.ns[f'ppths/pref/real/extra'][self.iUnit]
+            params = self.ns[f'params/pref/real/extra'][self.iUnit]
+            abcd = np.delete(params, np.isnan(params))
+            A, B, C = np.split(abcd[:-1], 3)
+            d = abcd[-1]
             paramsOrdered = np.concatenate([
-                np.array([params[-1],]),
-                params[:-1]
+                abcd[-1],
+                np.array([d,])
             ])
+            gmm = GaussianMixturesModel(k=A.size)
             gmm._popt = paramsOrdered
             yFit = gmm.predict(self.tProbe)
 
@@ -685,8 +440,6 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             axs[i].plot(self.tProbe, yRaw, color='k', alpha=0.3)
 
             #
-            A, B, C = np.split(params[:-1], 3)
-            d = params[-1]
             for ii in range(gmm.k):
                 t = np.linspace(-15 * C[ii], 15 * C[ii], 100) + B[ii]
                 yComponent = g(t, A[ii], B[ii], C[ii], d)
@@ -754,12 +507,10 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         """
 
         #
-        mask = np.logical_and(
-            np.invert(np.isnan(self.model['labels'])),
-            self.filter
-        )
+        labels = self.ns['globals/labels']
+        include = np.invert(np.isnan(labels))
         labelCounts = np.array([
-            np.sum(self.model['labels'][mask] == l)
+            np.sum(labels[include] == l)
                 for l in (1, 2, 3, -1)
         ])
         fig, axs = plt.subplots(
@@ -769,7 +520,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         )
 
         #
-        peths = self.peths[form][mask]
+        peths = self.ns[f'ppths/pref/real/extra'][include]
         latency = np.array([np.argmax(np.abs(y)) for y in peths])
         pethsReverseLatencySorted = peths[np.argsort(latency)[::-1]]
 
@@ -778,7 +529,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         for i, label in enumerate([1, 2, 3, -1]):
 
             #
-            maskByLabel = self.model['labels'][mask] == label
+            maskByLabel = labels[include] == label
 
             # Plot unsorted PETHs
             stop = start + maskByLabel.sum()
@@ -812,7 +563,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             xlim = axs[i, 1].get_xlim()
             x = xlim[0] - 0.05
             ukeysByLabel = [ukey
-                for ukey, flag in zip(self.ukeys, np.vstack([self.filter, self.model['labels'] == label]).all(0))
+                for ukey, flag in zip(self.ukeys, labels == label)
                     if flag
             ]
             for y, ukey in enumerate(ukeysByLabel):
@@ -843,93 +594,72 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         return fig, axs
 
-    def plotAmplitudeByComplexity(
+    def scatterAmplitudeByComplexity(
         self,
-        nBins=20,
-        levels=(5, 15, 25),
-        figsize=(3.5, 3),
-        cmap='Spectral_r'
         ):
         """
         """
 
-        fig, ax = plt.subplots(subplot_kw=dict(box_aspect=1))
-        complexity = np.abs(self.peths['normal']).sum(1) / (self.peths['normal'].shape[1])
-        amplitude = self.model['params'][:, 0]
-        H, x, y = np.histogram2d(
-            complexity[self.filter],
-            amplitude[self.filter],
-            range=np.array([[0, 0.5],[0, 200]]),
-            bins=nBins
+        #
+        amplitude = list()
+        pethsNormalized = list()
+        for iUnit in range(len(self.ukeys)):
+            peth = self.ns[f'ppths/pref/real/extra'][iUnit]
+            if np.isnan(peth).all():
+                continue
+            a = np.abs(peth).max()
+            amplitude.append(a)
+            pethNormalized = peth / a
+            pethsNormalized.append(pethNormalized)
+        pethsNormalized = np.array(pethsNormalized)
+        complexity = np.abs(pethsNormalized.sum(1)) / (pethsNormalized.shape[1])
+        amplitude = np.array(amplitude)
+
+        #
+        fig, ax = plt.subplots()
+        ax.scatter(
+            complexity,
+            amplitude,
+            marker='.',
+            color='k',
+            s=10,
+            alpha=0.5
         )
-        Z = gaussianFilter(H.T, sigma=0.55)
-        xc = x[:-1] + ((x[1] - x[0]) / 2)
-        yc = y[:-1] + ((y[1] - y[0]) / 2)
-        X, Y = np.meshgrid(xc, yc)
-        ax.pcolor(X, Y, Z, alpha=0.7, ec='none', shading='nearest', cmap=cmap)
-        ax.contour(X, Y, Z, levels=levels, colors='k')
-
-        #
-        for ukey in self.examples:
-            iUnit = self._indexUnitKey(ukey)
-            ax.scatter(complexity[iUnit], np.clip(abs(amplitude[iUnit]), 0, 200), marker='v', s=30, color='k', ec=None, zorder=3, clip_on=False)
-
-        #
-        ax.set_xlabel('Complexity index')
-        ax.set_ylabel('Response amplitude (z-scored)')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
 
         return fig, ax
-    
-    def plotPolarityByLatency(
+
+    def scatterPolarityByLatency(
         self,
-        nBins=20,
-        figsize=(3.5, 3),
-        levels=(10, 20, 30),
-        cmap='Spectral_r'
         ):
         """
         """
 
-        # Compute polarity index and extract latency
-        nUnits = len(self.ukeys)
-        polarity = self.peths['normal'].sum(1) / np.abs(self.peths['normal']).sum(1)
-        latency = np.full(nUnits, np.nan)
-        for iUnit in range(nUnits):
-            params = self.model['params'][iUnit]
-            mask = np.invert(np.isnan(params))
-            abcd = params[mask]
-            abc, d = abcd[:-1], abcd[-1]
-            A, B, C = np.split(abc, 3)
-            latency[iUnit] = B[0]
+        #
+        pethsNormalized = list()
+        latency = list()
+        for iUnit in range(len(self.ukeys)):
+            peth = self.ns[f'ppths/pref/real/extra'][iUnit]
+            if np.isnan(peth).all():
+                continue
+            pethNormalized = peth / np.abs(peth).max()
+            pethsNormalized.append(pethNormalized)
+            params = self.ns[f'params/pref/real/extra'][iUnit]
+            abcd = np.delete(params, np.isnan(params))
+            A, B, C = np.split(abcd[:-1], 3)
+            latency.append(B[0])
+        pethsNormalized = np.array(pethsNormalized)
+        polarity = pethsNormalized.sum(1) / np.abs(pethsNormalized).sum(1)
+        latency = np.array(latency)
 
         #
-        fig, ax = plt.subplots(subplot_kw=dict(box_aspect=1))
-        H, x, y = np.histogram2d(
-            latency[self.filter],
-            polarity[self.filter],
-            range=np.array([[0, 0.5],[-1, 1]]),
-            bins=nBins
+        fig, ax = plt.subplots()
+        ax.scatter(
+            polarity,
+            latency,
+            marker='.',
+            color='k',
+            s=10,
+            alpha=0.5
         )
-        Z = gaussianFilter(H.T, sigma=0.55)
-        xc = x[:-1] + ((x[1] - x[0]) / 2)
-        yc = y[:-1] + ((y[1] - y[0]) / 2)
-        X, Y = np.meshgrid(xc, yc)
-        ax.pcolor(X, Y, Z, alpha=0.7, ec='none', shading='nearest', cmap=cmap)
-        ax.contour(X, Y, Z, levels=levels, colors='k', linestyles='-')
 
-        #
-        for ukey in self.examples:
-            iUnit = self._indexUnitKey(ukey)
-            ax.scatter(latency[iUnit], polarity[iUnit], marker='v', s=30, fc='k', ec=None, zorder=3)
-
-        #
-        ax.set_xlabel('Latency from probe to response (s)')
-        ax.set_ylabel('Polarity index')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, ax
+        return
