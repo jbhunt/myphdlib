@@ -563,6 +563,11 @@ class EventsProcessingMixin(object):
             #
             saccadeEpochs = self.load(f'saccades/predicted/{eye}/epochs')
             saccadeIndices = self.load(f'saccades/predicted/{eye}/indices')
+
+            # Check if saccades are missing
+            if saccadeEpochs is None:
+                continue
+
             nSaccades = saccadeEpochs.shape[0]
             droppedFrames = self.load(f'frames/{eye}/dropped')
             nFramesRecorded = droppedFrames.size
