@@ -1,0 +1,391 @@
+from myphdlib.interface.session import SessionBase
+from myphdlib.pipeline.events import EventsProcessingMixin
+from myphdlib.pipeline.saccades import SaccadesProcessingMixin
+from myphdlib.general.labjack import filterPulsesFromPhotologicDevice
+from myphdlib.pipeline.prediction import PredictionProcessingMixin
+from myphdlib.pipeline.spikes import SpikesProcessingMixin
+import pathlib as pl
+import numpy as np
+import re
+
+class StimuliProcessingMixinDreadds2(
+    ):
+    """
+    """
+
+    def _calculatePulseIntervalTimestamps(
+        self, 
+        ):
+        """
+        Computes interval between pulses in the stimulus channel of the LabJack data!
+        """
+
+        #this if else clause will have to be edited to reflect hdf format
+        if self.hasDataset('labjack/matrix') == False:
+            raise Exception('Labjack data not extracted')
+        else:
+            labjackData = self.load('labjack/matrix')
+        #defining the labjack data should also be edited to pull from hdf
+        timestamps = labjackData[:, 0]
+        TTLdata = labjackData[:, 6]
+        filtered = filterPulsesFromPhotologicDevice(labjackData[:, 6],
+            minimumPulseWidthInSeconds=0.013)
+        iPulses = np.where(np.diff(filtered) > 0.5)[0]
+        iIntervals = np.where(np.diff(iPulses) > 16000)[0] #figure out threshold value 
+        iIntervals2 = iPulses[iIntervals]
+        pulseTimestamps = timestamps[iPulses]
+        intervalTimestamps = (timestamps[iIntervals2] + 3)
+        return pulseTimestamps, intervalTimestamps, iPulses
+
+    def _createMetadataFileList(self, pulseTimestamps, intervalTimestamps
+        ):
+        """
+        Creates chronological list of metadata files & asserts that the number of files equals the number of stimulus blocks
+        """
+        #need less hard coded way to enter mouse name and date
+        parentDir = self.home.joinpath('videos')
+
+        partialFileList = [
+            'driftingGratingMetadata-0.txt',
+            'driftingGratingMetadata-1.txt',
+            'fictiveSaccadeMetadata-0.pkl',
+            'driftingGratingMetadata-2.txt',
+            'driftingGratingMetadata-3.txt',
+            'fictiveSaccadeMetadata-1.pkl',
+            'driftingGratingMetadata-4.txt', 
+            'driftingGratingMetadata-5.txt',
+            'fictiveSaccadeMetadata-2.pkl', 
+            'driftingGratingMetadata-6.txt', 
+            'driftingGratingMetadata-7.txt',
+            'fictiveSaccadeMetadata-3.pkl',
+            'driftingGratingMetadata-8.txt',
+            'driftingGratingMetadata-9.txt',
+            'fictiveSaccadeMetadata-4.pkl'
+        ]
+
+
+        fileList = []
+        for f in partialFileList:
+            fileList.append(parentDir.joinpath(f))
+
+        # Quick check for file # mismatch w/ interval timestamps
+        assert len(fileList) == intervalTimestamps.shape[0] + 1
+
+        # pulseTimestampOffsets = np.diff(pulseTimestamps) <- for checking correctness in each combined event :)
+        pulseTimestampOffsets = np.diff(pulseTimestamps)
+        return fileList
+
+    
+    def _processDriftingGratingProtocol(
+        self,
+        file,
+        fileList,
+        eventIndex,
+        metadataHolder,
+        fileIndex,
+        pulseTimestamps,
+        intervalTimestamps
+        ):
+        """
+        """
+        with open(file, 'r') as stream:
+            lines = stream.readlines()
+        orientation = int(re.findall('\s\d*\s', lines[2]).pop().strip()) # TODO: Place this in the metadata holder
+        metadata = np.genfromtxt(file, skip_header = 5, delimiter=',')
+        blockLength = metadata.shape[0]
+        if fileIndex == 0:
+            thisBlockBools = pulseTimestamps < intervalTimestamps[0]
+        elif fileIndex == len(fileList) - 1:
+            thisBlockBools = pulseTimestamps > intervalTimestamps[-1]
+        else:
+            thisBlockBools = np.logical_and((pulseTimestamps > intervalTimestamps[fileIndex-1]), \
+                                (pulseTimestamps < intervalTimestamps[fileIndex]))
+        assert thisBlockBools.sum() == metadata.shape[0], str(file) + " has pulse/event count mismatch!"
+
+        # Timing conditions
+        thisBlockPulses = pulseTimestamps[thisBlockBools]
+        thisBlockDiffs = np.diff(thisBlockPulses)
+        fromFileDiffs = np.diff(metadata[:,4])
+        
+        # Make sure the timing between pulses isn't too large
+        timingThresh = 0.1
+        timingDifferences = np.absolute(np.subtract(fromFileDiffs, thisBlockDiffs))
+        assert not (timingDifferences > timingThresh).sum() > 1 # Direction change must be accoutned for.
+        metadataHolder[eventIndex:eventIndex + blockLength, 0:5] = metadata
+
+        # adding a column that is 0 if drifting grating, 1 if fictive saccade
+        metadataHolder[eventIndex:eventIndex + blockLength, 5] = 0
+        metadataHolder[eventIndex:eventIndex + blockLength, 7] = orientation
+        eventIndex += blockLength
+
+        return eventIndex, metadataHolder
+
+    def _processFictiveSaccadesProtocol(
+        self,
+        file,
+        fileList,
+        eventIndex,
+        metadataHolder,
+        fileIndex,
+        pulseTimestamps,
+        intervalTimestamps
+        ):
+        """
+        """
+        with open(file, 'rb') as f:
+            metadataDict = np.load(f, allow_pickle=True)
+
+        allEvents = metadataDict['events'] # np 1D array
+        allTrials = metadataDict['trials'] # list
+        blockLength = allEvents.shape[0]
+        if fileIndex == 0:
+            thisBlockBools = pulseTimestamps < intervalTimestamps[0]
+        elif fileIndex == len(fileList) - 1:
+            thisBlockBools = pulseTimestamps > intervalTimestamps[-1]
+        else:
+            thisBlockBools = np.logical_and((pulseTimestamps > intervalTimestamps[fileIndex-1]), \
+                                (pulseTimestamps < intervalTimestamps[fileIndex]))
+        assert thisBlockBools.sum() == allEvents.shape[0], str(file) + " has pulse/event count mismatch!"
+        thisBlockPulses = pulseTimestamps[thisBlockBools]
+        thisBlockDiffs = np.diff(thisBlockPulses)
+        thisBlockDiffs = np.append(thisBlockDiffs, 999)
+        
+        # Iterate down pulses. Check the event type metadata of each one. Then, check distance from next.
+        # Depending on metadata condition, different timiing allowances are permitted.
+        pulseIndex = 0
+        trialIndex = 0
+        while pulseIndex < thisBlockPulses.shape[0]:
+            eventType = allEvents[pulseIndex]
+            trialType = allTrials[trialIndex]
+            if thisBlockDiffs[pulseIndex] > 0.4:
+                assert (trialType[2] == 'probe') or (trialType[2] == 'saccade'), \
+                    "Good error message!"
+                if trialType[2] == 'probe':
+                    metadataHolder[eventIndex, 0] = 3.0
+                    metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
+                    metadataHolder[eventIndex, 5] = 1
+                    metadataHolder[eventIndex, 6] = 0
+                elif trialType[2] == 'saccade':
+                    metadataHolder[eventIndex, 0] = 5.0
+                    metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
+                    metadataHolder[eventIndex, 5] = 1
+                    metadataHolder[eventIndex, 6] = 1
+                eventIndex += 1
+                pulseIndex    += 1 
+                trialIndex    += 1
+            else:
+                assert trialType[2] == 'combined', "Invalid trialtype found : " + str(trialType[2])
+                assert pulseIndex != thisBlockPulses.shape[0] - 1, "Combined trial is last pulse, but only one found."
+                metadataHolder[eventIndex, 0] = 5.0
+                metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
+                metadataHolder[eventIndex, 5] = 1
+                metadataHolder[eventIndex, 6] = 2
+                metadataHolder[eventIndex + 1, 0] = 3.0
+                metadataHolder[eventIndex + 1, 1] = allTrials[trialIndex][1]
+                metadataHolder[eventIndex + 1, 5] = 1
+                metadataHolder[eventIndex + 1, 6] = 2
+                pulseIndex    += 2 # Two associated pulses within the index.
+                trialIndex    += 1
+                eventIndex += 2
+
+        return eventIndex, metadataHolder
+
+    def _parseMetadataHolder(self, metadataHolder, iPulses):
+        """
+        """
+
+        # Compute drifting grating probe timestamps
+        pulseIndex = np.where(metadataHolder[:, 0] == 3)[0]
+        dgPulse = np.where(metadataHolder[:, 5] == 0)[0]
+        matchingIndicesDG = np.intersect1d(pulseIndex, dgPulse)
+        probeIndexDG = iPulses[matchingIndicesDG]
+        probeTimestampsDG = self.computeTimestamps(probeIndexDG)
+        self.save('stimuli/dg/probe/timestamps', probeTimestampsDG)
+
+        # Computer fictive saccade probe timestamps
+        pulseIndex = np.where(metadataHolder[:, 0] == 3)[0]
+        fsPulse = np.where(metadataHolder[:, 5] == 1)[0]
+        matchingIndicesFS = np.intersect1d(pulseIndex, fsPulse)
+        probeIndexFS = iPulses[matchingIndicesFS]
+        probeTimestampsFS = self.computeTimestamps(probeIndexFS)
+        self.save('stimuli/fs/probes/timestamps', probeTimestampsFS)
+
+        # Compute timestamps of grating initialization (DG Only)
+        pulseIndex = np.where(metadataHolder[:, 0] == 1)[0]
+        gratingIndex = iPulses[pulseIndex]
+        gratingTimestamps = self.computeTimestamps(gratingIndex)
+        self.save('stimuli/dg/grating/timestamps', gratingTimestamps)
+
+        #Compute timestamps of motion initialization (DG Only)
+        pulseIndex = np.where(metadataHolder[:, 0] == 2)[0]
+        motionIndex = iPulses[pulseIndex]
+        motionTimestamps = self.computeTimestamps(motionIndex)
+        self.save('stimuli/dg/motion/timestamps', motionTimestamps)
+
+        #Compute timestamps for end of each block (DG Only)
+        pulseIndex = np.where(metadataHolder[:, 0] == 4)[0]
+        itiIndex = iPulses[pulseIndex]
+        itiTimestamps = self.computeTimestamps(itiIndex)
+        self.save('stimuli/dg/iti/timestamps', itiTimestamps)
+
+        #Compute fictive saccade timestamps
+        pulseIndex = np.where(metadataHolder[:, 0] == 5)[0]
+        saccadeIndex = iPulses[pulseIndex]
+        saccadeTimestamps = self.computeTimestamps(saccadeIndex)
+        self.save('stimuli/fs/saccades/timestamps', saccadeTimestamps)
+
+    def _runStimuliModule(self):
+        """
+        """
+
+        pulseTimestamps, intervalTimestamps, iPulses = self._calculatePulseIntervalTimestamps()
+        fileList = self._createMetadataFileList(pulseTimestamps, intervalTimestamps)
+        eventIndex = 0
+        #Columns in metadataHolder: 
+        #0: Event Type - 1 = Grating Start, 2 = Motion Start, 3 = Probe, 4 = Grating End, 5 = Fictive Saccade
+        #1: Motion Direction (DG Only)
+        #2: Probe Contrast (DG Only)
+        #3: Probe Phase (DG Only)
+        #4: Event Timestamps (DG Only)
+        #5: Block Type - 0 = Drifting Grating, 1 = Fictive Saccade
+        #6: Trial Type (FS Only) - 0 = Probe, 1 = Fictive Saccade, 2 = Both
+        #7: Orientation (DG Only)
+        metadataHolder = np.full((len(pulseTimestamps), 8), np.nan)
+        for fileIndex, file in enumerate(fileList):
+
+            # DG metadata
+            if pl.Path(file).suffix == '.txt':
+                eventIndex, metadataHolder = self._processDriftingGratingProtocol( 
+                    file, 
+                    fileList,
+                    eventIndex,
+                    metadataHolder,
+                    fileIndex,
+                    pulseTimestamps,
+                    intervalTimestamps
+                )
+
+            # FS metadata
+            elif pl.Path(file).suffix == '.pkl':
+                eventIndex, metadataHolder = self._processFictiveSaccadesProtocol(
+                    file,
+                    fileList,
+                    eventIndex,
+                    metadataHolder,
+                    fileIndex,
+                    pulseTimestamps,
+                    intervalTimestamps
+                )
+
+        self._parseMetadataHolder(metadataHolder, iPulses)
+        return metadataHolder
+
+class Dreadds2Session(
+    EventsProcessingMixin,
+    SaccadesProcessingMixin,
+    StimuliProcessingMixinDreadds2,
+    PredictionProcessingMixin,
+    SpikesProcessingMixin,
+    SessionBase
+    ):
+    """
+    """
+
+    labjackChannelMapping = {
+        'barcode': 5,
+        'cameras': 7,
+        'stimulus': 6,
+    }
+
+    def __init__(self, sessionFolder, eye='left'):
+        """
+        """
+
+        super().__init__(sessionFolder, eye=eye)
+
+        return
+    
+    @property 
+    def leftEyePose(self):
+        """
+        """
+        csv = list(self.home.joinpath('videos').glob('*.csv')).pop()
+        return csv
+
+    @property 
+    def rightEyePose(self):
+        """
+        """
+        
+        return None
+
+    @property
+    def leftCameraTimestamps(self):
+        """
+        """
+        leftCameraTimestamps = list(self.home.joinpath('videos').glob('*rightCam*')).pop()
+        return leftCameraTimestamps
+
+    @property
+    def eventSampleNumbers(self):
+        """
+        """
+
+        if self.cohort == 1:
+            file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.ProbeA-AP', 'TTL', 'sample_numbers.npy')
+        elif self.cohort == 2:
+            file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.0', 'TTL_1', 'timestamps.npy')
+        if file.exists() == False: 
+            raise Exception('Could not locate ephys event timestamps file')
+        
+        #
+        eventSampleNumbers = np.load(file)
+
+        return eventSampleNumbers
+
+    @property
+    def referenceSampleNumber(self):
+        """
+        """
+
+        file = self.folders.ephys.joinpath('sync_messages.txt')
+        if file.exists() == False:
+            raise Exception('Could not locate the ephys sync messages file')
+        
+        #
+        with open(file, 'r') as stream:
+            referenceSampleNumber = None
+            for line in stream.readlines():
+                if self.cohort == 1:
+                    pattern = '@.*30000.*Hz:.*\d*'
+                elif self.cohort == 2:
+                    pattern = 'start time:.*@'
+                result = re.findall(pattern, line)
+                if len(result) == 1:
+                    if self.cohort == 1:
+                        referenceSampleNumber = int(result.pop().rstrip('\n').split(': ')[-1])
+                    elif self.cohort == 2:
+                        referenceSampleNumber = int(result.pop().rstrip('@').split('start time: ')[1])
+                    break
+        
+        #
+        if referenceSampleNumber is None:
+            raise Exception('Failed to parse sync messages file for first sample number')
+
+        return referenceSampleNumber
+
+    def _runSaccadesModule(self, pupilCenterName='center'):
+        """
+        """
+
+        self._extractEyePosition(pupilCenterName = pupilCenterName)
+        self._correctEyePosition()
+        self._interpolateEyePosition()
+        self._decomposeEyePosition()
+        self._reorientEyePosition()
+        self._filterEyePosition()
+        self._detectPutativeSaccades()
+
+        return
+
+        
