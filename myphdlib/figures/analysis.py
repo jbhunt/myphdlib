@@ -431,6 +431,7 @@ class AnalysisBase():
             'maximumIsiViolations': 0.5,
             'maximumProbabilityValue': 0.01,
             'minimumFiringRate': 0.2,
+            'minimumResponseLatency': 0.025,
         }
         kwargs.update(kwargs_)
 
@@ -457,6 +458,10 @@ class AnalysisBase():
                 session.load('zeta/probe/left/p'),
                 session.load('zeta/probe/right/p')
             ]), axis=0)
+            responseLatency = np.nanmin(np.vstack([
+                session.load('zeta/probe/left/latency'),
+                session.load('zeta/probe/right/latency'),
+            ]), axis=0)
 
             #
             nUnits = len(session.population)
@@ -482,6 +487,11 @@ class AnalysisBase():
 
                 # Exclude contaminated units
                 if kwargs['maximumIsiViolations'] is not None and isiViolations[iUnit] > kwargs['maximumIsiViolations']:
+                    continue
+
+                # Exclude units that response too fast
+                # NOTE: These are likely the artificial units produced by the photologic device
+                if kwargs['minimumResponseLatency'] is not None and responseLatency[iUnit] < kwargs['minimumResponseLatency']:
                     continue
 
                 # Exclude units Anna identified as noise or multi-unit

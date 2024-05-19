@@ -20,6 +20,7 @@ def _generateNullSampleForSingleUnit(
     iUnit,
     nUnits,
     maximumAmplitudeShift=100,
+    maxfev=1000,
     ):
     """
     Worker function (for parallelization) that refits the peri-saccadic PPTHs for a single unit
@@ -71,8 +72,13 @@ def _generateNullSampleForSingleUnit(
                 B1,
                 C1
             ])
-            gmm = GaussianMixturesModel(A1.size)
-            gmm.fit(tProbe, peth, p0, bounds)
+            gmm = GaussianMixturesModel(A1.size, maxfev=maxfev)
+
+            # Try to fit
+            try:
+                gmm.fit(tProbe, peth, p0, bounds)
+            except:
+                continue
 
             # Save the refit parameters
             d, abc = gmm._popt[0], gmm._popt[1:]
@@ -220,7 +226,10 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         nRuns=None,
         maximumAmplitudeShift=100,
         saccadeType='real',
-        nCores=8,
+        parallelize=True,
+        nProcesses=30,
+        chunksize=1,
+        maxfevs=100,
         ):
         """
         """
@@ -248,11 +257,23 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                     iUnit,
                     nUnits,
                     maximumAmplitudeShift,
+                    maxfevs,
                 ))
-            with Pool(nCores) as pool:
-                result = pool.starmap(_generateNullSampleForSingleUnit, args)
-            for iUnit, sample in result:
-                samples[iUnit] = sample
+            if parallelize:
+                with Pool(nProcesses, maxtasksperchild=1) as pool:
+                    result = pool.starmap(
+                        _generateNullSampleForSingleUnit,
+                        args,
+                        chunksize=chunksize,
+                    )
+                for iUnit, sample in result:
+                    samples[iUnit] = sample
+            else:
+                for iUnit_, el in enumerate(args):
+                    end = '\r' if iUnit + 1 != nUnits else '\n'
+                    print(f'Generating null sample for unit {iUnit_ + 1} out of {nUnits}', end=end, flush=True)
+                    iUnit, sample = _generateNullSampleForSingleUnit(*el)
+                    samples[iUnit] = sample
 
             #
             self.ns[f'samples/{probeDirection}/{saccadeType}'] = samples

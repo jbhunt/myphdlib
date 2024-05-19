@@ -334,6 +334,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         """
 
         for i, ukey in enumerate(self.examples):
+            if (ukey in self.ukeys) == False:
+                continue
             self.ukey = ukey
             for phase in ('on', 'off'):
                 heatmaps = self.session.load(f'rf/{phase}')
@@ -377,9 +379,14 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         
         for i in range(len(self.examples)):
 
+            print(self.examples[i])
+            #
+            if (self.examples[i] in self.ukeys) == False:
+                continue
+
             #
             self.ukey = self.examples[i]
-            gratingMotion = self.features['d'][self.iUnit]
+            gratingMotion = self.preference[self.iUnit]
             trialIndices = np.where(self.session.parseEvents(
                 eventName='probe',
                 coincident=False,
@@ -416,8 +423,13 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         """
         """
 
-        cmap = plt.get_cmap('rainbow', np.nanmax(self.model['k']))
+        k = (self.ns[f'params/pref/real/extra'].shape[1] - 1) // 3
+        cmap = plt.get_cmap('rainbow', k)
         for i, ukey in enumerate(self.examples):
+
+            #
+            if (ukey in self.ukeys) == False:
+                continue
 
             #
             self.ukey = ukey
@@ -429,8 +441,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             A, B, C = np.split(abcd[:-1], 3)
             d = abcd[-1]
             paramsOrdered = np.concatenate([
-                abcd[-1],
-                np.array([d,])
+                np.array([d,]),
+                abcd[:-1],
             ])
             gmm = GaussianMixturesModel(k=A.size)
             gmm._popt = paramsOrdered
@@ -498,7 +510,6 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
     def plotHeatmapsByCluster(
         self,
-        form='normal',
         figsize=(4, 5),
         vrange=(-1, 1),
         cmap='coolwarm',
@@ -521,8 +532,13 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         #
         peths = self.ns[f'ppths/pref/real/extra'][include]
-        latency = np.array([np.argmax(np.abs(y)) for y in peths])
-        pethsReverseLatencySorted = peths[np.argsort(latency)[::-1]]
+        amplitudes = np.array([
+            np.max(np.abs(peth))
+                for peth in peths
+        ]).reshape(-1, 1)
+        pethsNormalized = peths / amplitudes
+        latency = np.array([np.argmax(np.abs(y)) for y in pethsNormalized])
+        pethsReverseLatencySorted = pethsNormalized[np.argsort(latency)[::-1]]
 
         #
         start = 0
@@ -551,7 +567,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             axs[i, 1].pcolor(
                 self.tProbe,
                 n,
-                peths[maskByLabel][index],
+                pethsNormalized[maskByLabel][index],
                 vmin=vrange[0],
                 vmax=vrange[1],
                 cmap=cmap,
@@ -566,7 +582,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 for ukey, flag in zip(self.ukeys, labels == label)
                     if flag
             ]
-            for y, ukey in enumerate(ukeysByLabel):
+            for y, ukey in zip(index, ukeysByLabel):
                 if ukey in self.examples:
                     axs[i, 1].plot(x, y, marker='>', color='k', clip_on=False)
                     break
