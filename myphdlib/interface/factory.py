@@ -30,7 +30,7 @@ class SessionFactory(object):
     
     def _findDataVolumes(
         self,
-        tag='JH-DATA-',
+        tag='JH-DATA-06',
         mount=None
         ):
         """
