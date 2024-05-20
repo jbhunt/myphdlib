@@ -4,6 +4,7 @@ from myphdlib.pipeline.saccades import SaccadesProcessingMixin
 from myphdlib.general.labjack import filterPulsesFromPhotologicDevice
 from myphdlib.pipeline.prediction import PredictionProcessingMixin
 from myphdlib.pipeline.spikes import SpikesProcessingMixin
+from myphdlib.pipeline.activity import ActivityProcessingMixin
 import pathlib as pl
 import numpy as np
 import re
@@ -286,6 +287,7 @@ class Dreadds2Session(
     StimuliProcessingMixinDreadds2,
     PredictionProcessingMixin,
     SpikesProcessingMixin,
+    ActivityProcessingMixin,
     SessionBase
     ):
     """
