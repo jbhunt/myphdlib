@@ -235,6 +235,19 @@ class StimuliProcessingMixinDreadds2(
         saccadeTimestamps = self.computeTimestamps(saccadeIndex)
         self.save('stimuli/fs/saccades/timestamps', saccadeTimestamps)
 
+        #Assign direction to DG probe
+        pulseIndex = np.where(metadataHolder[:, 0] == 3)[0]
+        dgPulse = np.where(metadataHolder[:, 5] == 0)[0]
+        matchingIndicesDG = np.intersect1d(pulseIndex, dgPulse)
+        probeDirectionDG = metadataHolder[matchingIndicesDG, 1]
+        self.save('stimuli/dg/probe/motion', probeDirectionDG)
+
+        #Assign direction to each drifting grating block
+        pulseIndex = np.where(metadataHolder[:, 0] == 1)[0]
+        blockDirection = metadataHolder[pulseIndex, 1]
+        self.save('stimuli/dg/grating/motion', blockDirection)
+        
+
     def _runStimuliModule(self):
         """
         """
@@ -244,7 +257,7 @@ class StimuliProcessingMixinDreadds2(
         eventIndex = 0
         #Columns in metadataHolder: 
         #0: Event Type - 1 = Grating Start, 2 = Motion Start, 3 = Probe, 4 = Grating End, 5 = Fictive Saccade
-        #1: Motion Direction (DG Only)
+        #1: Motion Direction 
         #2: Probe Contrast (DG Only)
         #3: Probe Phase (DG Only)
         #4: Event Timestamps (DG Only)
