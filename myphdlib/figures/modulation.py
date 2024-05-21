@@ -167,6 +167,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
 
             #
             saccadeTimestamps, saccadeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForSaccades()
+            import pdb; pdb.set_trace()
 
             # Compute saccade response templates
             for saccadeLabel, saccadeDirection in zip([-1, 1], ['temporal', 'nasal']):
@@ -223,7 +224,8 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         leftEdges = np.arange(trange[0], trange[1], tstep)
         rightEdges = leftEdges + tstep
         self.windows = np.vstack([leftEdges, rightEdges]).T
-        self.ns['globals/windows'] = self.windows
+        if saccadeType == 'real':
+            self.ns['globals/windows'] = self.windows
 
         #
         nUnits = len(self.ukeys)
@@ -284,7 +286,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
 
     def _fitPerisaccadicPeth(
         self,
-        peth=None,
+        peth,
         probeDirection='pref',
         saccadeType='real',
         maximumAmplitudeShift=200,
@@ -293,15 +295,11 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         """
 
         #
-        if peth is None:
-            peth = self.ns[f'ppths/{probeDirection}/{saccadeType}/peri'][self.iUnit]
-
-        #
         params1 = self.ns[f'params/{probeDirection}/{saccadeType}/extra'][self.iUnit]
         if np.isnan(params1).all():
             return None, None
         abcd = params1[np.invert(np.isnan(params1))]
-        abc, d = abcd[:-1], abcd[-1]
+        abc, d1 = abcd[:-1], abcd[-1]
         A1, B1, C1 = np.split(abc, 3)
         k = A1.size
 
@@ -311,20 +309,20 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         params2 = np.full([kmax, params1.size], np.nan)
 
         #
-        for iComp in np.arange(A1.size):
+        for iComp in np.arange(k):
 
             # Refit
             amplitudeBoundaries = np.vstack([A1 - 0.001, A1 + 0.001]).T
             amplitudeBoundaries[iComp, 0] -= maximumAmplitudeShift
             amplitudeBoundaries[iComp, 1] += maximumAmplitudeShift
             bounds = np.vstack([
-                [[d - 0.001, d + 0.001]],
+                [[d1 - 0.001, d1 + 0.001]],
                 amplitudeBoundaries,
                 np.vstack([B1 - 0.001, B1 + 0.001]).T,
                 np.vstack([C1 - 0.001, C1 + 0.001]).T,
             ]).T
             p0 = np.concatenate([
-                np.array([d]),
+                np.array([d1]),
                 A1,
                 B1,
                 C1
@@ -333,13 +331,18 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             gmm.fit(self.tProbe, peth, p0, bounds)
 
             # Store the re-fit
-            params2[iComp, :abc.size + 1] = np.concatenate([
-                abc,
-                np.array([d,])
-            ])
-
-            #
             A2 = np.split(gmm._popt[1:], 3)[0]
+            B2 = np.split(gmm._popt[1:], 3)[1]
+            C2 = np.split(gmm._popt[1:], 3)[2]
+            d2 = gmm._popt[0]
+            params2[iComp, :abc.size + 1] = np.concatenate([
+                A2,
+                B2,
+                C2,
+                np.array([d2,])
+            ])
+            #
+            
             dr[iComp] = A2[iComp] - A1[iComp]
 
         return dr, params2
@@ -653,7 +656,10 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         for i in range(len(self.examples)):
 
             #
-            self.ukey = self.examples[i]
+            ukey = self.examples[i]
+            if ukey not in self.ukeys:
+                continue
+            self.ukey = ukey
 
             # Plot the raw PETHs
             rProbePeri = self.ns[f'ppths/pref/real/peri'][self.iUnit, :, windowIndex]
@@ -665,7 +671,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             paramsExtra = self.ns[f'params/pref/real/extra'][self.iUnit, :]
             paramsPeri = self.ns[f'params/pref/real/peri'][self.iUnit, windowIndex, 0, :]
             for j, params in enumerate([paramsExtra, paramsPeri]):
-                params = params[np.invert(np.isnan(params))]
+                params = np.delete(params, np.isnan(params))
                 if len(params) == 0:
                     continue
                 abc, d = params[:-1], params[-1]

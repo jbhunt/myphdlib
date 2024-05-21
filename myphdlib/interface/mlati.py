@@ -840,6 +840,7 @@ class StimuliProcessingMixinMlati(StimuliProcessingMixin):
             self.log('Data loss detected during the drifting grating stimulus', level='warning')
             dataLossDetected = True
 
+
         # Parse protocol events
         filtered = filterPulsesFromPhotologicDevice(signal, minimumPulseWidthInSeconds=0.03)
         corrected = self._correctForCableDisconnectionDuringDriftingGrating(filtered)

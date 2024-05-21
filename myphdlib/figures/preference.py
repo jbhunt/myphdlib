@@ -32,8 +32,8 @@ class DirectionSectivityAnalysis(AnalysisBase):
         for iUnit in range(len(self.ukeys)):
 
             #
-            aPref = self.ns[f'params/pref/real/extra'][iUnit][:, 0]
-            aNull = self.ns[f'params/null/real/extra'][iUnit][:, 0]
+            aPref = self.ns[f'params/pref/real/extra'][iUnit, 0]
+            aNull = self.ns[f'params/null/real/extra'][iUnit, 0]
 
             # Clip null direction if sign reverses
             if aPref > 0:
@@ -99,11 +99,11 @@ class DirectionSectivityAnalysis(AnalysisBase):
         for iUnit in range(len(self.ukeys)):
 
             #
-            self.ukey = self.ukeys[iUnit]
+            # self.ukey = self.ukeys[iUnit]
 
             # Determine which saccade is preferred
-            aNasal = np.max(np.abs(self.templates['nasal'][iUnit, binIndices]))
-            aTemporal = np.max(np.abs(self.templates['temporal'][iUnit, binIndices]))
+            aNasal = np.max(np.abs(self.ns['psths/nasal/real'][iUnit, binIndices]))
+            aTemporal = np.max(np.abs(self.ns['psths/temporal/real'][iUnit, binIndices]))
             if aNasal > aTemporal:
                 aPref = aNasal
                 aNull = aTemporal
@@ -111,7 +111,7 @@ class DirectionSectivityAnalysis(AnalysisBase):
             else:
                 aPref = aTemporal
                 aNull = aNasal
-                saccadeDirection = 'tempoarl'
+                saccadeDirection = 'temporal'
 
             # Clip null direction if sign reverses
             if aPref > 0:
@@ -228,10 +228,11 @@ class DirectionSectivityAnalysis(AnalysisBase):
 
     def histModulationByDirectionSelectivity(
         self,
-        threshold=0.3,
-        nBins=50,
+        threshold=0.5,
+        nBins=30,
         windowIndex=5,
-        figsize=(4, 5),
+        figsize=(4, 3),
+        xrange=(-3, 3),
         ):
         """
         """
@@ -241,12 +242,12 @@ class DirectionSectivityAnalysis(AnalysisBase):
         mi = self.ns[f'mi/pref/real'][:, windowIndex, 0]
         ds = np.abs(self.ns[f'dsi/probe']) >= threshold
         samples = (
-            mi[np.invert(ds)],
-            mi[ds]
+            np.clip(mi[ds], *xrange),
+            np.clip(mi[np.invert(ds)], *xrange),
         )
         counts, edges, patches = ax.hist(
             samples,
-            range=(-3, 3),
+            range=xrange,
             bins=nBins,
             histtype='barstacked'
         )
@@ -267,10 +268,53 @@ class DirectionSectivityAnalysis(AnalysisBase):
 
         return fig, ax
 
+    def histDirectionSelectivityByModulation(
+        self,
+        alpha=0.05,
+        windowIndex=5,
+        nBins=30,
+        figsize=(4, 3),
+        ):
+        """
+        """
+
+        fig, ax = plt.subplots()
+
+        #
+        dsi = self.ns['dsi/probe']
+        modulated = self.ns['p/pref/real'][:, windowIndex, 0] < alpha
+        samples = (
+            dsi[modulated],
+            dsi[np.invert(modulated)]
+        )
+        counts, edges, patches = ax.hist(
+            samples,
+            range=(-1, 1),
+            bins=nBins,
+            histtype='barstacked'
+        )
+        for patch in patches[0]:
+            patch.set_facecolor('k')
+            patch.set_edgecolor('k')
+        for patch in patches[1]:
+            patch.set_facecolor('w')
+            patch.set_edgecolor('k')
+
+        #
+        ax.set_ylabel('N units')
+        ax.set_xlabel('DSI')
+        ax.legend([fr'$p<0.05$', fr'$p\geq{alpha}$'])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax
+
     def scatterModulationByPreference(
         self,
         alpha=0.5,
         windowIndex=5,
+        xyrange=(-3, 3),
         figsize=(4, 4),
         ):
         """
@@ -283,20 +327,22 @@ class DirectionSectivityAnalysis(AnalysisBase):
             self.ns[f'p/pref/real'][:, windowIndex, 0] < alpha,
             self.ns[f'p/null/real'][:, windowIndex, 0] < alpha
         )
-        x = self.ns[f'mi/pref/real'][significant, windowIndex, 0]
-        y = self.ns[f'mi/null/real'][significant, windowIndex, 0]
+        x = np.clip(self.ns[f'mi/pref/real'][:, windowIndex, 0], *xyrange)
+        y = np.clip(self.ns[f'mi/null/real'][:, windowIndex, 0], *xyrange)
 
         #
         colors = list()
         for iUnit in range(len(self.ukeys)):
             fPref = self.ns[f'p/pref/real'][iUnit, windowIndex, 0] < alpha
-            fNull = self.ns[f'p/pref/null'][iUnit, windowIndex, 0] < alpha
+            fNull = self.ns[f'p/null/real'][iUnit, windowIndex, 0] < alpha
             if fNull and fPref:
-                color = (1, 1, 0, 1)
+                color = 'xkcd:purple'
             elif fNull:
-                color = (0, 1, 0, 1)
+                color = 'xkcd:red'
+            elif fPref:
+                color = 'xkcd:blue'
             else:
-                color = (1, 0, 0, 1)
+                color = 'xkcd:gray'
             colors.append(color)
 
         #
@@ -304,12 +350,19 @@ class DirectionSectivityAnalysis(AnalysisBase):
             x,
             y,
             marker='.',
-            s=10,
+            s=12,
             color=colors,
-            alpha=0.5,
+            alpha=0.7,
+            clip_on=False
         )
+        ax.vlines(0, *xyrange, color='k')
+        ax.hlines(0, *xyrange, color='k')
 
         #
+        ax.set_xlabel(r'$MI_{Pref}$')
+        ax.set_ylabel(r'$MI_{Null}$')
+        ax.set_xlim(xyrange)
+        ax.set_ylim(xyrange)
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
@@ -333,9 +386,14 @@ class DirectionSectivityAnalysis(AnalysisBase):
         y = np.full(nUnits, np.nan)
 
         #
-        binIndicesForResponse = np.logical_and(
+        binIndicesForSaccadeResponse = np.logical_and(
             self.tSaccade >= responseWindow[0],
             self.tSaccade <= responseWindow[1]
+        )
+        #
+        binIndicesForProbeResponse = np.logical_and(
+            self.tProbe >= responseWindow[0],
+            self.tProbe <= responseWindow[1]
         )
         binIndicesForBaseline = np.logical_and(
             self.tSaccade >= baselineWindow[0],
@@ -347,7 +405,7 @@ class DirectionSectivityAnalysis(AnalysisBase):
 
             # Visual response amplitude
             ppth = self.ns[f'ppths/pref/real/extra'][iUnit]
-            x[iUnit] = np.max(np.abs(ppth[binIndicesForResponse]))
+            x[iUnit] = np.max(np.abs(ppth[binIndicesForProbeResponse]))
 
             # Saccade response amplitude
             self.ukey = self.ukeys[iUnit]
@@ -357,17 +415,18 @@ class DirectionSectivityAnalysis(AnalysisBase):
             )
             psth = self.ns[f'psths/{saccadeDirection}/real'][iUnit]
             bl = psth[binIndicesForBaseline].mean()
-            fr = (psth[binIndicesForResponse] - bl) / self.factor[iUnit]
+            fr = (psth[binIndicesForSaccadeResponse] - bl) / self.factor[iUnit]
             y[iUnit] = np.max(np.abs(fr))
 
         #
         fig, ax = plt.subplots()
-        ax.hist(
-            x=(x, y),
-            color=('r', 'b'),
-            edgecolor='k',
-            histtype='barstacked'
-        )
+        # ax.hist(
+        #     x=(x, y),
+        #     color=('r', 'b'),
+        #     edgecolor='k',
+        #     histtype='barstacked'
+        # )
+        ax.scatter(x, y)
 
         #
         fig.set_figwidth(figsize[0])

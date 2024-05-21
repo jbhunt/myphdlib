@@ -11,6 +11,7 @@ import pandas as pd
 from itertools import product
 from scipy.stats import spearmanr
 from multiprocessing import Pool, cpu_count
+from joblib import delayed, Parallel
 
 def _generateNullSampleForSingleUnit(
     peths,
@@ -21,15 +22,19 @@ def _generateNullSampleForSingleUnit(
     nUnits,
     maximumAmplitudeShift=100,
     maxfev=1000,
+    nRuns=None
     ):
     """
     Worker function (for parallelization) that refits the peri-saccadic PPTHs for a single unit
     """
 
     #
-    end = '\r' if iUnit + 1 != nUnits else '\n'
+    # end = '\r' if iUnit + 1 != nUnits else '\n'
+    end = '\n'
     print(f'Generating null sample for unit {iUnit + 1} out of {nUnits}', end=end, flush=True)
-    nBins, nRuns = peths.shape
+    nBins, nRuns_ = peths.shape
+    if nRuns is None:
+        nRuns = nRuns_
     sample = np.full([nRuns, nComponents], np.nan)
 
     #
@@ -119,8 +124,9 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         self,
         nRuns=100,
         rate=0.05,
-        minimumTrialCount=10,
+        minimumTrialCount=5,
         responseWindow=(-0.2, 0.5),
+        baselineWindow=(-0.2, 0),
         perisaccadicWindow=(-0.5, 0.5),
         binsize=0.01,
         smoothingKernelWidth=0.01,
@@ -153,7 +159,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             for probeDirection in ('pref', 'null'):
 
                 # Load baseline FR
-                bl = self.ns[f'stats/{probeDirection}/{saccadeType}/extra'][iUnit, 0]
+                # bl = self.ns[f'stats/{probeDirection}/{saccadeType}/extra'][iUnit, 0]
 
                 # Load event data
                 probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes( )
@@ -172,10 +178,19 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 # Total number of trials in the target direction
                 nTrialsTotal = np.sum(gratingMotion == self.preference[self.iUnit])
 
-                # Determine the number of trials to sample
-                nTrialsForResampling = int(round(nTrialsTotal * rate, 0))
+                # Number of trials specified
+                if type(rate) == int and rate >= 1:
+                    nTrialsForResampling = rate
+
+                # Fraction of trials specified
+                elif type(rate) in (float, int) and rate < 1:
+                    nTrialsForResampling = int(round(nTrialsTotal * rate, 0))
+
+                # Check if minimum trial count is met
                 if minimumTrialCount is not None and nTrialsForResampling < minimumTrialCount:
                     nTrialsForResampling = minimumTrialCount
+
+                # Make sure there are not MORE trials for re-sampling than are available
                 if trialIndicesExtrasaccadic.size < nTrialsForResampling:
                     raise Exception('Not enough extra-saccadic trials to re-sample')
 
@@ -185,7 +200,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                     responseWindow[1] + buffer
                 )
                 t, M, spikeTimestamps = psth2(
-                    probeTimestamps[trialIndicesExtrasaccadic],
+                    probeTimestamps,
                     self.unit.timestamps,
                     window=responseWindowBuffered,
                     binsize=binsize,
@@ -196,23 +211,24 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 for iRun in range(nRuns):
 
                     # Use kernel density estimation (takes a long time)
-                    trialIndices = np.random.choice(
-                        np.arange(trialIndicesExtrasaccadic.size),
+                    trialIndicesResampled = np.random.choice(
+                        trialIndicesExtrasaccadic,
                         size=nTrialsForResampling,
                         replace=False
                     )
 
                     # Use KDE
-                    sample = np.concatenate([spikeTimestamps[i] for i in trialIndices])
+                    sample = np.concatenate([spikeTimestamps[i] for i in trialIndicesResampled])
                     try:
                         t, fr = self.unit.kde(
-                            probeTimestamps[trialIndices],
+                            probeTimestamps[trialIndicesResampled],
                             responseWindow=responseWindow,
                             binsize=binsize,
                             sigma=smoothingKernelWidth,
                             sample=sample,
                             nTrials=nTrialsForResampling,
                         )
+                        bl = np.mean(fr[np.logical_and(t >= baselineWindow[0], t <= baselineWindow[1])])
                     except:
                         continue
 
@@ -230,6 +246,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         nProcesses=30,
         chunksize=1,
         maxfevs=100,
+        backend='joblib',
         ):
         """
         """
@@ -247,9 +264,9 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             samples = np.full([nUnits, nRuns, nComponents], np.nan)
 
             #
-            args = list()
+            arguments = list()
             for iUnit in range(nUnits):
-                args.append((
+                arguments.append((
                     self.ns[f'ppths/pref/{saccadeType}/resampled'][iUnit],
                     self.ns[f'params/pref/{saccadeType}/extra'][iUnit],
                     self.tProbe,
@@ -258,18 +275,25 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                     nUnits,
                     maximumAmplitudeShift,
                     maxfevs,
+                    nRuns,
                 ))
             if parallelize:
-                with Pool(nProcesses, maxtasksperchild=1) as pool:
-                    result = pool.starmap(
-                        _generateNullSampleForSingleUnit,
-                        args,
-                        chunksize=chunksize,
-                    )
+                if backend == 'multiprocessing':
+                    with Pool(nProcesses, maxtasksperchild=1) as pool:
+                        result = pool.starmap(
+                            _generateNullSampleForSingleUnit,
+                            arguments,
+                            chunksize=chunksize,
+                        )
+                elif backend == 'joblib':
+                    result = Parallel(n_jobs=-1)(delayed(_generateNullSampleForSingleUnit)(
+                        args for args in arguments
+                    ))
                 for iUnit, sample in result:
                     samples[iUnit] = sample
+
             else:
-                for iUnit_, el in enumerate(args):
+                for iUnit_, el in enumerate(arguments):
                     end = '\r' if iUnit + 1 != nUnits else '\n'
                     print(f'Generating null sample for unit {iUnit_ + 1} out of {nUnits}', end=end, flush=True)
                     iUnit, sample = _generateNullSampleForSingleUnit(*el)
@@ -311,12 +335,18 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                     #
                     for iComp in range(nComponents):
 
-                        #
-                        sample = self.ns[f'samples/{probeDirection}/{saccadeType}'][self.iUnit, :, iComp]
+                        # Determine the test value
                         mi = self.ns[f'mi/{probeDirection}/{saccadeType}'][self.iUnit, iWindow, iComp]
+                        if np.isnan(mi).item() == True:
+                            continue
+
+                        # Load the null sample
+                        sample = self.ns[f'samples/{probeDirection}/{saccadeType}'][self.iUnit, :, iComp]
                         mask = np.invert(np.isnan(sample))
                         if mask.sum() == 0:
                             continue
+
+                        # Compute the probability of a more extreme measurement
                         p = np.sum(np.abs(sample[mask]) > np.abs(mi)) / mask.sum()
                         self.ns[f'p/{probeDirection}/{saccadeType}'][self.iUnit, iWindow, iComp] = p
 
@@ -324,15 +354,14 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
     def plotModulationDistributionsWithHistogram(
         self,
-        a=0.05,
-        figsize=(4, 2),
+        iWindow=5,
+        alpha=0.05,
+        figsize=(3, 2),
         colorspace=('k', 'k', 'w'),
-        minimumResponseAmplitude=2,
+        minimumResponseAmplitude=0,
         nBins=20,
         labels=(1, 2, 3, -1),
-        normalize=True,
-        xrange=(-2, 2),
-        iWindow=5,
+        xrange=(-3, 3),
         ):
         """
         """
@@ -346,25 +375,26 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         fig, ax = plt.subplots()
 
         #
+        mi = self.ns[f'mi/pref/real']
+        paramsExtra = self.ns[f'params/pref/real/extra']
+        pvalues = self.ns[f'p/pref/real']
         polarity = np.array([
-            -1 if self.mi[i, iWindow, 0] < 0 else 1
+            -1 if mi[i, iWindow, 0] < 0 else 1
                 for i in range(len(self.ukeys))
         ])
-        polarity[np.isnan(self.mi[:, iWindow, 0])]
+        polarity[np.isnan(mi[:, iWindow, 0])]
         samples = ([], [], [])
         for i, l in enumerate(labels):
             for sign in [-1, 1]:
                 mask = np.vstack([
                     polarity == sign,
-                    self.model['labels'] == l,
-                    np.abs(self.model['params1'][:, 0]) >= minimumResponseAmplitude,
+                    self.labels == l,
+                    np.abs(paramsExtra[:, 0]) >= minimumResponseAmplitude,
                 ]).all(0)
-                for dr, p, iUnit in zip(self.mi[mask, iWindow, 0], self.p[mask, 0], np.arange(len(self.ukeys))[mask]):
+                for dr, p, iUnit in zip(mi[mask, iWindow, 0], pvalues[mask, 0, 0], np.arange(len(self.ukeys))[mask]):
                     if l == -1:
                         dr *= -1
-                    if normalize:
-                        dr /= self.model['params1'][iUnit, 0]
-                    if p < a:
+                    if p < alpha:
                         if sign == -1:
                             samples[0].append(dr)
                         else:
@@ -397,10 +427,12 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         #
         for ukey in self.examples:
             iUnit = self._indexUnitKey(ukey)
-            mi = self.mi[iUnit, iWindow, 0] / self.model['params1'][iUnit, 0]
+            if iUnit is None:
+                continue
+            dr = mi[iUnit, iWindow, 0]
             binIndex = np.where(np.logical_and(
-                mi >= leftEdges,
-                mi <  rightEdges
+                dr >= leftEdges,
+                dr <  rightEdges
             ))[0].item()
             ax.scatter(
                 binCenters[binIndex],
@@ -485,51 +517,3 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         fig.tight_layout()
 
         return fig, ax, r, p
-    
-    def plotSurvivalByAmplitudeThreshold(
-        self,
-        arange=np.arange(0, 3.1, 0.1),
-        windowIndex=5,
-        figsize=(3, 6)
-        ):
-        """
-        """
-
-        fig, axs = plt.subplots(nrows=3, sharex=True, sharey=True)
-        nUnitsTotal = list()
-        nUnitsSuppressed = list()
-        nUnitsEnhanced = list()
-
-        #
-        for a in arange:
-            nUnitsTotal.append(np.sum(self.params[:, 0] > a))
-            m = np.logical_and(
-                self.pvalues[:, windowIndex, 0] < 0.05,
-                self.params[:, 0] >= a
-            )
-            nUnitsSuppressed.append(np.sum(
-                self.modulation[m, 0, 5] < 0
-            ))
-            nUnitsEnhanced.append(np.sum(
-                self.modulation[m, 0, 5] > 0
-            ))
-
-        #
-        axs[0].plot(arange, nUnitsTotal, color='k')
-        axs[1].plot(arange, nUnitsSuppressed, color='k')
-        axs[2].plot(arange, nUnitsEnhanced, color='k')
-        titles = (
-            '# of total units',
-            '# of suppressed units',
-            '# of enhanced units'
-        )
-        for i, ax in enumerate(axs):
-            ax.set_title(titles[i], fontsize=10)
-            ax.set_ylabel('# of units')
-        axs[-1].set_xlabel('Amplitude threshold')
-
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, axs

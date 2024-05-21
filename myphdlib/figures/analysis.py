@@ -192,10 +192,7 @@ class Namespace():
             raise Exception(f'{name} is not available')
 
     def __setitem__(self, name, value):
-        if name in self.data.keys():
-            self.data[name] = value
-        else:
-            raise Exception(f'{name} is not available')
+        self.data[name] = value
 
 
 class AnalysisBase():
@@ -237,6 +234,7 @@ class AnalysisBase():
         self.factor = None
         self.filter = None
         self.labels = None
+        self.preference = None
 
         return
 
@@ -270,6 +268,7 @@ class AnalysisBase():
                     if 'globals' in pl.Path(path).parts:
                         name = path.split('/')[-1]
                         self.__setattr__(name, data)
+                        self.ns[path] = data
 
                     #
                     else:

@@ -74,7 +74,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         """
         super().loadNamespace()
         self.windows = np.array([
-            [0, 0.1]
+            [0, 0.2]
         ])
         return
 
@@ -168,6 +168,8 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         """
 
         kwargs['saccadeType'] = 'fictive'
+        kwargs['trange'] = (0, 0.2)
+        kwargs['tstep'] = 0.2
         super().computePerisaccadicPeths(**kwargs)
 
         return
@@ -186,8 +188,8 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
 
     def resampleExtrasaccadicPeths(
         self,
-        minimumTrialCount=10,
-        rate=0.05,
+        minimumTrialCount=5,
+        rate=50,
         **kwargs
         ):
         """
