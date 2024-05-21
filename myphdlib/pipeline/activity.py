@@ -14,7 +14,7 @@ def _runZetaTestForBatch(
     eventTimestamps,
     responseWindow,
     latencyMetric='peak',
-    minimumSpikeCount=100,
+    minimumSpikeCount=3,
     iBatch=0,
     nBatches=0,
     ):
@@ -30,8 +30,12 @@ def _runZetaTestForBatch(
     #
     result = np.full([len(units), 3], np.nan)
     for i, unit in enumerate(units):
-        if unit.timestamps.size < minimumSpikeCount:
+
+        # Skip if there are not enough spikes
+        if len(unit.timestamps) < minimumSpikeCount:
             p, tLatency = np.nan, np.nan
+
+        #
         else:
             p, dZeta, dRate = zetatest(
                 unit.timestamps,
@@ -76,7 +80,7 @@ class ActivityProcessingMixin(object):
         parallelize=True,
         nUnitsPerBatch=10,
         latencyMetric='onset',
-        minimumSpikeCount=100,
+        minimumSpikeCount=3,
         overwrite=False
         ):
         """

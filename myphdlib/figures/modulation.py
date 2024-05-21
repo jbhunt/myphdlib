@@ -88,7 +88,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             probeLatencies >= perisaccadicWindow[0],
             probeLatencies <= perisaccadicWindow[1],
             gratingMotionDuringProbes == self.preference[self.iUnit]
-        ])
+        ]).all(0)
 
         # NOTE: This might fail with not enough spikes in the peri-saccadic window
         try:
@@ -429,7 +429,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         nWindows = len(self.windows)
         nTrialsPerWindow = list()
         for window in self.windows:
-            gratingMotion = self.features['d'][self.iUnit]
+            gratingMotion = self.preference[self.iUnit]
             trialIndices = np.where(np.vstack([
                 self.session.gratingMotionDuringProbes == gratingMotion,
                 self.session.probeLatencies > window[0],
@@ -446,7 +446,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
 
         #
         for iWin, window in enumerate(self.windows):
-            gratingMotion = self.features['d'][self.iUnit]
+            gratingMotion = self.preference[self.iUnit]
             trialIndices = np.where(np.vstack([
                 self.session.gratingMotionDuringProbes == gratingMotion,
                 self.session.probeLatencies > window[0],
@@ -525,16 +525,16 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             raise Exception('Could not locate example unit')
 
         #
-        mu, sigma = self.features['m'][self.iUnit], self.features['s'][self.iUnit]
+        mu, sigma = self.ns[f'stats/pref/real/extra'][self.iUnit, 0], self.factor[self.iUnit]
 
         #
-        rMixed = self.terms['rps'][self.iUnit, :, iWindow]
-        rSaccade = self.terms['rs'][self.iUnit, :, iWindow]
-        rProbeExtra = self.peths['extra'][self.iUnit]
-        rProbePeri = self.peths['peri'][self.iUnit, :, iWindow]
+        rMixed = self.ns[f'terms/pref/real/mixed'][self.iUnit, :, iWindow]
+        rSaccade = self.ns[f'terms/pref/real/saccade'][self.iUnit, :, iWindow]
+        rProbeExtra = self.ns[f'ppths/pref/real/extra'][self.iUnit]
+        rProbePeri = self.ns[f'ppths/pref/real/peri'][self.iUnit, :, iWindow]
 
         #
-        params = self.model['params1'][self.iUnit, :]
+        params = self.ns['params/pref/real/extra'][self.iUnit, :]
         params = params[np.invert(np.isnan(params))]
         abc, d = params[:-1], params[-1]
         A, B, C = np.split(abc, 3)
@@ -542,8 +542,10 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         rProbeExtraFit = g(self.tProbe, a, b, c, d)
 
         #
-        params = self.model['params2'][self.iUnit, :, iWindow, 0]
+        params = self.ns['params/pref/real/peri'][self.iUnit, iWindow, 0, :]
         params = params[np.invert(np.isnan(params))]
+        if params.size == 0:
+            return
         abc, d = params[:-1], params[-1]
         A, B, C = np.split(abc, 3)
         a, b, c = A[0], B[0], C[0]
@@ -554,7 +556,6 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             fig, axs = plt.subplots(ncols=4, sharey=True)
         axs[0].plot(self.tProbe, (rMixed - mu) / sigma, color='k')
         axs[1].plot(self.tProbe, (rSaccade) / sigma, color='k')
-        # axs[2].plot(self.t, rProbeExtra, color=colors[0], alpha=0.7 linestyle=':')
         axs[2].plot(self.tProbe, rProbePeri, color=colors[1])
 
         return
@@ -562,10 +563,8 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
     def plotAnalysisDemo(
         self,
         ukey=('2023-05-12', 'mlati7', 163),
-        responseWindow=(-0.5, 0.5),
-        windowIndices=(1, 2, 3, 4, 5, 6, 7, 8),
+        windowIndices=None,
         figsize=(5, 5),
-        useTrueRatios=False,
         **kwargs_
         ):
         """
@@ -580,7 +579,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
 
         #
         if windowIndices is None:
-            windowIndices = np.arange(10)
+            windowIndices = np.arange(self.windows.shape[0])
         elif type(windowIndices) in (list, tuple):
             windowIndices = np.array(windowIndices)
 
@@ -647,7 +646,8 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         fig, grid = plt.subplots(nrows=len(self.examples), ncols=2, sharex=True)
         if len(self.examples) == 1:
             grid = np.atleast_2d(grid)
-        cmap = plt.get_cmap('rainbow', np.nanmax(self.model['k']))
+        k = (self.ns[f'params/pref/real/extra'].shape[1] - 1) // 3
+        cmap = plt.get_cmap('rainbow', k)
 
         #
         for i in range(len(self.examples)):
@@ -656,14 +656,14 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             self.ukey = self.examples[i]
 
             # Plot the raw PETHs
-            rProbePeri = self.peths['peri'][self.iUnit, :, windowIndex]
-            rProbeExtra = self.peths['extra'][self.iUnit, :]
+            rProbePeri = self.ns[f'ppths/pref/real/peri'][self.iUnit, :, windowIndex]
+            rProbeExtra = self.ns[f'ppths/pref/real/extra'][self.iUnit, :]
             grid[i, 1].plot(self.tProbe, rProbePeri, 'k')
             grid[i, 0].plot(self.tProbe, rProbeExtra, color='k')
 
             # Plot the fit for the largest component of the response
-            paramsExtra = self.model['params1'][self.iUnit, :]
-            paramsPeri = self.model['params2'][self.iUnit, :, windowIndex, :]
+            paramsExtra = self.ns[f'params/pref/real/extra'][self.iUnit, :]
+            paramsPeri = self.ns[f'params/pref/real/peri'][self.iUnit, windowIndex, 0, :]
             for j, params in enumerate([paramsExtra, paramsPeri]):
                 params = params[np.invert(np.isnan(params))]
                 if len(params) == 0:

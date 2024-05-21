@@ -4,7 +4,7 @@ import pathlib as pl
 from matplotlib import pyplot as plt
 from myphdlib.general.toolkit import psth2
 from myphdlib.figures.analysis import AnalysisBase
-from myphdlib.figures.fictive import convertSaccadeDirectionToGratingMotion
+from myphdlib.figures.fictive import convertSaccadeDirectionToGratingMotion, convertGratingMotionToSaccadeDirection
 
 class DirectionSectivityAnalysis(AnalysisBase):
     """
@@ -226,7 +226,7 @@ class DirectionSectivityAnalysis(AnalysisBase):
 
         return
 
-    def plotModulationByDirectionSelectivity(
+    def histModulationByDirectionSelectivity(
         self,
         threshold=0.3,
         nBins=50,
@@ -315,3 +315,63 @@ class DirectionSectivityAnalysis(AnalysisBase):
         fig.tight_layout()
 
         return
+
+    def histResponseAmplitudeByEvent(
+        self,
+        responseWindow=(0, 0.5),
+        baselineWindow=(-1, -0.5),
+        figsize=(4, 4),
+        ):
+        """
+        Create histogram which shows the distribution of response amplitude for
+        preferred probes and the corresponding saccade direction
+        """
+
+        #
+        nUnits = len(self.ukeys)
+        x = np.full(nUnits, np.nan)
+        y = np.full(nUnits, np.nan)
+
+        #
+        binIndicesForResponse = np.logical_and(
+            self.tSaccade >= responseWindow[0],
+            self.tSaccade <= responseWindow[1]
+        )
+        binIndicesForBaseline = np.logical_and(
+            self.tSaccade >= baselineWindow[0],
+            self.tSaccade <= baselineWindow[1]
+        )
+
+        #
+        for iUnit in range(nUnits):
+
+            # Visual response amplitude
+            ppth = self.ns[f'ppths/pref/real/extra'][iUnit]
+            x[iUnit] = np.max(np.abs(ppth[binIndicesForResponse]))
+
+            # Saccade response amplitude
+            self.ukey = self.ukeys[iUnit]
+            saccadeDirection = convertGratingMotionToSaccadeDirection(
+                self.preference[self.iUnit],
+                self.session.eye,
+            )
+            psth = self.ns[f'psths/{saccadeDirection}/real'][iUnit]
+            bl = psth[binIndicesForBaseline].mean()
+            fr = (psth[binIndicesForResponse] - bl) / self.factor[iUnit]
+            y[iUnit] = np.max(np.abs(fr))
+
+        #
+        fig, ax = plt.subplots()
+        ax.hist(
+            x=(x, y),
+            color=('r', 'b'),
+            edgecolor='k',
+            histtype='barstacked'
+        )
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax
