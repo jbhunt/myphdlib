@@ -242,6 +242,12 @@ class StimuliProcessingMixinDreadds2(
         probeDirectionDG = metadataHolder[matchingIndicesDG, 1]
         self.save('stimuli/dg/probe/motion', probeDirectionDG)
 
+        #Assign direction to each drifting grating block
+        pulseIndex = np.where(metadataHolder[:, 0] == 1)[0]
+        blockDirection = metadataHolder[pulseIndex, 1]
+        self.save('stimuli/dg/grating/motion', blockDirection)
+        
+
     def _runStimuliModule(self):
         """
         """
