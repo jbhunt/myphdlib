@@ -123,7 +123,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
     def resampleExtrasaccadicPeths(
         self,
         nRuns=100,
-        rate=0.05,
+        rate=0.03,
         minimumTrialCount=5,
         responseWindow=(-0.2, 0.5),
         baselineWindow=(-0.2, 0),
@@ -162,7 +162,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 # bl = self.ns[f'stats/{probeDirection}/{saccadeType}/extra'][iUnit, 0]
 
                 # Load event data
-                probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes( )
+                probeTimestamps, probeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForProbes()
 
                 # Extra-saccadic trial indices
                 trialIndicesExtrasaccadic = np.where(np.vstack([
@@ -176,7 +176,10 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                     continue
 
                 # Total number of trials in the target direction
-                nTrialsTotal = np.sum(gratingMotion == self.preference[self.iUnit])
+                if probeDirection == 'pref':
+                    nTrialsTotal = np.sum(gratingMotion == self.preference[self.iUnit])
+                else:
+                    nTrialsTotal = np.sum(gratingMotion != self.preference[self.iUnit])
 
                 # Number of trials specified
                 if type(rate) == int and rate >= 1:
@@ -189,10 +192,6 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 # Check if minimum trial count is met
                 if minimumTrialCount is not None and nTrialsForResampling < minimumTrialCount:
                     nTrialsForResampling = minimumTrialCount
-
-                # Make sure there are not MORE trials for re-sampling than are available
-                if trialIndicesExtrasaccadic.size < nTrialsForResampling:
-                    raise Exception('Not enough extra-saccadic trials to re-sample')
 
                 # Compute relative spike timestamps
                 responseWindowBuffered = (
@@ -240,13 +239,13 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
     def generateNullSamples(
         self,
         nRuns=None,
-        maximumAmplitudeShift=100,
+        maximumAmplitudeShift=200,
         saccadeType='real',
-        parallelize=True,
+        parallelize=False,
         nProcesses=30,
         chunksize=1,
         maxfevs=100,
-        backend='joblib',
+        backend='multiprocessing',
         ):
         """
         """
@@ -277,6 +276,8 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                     maxfevs,
                     nRuns,
                 ))
+
+            # Parallelize the bootstrap
             if parallelize:
                 if backend == 'multiprocessing':
                     with Pool(nProcesses, maxtasksperchild=1) as pool:
@@ -292,11 +293,10 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 for iUnit, sample in result:
                     samples[iUnit] = sample
 
+            # Serial processing
             else:
-                for iUnit_, el in enumerate(arguments):
-                    end = '\r' if iUnit + 1 != nUnits else '\n'
-                    print(f'Generating null sample for unit {iUnit_ + 1} out of {nUnits}', end=end, flush=True)
-                    iUnit, sample = _generateNullSampleForSingleUnit(*el)
+                for args in arguments:
+                    iUnit, sample = _generateNullSampleForSingleUnit(*args)
                     samples[iUnit] = sample
 
             #
@@ -354,8 +354,9 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
     def plotModulationDistributionsWithHistogram(
         self,
-        iWindow=5,
         alpha=0.05,
+        windowIndex=5,
+        componentIndex=0,
         figsize=(3, 2),
         colorspace=('k', 'k', 'w'),
         minimumResponseAmplitude=0,
@@ -379,10 +380,10 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         paramsExtra = self.ns[f'params/pref/real/extra']
         pvalues = self.ns[f'p/pref/real']
         polarity = np.array([
-            -1 if mi[i, iWindow, 0] < 0 else 1
+            -1 if mi[i, windowIndex, componentIndex] < 0 else 1
                 for i in range(len(self.ukeys))
         ])
-        polarity[np.isnan(mi[:, iWindow, 0])]
+        polarity[np.isnan(mi[:, windowIndex, componentIndex])]
         samples = ([], [], [])
         for i, l in enumerate(labels):
             for sign in [-1, 1]:
@@ -391,7 +392,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                     self.labels == l,
                     np.abs(paramsExtra[:, 0]) >= minimumResponseAmplitude,
                 ]).all(0)
-                for dr, p, iUnit in zip(mi[mask, iWindow, 0], pvalues[mask, 0, 0], np.arange(len(self.ukeys))[mask]):
+                for dr, p, iUnit in zip(mi[mask, windowIndex, componentIndex], pvalues[mask, windowIndex, componentIndex], np.arange(len(self.ukeys))[mask]):
                     if l == -1:
                         dr *= -1
                     if p < alpha:
@@ -429,7 +430,9 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             iUnit = self._indexUnitKey(ukey)
             if iUnit is None:
                 continue
-            dr = mi[iUnit, iWindow, 0]
+            dr = mi[iUnit, windowIndex, componentIndex]
+            if np.isnan(dr).item():
+                continue
             binIndex = np.where(np.logical_and(
                 dr >= leftEdges,
                 dr <  rightEdges

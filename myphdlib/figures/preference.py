@@ -226,6 +226,83 @@ class DirectionSectivityAnalysis(AnalysisBase):
 
         return
 
+    def plotModulationFrequencyByDirectionSelectivity(
+        self,
+        nq=10,
+        windowIndex=5,
+        componentIndex=0,
+        figsize=(4, 2),
+        ):
+        """
+        """
+
+        fig, grid = plt.subplots(ncols=nq, sharex=True)
+
+        #
+        DSI = np.abs(self.ns['dsi/probe'])
+        MI = self.ns['mi/pref/real'][:, windowIndex, componentIndex]
+        P = self.ns['p/pref/real'][:, windowIndex, componentIndex]
+
+        #
+        exclude = np.vstack([
+            np.isnan(DSI),
+            np.isnan(MI),
+            np.isnan(P)
+        ]).any(0)
+        DSI = np.delete(DSI, exclude)
+        MI = np.delete(MI, exclude)
+        P = np.delete(P, exclude)
+
+        #
+        index = np.argsort(DSI)
+        DSI = DSI[index]
+        MI = MI[index]
+        P = P[index]
+
+        #
+        stack = np.vstack([
+            DSI,
+            MI,
+            P
+        ])
+
+        #
+        ylims = list()
+        for i, quantile in enumerate(np.array_split(stack, nq, axis=1)):
+
+            #
+            dsi = quantile[0, :]
+            mi = quantile[1, :]
+            p = quantile[2, :]
+
+            #
+            n1 = np.sum(np.logical_and(mi < 0, p < 0.05))
+            grid[i].bar(0, n1, bottom=0, color='b', width=1)
+            n2 = np.sum(p >= 0.05)
+            grid[i].bar(0, n2, bottom=n1, color='w', width=1)
+            n3 = np.sum(np.logical_and(mi > 0, p < 0.05))
+            grid[i].bar(0, n3, bottom=n1 + n2, color='r', width=1)
+
+            #
+            ylims.append([0, p.size])
+
+        #
+        for iq, ax in enumerate(grid):
+            ax.set_xlim([-0.5, 0.5])
+            ax.set_ylim(ylims[iq])
+            ax.set_xticks([0,])
+            ax.set_xticklabels([])
+        for ax in grid[1:]:
+            ax.set_yticks([])
+        fig.supxlabel('DSI', fontsize=10)
+        fig.supylabel('N units', fontsize=10)
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+        fig.subplots_adjust(wspace=0.2)
+
+        return fig, grid
+
     def histModulationByDirectionSelectivity(
         self,
         threshold=0.5,
