@@ -6,6 +6,7 @@ from matplotlib import pyplot as plt
 from myphdlib.figures.analysis import g
 from myphdlib.figures.bootstrap import BootstrappedSaccadicModulationAnalysis
 from myphdlib.general.toolkit import psth2
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 def convertGratingMotionToSaccadeDirection(
     gratingMotion=-1,
@@ -484,50 +485,72 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
 
     def scatterModulationBySaccadeType(
         self,
-        bounds=(-3, 3),
+        xylim=3,
         windowIndex=5,
         componentIndex=0,
-        transform=True,
-        figsize=(9, 3),
+        transform=False,
+        labels=(1, 2),
+        figsize=(4.5, 4),
         ):
         """
         """
 
         #
-        fig, axs = plt.subplots(ncols=4)
+        fig, axs = plt.subplots(ncols=len(labels))
 
         #
-        u = self._classifyUnitsByAmplitude()
+        u = self._classifyUnitsWithCorrelation()
         x = self.ns['mi/pref/real'][:, windowIndex, componentIndex]
         y = self.ns['mi/pref/fictive'][:, 0, componentIndex]
+
+        #
         if transform:
             x = np.tanh(x)
             y = np.tanh(y)
-            bounds = (-1, 1)
+            xylim = 1
 
         #
-        for label, ax in zip(np.unique(u), axs):
+        x = np.clip(x, -1 * xylim, xylim)
+        y = np.clip(y, -1 * xylim, xylim)
+
+        #
+        for label, ax in zip(labels, axs):
 
             #
-            mask = u == label
+            mask = np.vstack([
+                u == label,
+                self.ns['p/pref/real'][:, windowIndex, componentIndex] < 0.05,
+                self.ns['mi/pref/real'][:, windowIndex, componentIndex] < 0,
+                np.invert(np.isnan(self.ns['mi/pref/fictive'][:, 0, componentIndex]))
+            ]).all(0)
 
             #
-            c = list()
-            p = list()
+            C = list()
+            P = list()
             for iUnit in np.where(mask)[0]:
-                pReal = self.ns['p/pref/real'][iUnit, windowIndex, componentIndex]
-                pFictive = self.ns['p/pref/fictive'][iUnit, 0, componentIndex]
-                p.append(np.min([pReal, pFictive]))
-                if pReal < 0.05 and pFictive < 0.05:
-                    c.append('xkcd:purple')
-                elif pReal < 0.05 and pFictive >= 0.05:
-                    c.append('xkcd:orange')
-                elif pReal >= 0.05 and pFictive < 0.05:
-                    c.append('xkcd:green')
-                else:
-                    c.append('0.8')
-            c = np.array(c)
-            order = np.argsort(p)[::-1]
+
+                # load MI and p-value
+                p = self.ns['p/pref/fictive'][iUnit, 0, componentIndex]
+                mi = self.ns['mi/pref/fictive'][iUnit, 0, componentIndex]
+
+                # Real and fictive saccadic suppression
+                if p < 0.05 and mi < 0:
+                    C.append('xkcd:purple')
+                    P.append(p)
+
+                # Real saccdic suppresssion and fictive saccadic enhancement
+                elif p < 0.05 and mi > 0:
+                    C.append('xkcd:orange')
+                    P.append(p)
+
+                # Real saccadic suppression and no modulation for fictive saccades
+                elif p >= 0.05:
+                    C.append('xkcd:green')
+                    P.append(p)
+
+            #
+            C = np.array(C)
+            order = np.argsort(P)[::-1]
 
             #
             ax.scatter(
@@ -535,22 +558,38 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                 y[mask][order],
                 marker='.',
                 s=15,
-                c=c[order],
+                c=C[order],
                 alpha=0.7,
+                clip_on=False,
             )
+
+            #
+            divider = make_axes_locatable(ax)
+            bar = divider.append_axes('right', size='10%', pad=0.05)
+            colors, counts = np.unique(C, return_counts=True)
+            bottom = 0
+            for color in ('xkcd:purple', 'xkcd:green', 'xkcd:orange'):
+                i = np.where(colors == color)[0]
+                bar.bar(0, counts[i], width=1, bottom=bottom, color=color)
+                bottom += counts[i]
+            bar.set_yticks([])
+            bar.set_xticks([])
+            bar.set_ylim([0, bottom])
+            bar.set_xlim([-0.5, 0.5])
 
         #
         for ax in axs:
-            ax.vlines(0, *bounds, color='k', alpha=0.5, linestyle=':')
-            ax.hlines(0, *bounds, color='k', alpha=0.5, linestyle=':')
-            ax.set_ylim(bounds)
-            ax.set_xlim(bounds)
+            ax.vlines(0, -1 * xylim, xylim, color='k', alpha=0.5, linestyle=':')
+            ax.hlines(0, -1 * xylim, 0, color='k', alpha=0.5, linestyle=':')
+            ax.set_ylim([-1 * xylim, xylim])
+            ax.set_xlim([-1 * xylim, 0])
             ax.set_aspect('equal')
             ax.set_xlabel('MI (Real)')
         axs[0].set_ylabel('MI (Fictive)')
         titles = ('Type 1', 'Type 2', 'Type 3', 'Type 4')
         for i in range(len(axs)):
             axs[i].set_title(titles[i], fontsize=10)
+        axs[1].set_yticklabels([])
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()

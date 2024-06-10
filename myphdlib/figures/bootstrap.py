@@ -351,33 +351,39 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                         self.ns[f'p/{probeDirection}/{saccadeType}'][self.iUnit, iWindow, iComp] = p
 
         return
+    
 
+    # TODO: Indicate which significantly modulated units have little or no saccade response
     def histModulationIndices(
         self,
         windowIndex=5,
         componentIndex=0,
-        minimumResponseAmplitude=0,
+        minimumProbeResponseAmplitude=0,
+        maximumSaccadeResponseAmplitude=2,
+        transform=False,
         nbins=30,
         colors=('b', 'r', '0.8'),
-        xrange=(-1, 1),
-        xticks=np.linspace(-1, 1, 5),
+        xrange=(-3, 3),
+        xticks=None,
         figsize=(4, 2),
         ):
         """
         """
 
+        # Collect the subsets of unit
         samples = list()
-        include = self.ns['params/pref/real/extra'][:, 0] >= minimumResponseAmplitude
+        include = self.ns['params/pref/real/extra'][:, 0] >= minimumProbeResponseAmplitude
         for sign in (-1, 1, 0):
             sample = list()
             for iUnit in range(len(self.ukeys)):
                 if include[iUnit] == False:
                     continue
-                # mi = np.clip(
-                #     self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex],
-                #     *xrange
-                # )
-                mi = np.tanh(self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex])
+                mi = self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex]
+                if transform:
+                    mi = np.tanh(mi)
+                    xrange = (-1, 1)
+                else:
+                    mi = np.clip(mi, *xrange)
                 p = self.ns['p/pref/real'][iUnit, windowIndex, componentIndex]
                 if sign == -1:
                     if mi < 0 and p < 0.05:
@@ -401,15 +407,6 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         for i, patches in enumerate(patchList):
             for patch in patches:
                 patch.set_facecolor(colors[i])
-
-        # ax.hist(
-        #     np.concatenate([sample for sample in samples]),
-        #     bins=nbins,
-        #     facecolor=None,
-        #     edgecolor='k', 
-        #     range=xrange,
-        #     histtype='step'
-        # )
 
         binCounts = binCounts_.max(0)
         binCenters = binEdges[:-1] + ((binEdges[1] - binEdges[0]) / 2)
@@ -441,7 +438,8 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             ax.spines[sp].set_visible(False)
 
         #
-        ax.set_xticks(xticks)
+        if xticks is not None:
+            ax.set_xticks(xticks)
         ax.set_ylabel('# of units')
         ax.set_xlabel(f'Modulation index (MI)')
         fig.set_figwidth(figsize[0])
