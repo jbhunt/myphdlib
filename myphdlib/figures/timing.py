@@ -1,5 +1,6 @@
 import h5py
 import numpy as np
+import pathlib as pl
 from scipy import stats
 from scipy.interpolate import interp1d
 from scipy.optimize import fmin
@@ -60,56 +61,6 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             ('2023-05-24', 'mlati7', 337),
             ('2023-05-17', 'mlati7', 237),
         )
-
-        return
-
-    def loadNamespace(self):
-        """
-        """
-
-        #
-        datasets = {
-            'clustering/peths/standard': (self.peths, 'extra'),
-            'clustering/model/params': (self.model, 'params'),
-            'clustering/model/labels': (self.model, 'labels'),
-            'clustering/model/k': (self.model, 'k'),
-            'clustering/model/fits': (self.model, 'fits'),
-            'clustering/model/peaks': (self.model, 'peaks'),
-            'clustering/features/d': (self.features, 'd'),
-            'clustering/features/m': (self.features, 'm'),
-            'clustering/features/s': (self.features, 's'),
-            'clustering/filter': ('filter', None),
-            'modulation/mi': ('mi', None),
-            'modulation/windows': ('windows', None),
-            'modulation/peths/peri': (self.peths, 'peri'),
-            'modulation/terms/rps': (self.terms, 'rps'),
-            'modulation/terms/rs': (self.terms, 'rs')
-        }
-
-        with h5py.File(self.hdf, 'r') as stream:
-            for path, (attr, key) in datasets.items():
-                parts = path.split('/')
-                if path in stream:
-                    ds = stream[path]
-                    if path == 'modulation/peths/peri':
-                        self.tProbe = ds.attrs['t']
-                    if path == 'modulation/templates/nasal':
-                        self.tSaccade = ds.attrs['t']
-                    value = np.array(ds)
-                    if 'filter' in parts:
-                        value = value.astype(bool)
-                    if len(value.shape) == 2 and value.shape[-1] == 1:
-                        value = value.flatten()
-                    if key is None:
-                        setattr(self, attr, value)
-                    else:
-                        attr[key] = value
-
-        return
-    
-    def saveNamespace(self):
-        """
-        """
 
         return
 
@@ -431,7 +382,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         fig.tight_layout()
         return fig, axs
     
-    def plotPerisaccadicResponsesForExamples2(
+    def plotPerisaccadicResponsesForExamples(
         self,
         figsize=(4, 3),
         ):
@@ -442,14 +393,34 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         cmap = plt.get_cmap('gist_rainbow', len(self.windows))
         for i, ukey in enumerate(self.examples):
             iUnit = self._indexUnitKey(ukey)
-            for j in range(len(self.windows)):
-                y = self.peths['peri'][iUnit, :, j]
-                grid[i].plot(
-                    self.tProbe + self.windows[j].mean(),
-                    y,
-                    color=cmap(j),
-                    alpha=0.7
+            for windowIndex in range(len(self.windows)):
+                yFull = self.ns[f'ppths/pref/real/peri'][iUnit, :, windowIndex]
+                tShort = np.linspace(0, 0.3, 100)
+                yShort = np.interp(
+                    tShort,
+                    self.tProbe,
+                    yFull
                 )
+                tShifted = tShort + self.windows[windowIndex].mean()
+                grid[i].plot(
+                    tShifted,
+                    yShort,
+                    color=cmap(windowIndex),
+                    alpha=0.5,
+                )
+
+                #
+                y1, y2 = grid[i].get_ylim()
+                grid[i].scatter(
+                    0 + self.windows[windowIndex].mean(),
+                    # np.interp(0, self.tProbe, yFull) + self.windows[windowIndex].mean(),
+                    y1,
+                    color=cmap(windowIndex),
+                    s=5,
+                    clip_on=False,
+                    zorder=3,
+                )
+                grid[i].set_ylim([y1, y2])
 
         #
         for ax in grid:
@@ -462,71 +433,25 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         fig.tight_layout()
 
         return fig, grid
-
-    # TODO: Refactor this method
-    def plotPerisaccadicResponsesForExamples(
-        self,
-        ukeys=(
-            ('2023-05-24', 'mlati7', 337),
-            ('2023-05-17', 'mlati7', 237),
-        ),
-        colors=(
-            plt.cm.Dark2(1),
-            plt.cm.Dark2(2),
-        ),
-        figsize=(7, 2)
-        ):
-        """
-        """
-
-        fig, axs = plt.subplots(nrows=len(ukeys), ncols=len(self.windows) - 1, sharex=True)
-        if len(ukeys) == 1:
-            axs = axs.reshape(-1, 1)
-        for j in np.arange(len(ukeys)):
-            self.ukey = ukeys[j]
-            for i in np.arange(len(self.windows) - 1):
-                axs[j, i].plot(
-                    self.t,
-                    self.peths['peri'][self.iUnit, :, i],
-                    color=colors[j]
-                )
-
-        #
-        for i in range(len(ukeys)):
-            ylim = [np.inf, -np.inf]
-            for j in range(axs.shape[1]):
-                y1, y2 = axs[i, j].get_ylim()
-                if y1 < ylim[0]:
-                    ylim[0] = y1
-                if y2 > ylim[1]:
-                    ylim[1] = y2
-            for j in range(axs.shape[1]):
-                axs[i, j].set_ylim(ylim)
-        for ax in axs.flatten():
-            for sp in ('top', 'right', 'bottom', 'left'):
-                ax.spines[sp].set_visible(False)
-        for ax in axs[:, 1:].flatten():
-            ax.set_yticks([])
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-        fig.subplots_adjust(hspace=0.15)
-        return fig, axs
-
     
     def plotModulationByIntegratedLatency(
         self,
-        ax=None,
+        componentIndex=0,
         perisaccadicWindow=(-0.5, 0.5),
         binsize=0.1,
         interpolationWindow=(-0.3, 0.45),
-        nPointsForEvaluation=1000,
-        yrange=(-2, 2),
+        nPointsForEvaluation=100,
+        transform=False,
+        yrange=(-3, 3),
         figsize=(3, 3),
         **kwargs_
         ):
         """
         """
+
+        #
+        if transform:
+            yrange = (-1, 1)
 
         #
         kwargs = {
@@ -536,49 +461,53 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             'alpha': 0.5,
         }
         kwargs.update(kwargs_)
-        if ax is None:
-            fig, ax = plt.subplots()
+        fig, ax = plt.subplots()
 
         #
         leftEdges = np.arange(perisaccadicWindow[0], perisaccadicWindow[1], binsize)
         rightEdges = leftEdges + binsize
 
         #
-        nUnits, nBins, nWindows = self.peths['peri'].shape
+        nUnits, nBins, nWindows = self.ns['ppths/pref/real/peri'].shape
         windowCenters = np.mean(self.windows, axis=1)
         lines = list()
         for iUnit in range(nUnits):
 
-            #
-            if self.filter[iUnit] == False:
-                continue
+            # Exclude enhanced or unmodulated units
+            checks = np.vstack([
+                self.ns['p/pref/real'][iUnit, :, componentIndex] < 0.05,
+                self.ns['mi/pref/real'][iUnit, :, componentIndex] < 0
+            ]).all(0)
+            if np.any(checks):
 
-            # TODO: Exclude enhanced or unmodulated units
+                # Extract peak latency and amplitude for the largest component
+                params = self.ns['params/pref/real/extra'][iUnit]
+                abcd = np.delete(params, np.isnan(params))
+                abc, d = abcd[:-1], abcd[-1]
+                A, B, C = np.split(abc, 3)
+                peakLatency = B[0]
 
-            # Extract peak latency and amplitude for the largest component
-            abcd = np.delete(self.model['params'][iUnit], np.isnan(self.model['params'][iUnit]))
-            abc, d = abcd[:-1], abcd[-1]
-            A, B, C = np.split(abc, 3)
-            peakLatency = B[0]
-            peakAmplitude = A[0]
+                # Plot shifted curves
+                y = list()
+                t = list()
+                for iWindow in range(nWindows):
+                    t.append(windowCenters[iWindow] + peakLatency)
+                    mi = self.ns['mi/pref/real'][iUnit, iWindow, 0]
+                    if transform:
+                        y.append(np.tanh(mi))
+                    else:
+                        y.append(mi)
+                ax.plot(t, np.clip(y, *yrange), color='0.5', alpha=0.075, lw=0.5)
 
-            # Plot shifted curves
-            y = list()
-            t = list()
-            for iWindow in range(nWindows):
-                t.append(windowCenters[iWindow] + peakLatency)
-                y.append(self.mi[iUnit, iWindow, 0] / peakAmplitude)
-            ax.plot(t, np.clip(y, *yrange), color='0.5', alpha=0.3, lw=0.5)
-
-            # Interpolate
-            interpolated = np.interp(
-                np.linspace(*interpolationWindow, nPointsForEvaluation),
-                t,
-                y,
-                left=np.nan,
-                right=np.nan
-            )
-            lines.append(interpolated)
+                # Interpolate
+                interpolated = np.interp(
+                    np.linspace(*interpolationWindow, nPointsForEvaluation),
+                    t,
+                    y,
+                    left=np.nan,
+                    right=np.nan
+                )
+                lines.append(interpolated)
 
         #
         ax.plot(
@@ -586,12 +515,18 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             np.nanmean(lines, axis=0),
             color='k'
         )
+        # ax.fill_between(
+        #     np.linspace(*interpolationWindow, nPointsForEvaluation),
+        #     np.nanmean(lines, axis=0) - np.nanstd(lines, axis=0),
+        #     np.nanmean(lines, axis=0) + np.nanstd(lines, axis=0),
+        #     color='0.5',
+        #     alpha=0.2
+        # )
         xlim = ax.get_xlim()
-        ylim = ax.get_ylim()
-        ax.vlines(0, *ylim, color='k', alpha=0.7, linestyle=':')
+        ax.vlines(0, *yrange, color='k', alpha=0.7, linestyle=':')
         ax.hlines(0, *xlim, color='k', alpha=0.7, linestyle=':')
         ax.set_xlim(xlim)
-        ax.set_ylim(ylim)
+        ax.set_ylim(yrange)
 
         #
         ax.set_xlabel('Time from saccade (sec)')

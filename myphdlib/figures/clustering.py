@@ -47,6 +47,29 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
         return
 
+    def _loadEventDataForSaccades(
+        self,
+        ):
+        """
+        """
+
+        return (
+            self.session.saccadeTimestamps[:, 0],
+            self.session.saccadeLatencies,
+            self.session.saccadeLabels,
+            self.session.gratingMotionDuringSaccades
+        )
+    
+    def _loadEventDataForProbes(
+        self,
+        ):
+        """
+        """
+
+        saccadeLabels = self.session.load('stimuli/dg/probe/dos')
+
+        return self.session.probeTimestamps, self.session.probeLatencies, saccadeLabels, self.session.gratingMotionDuringProbes
+
     def computeExtrasaccadicPeths(
         self,
         responseWindow=(-0.2, 0.5),
@@ -75,8 +98,9 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         for motionDirection in ('pref', 'null'):
             self.ns[f'ppths/{motionDirection}/{saccadeType}/extra'] = np.full([nUnits, nBins], np.nan)
             self.ns[f'stats/{motionDirection}/{saccadeType}/extra'] = np.full([nUnits, 2], np.nan)
-        self.ns[f'globals/factor'] = np.full(nUnits, np.nan)
-        self.ns[f'globals/preference'] = np.full(nUnits, np.nan)
+        if saccadeType == 'real':
+            self.ns[f'globals/factor'] = np.full(nUnits, np.nan)
+            self.ns[f'globals/preference'] = np.full(nUnits, np.nan)
 
         for iUnit, ukey in enumerate(self.ukeys):
 
@@ -93,40 +117,50 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             }
 
             #
+            probeTimestamps, probeLatencies, saccadeLabels, gratingMotionDuringProbes = self._loadEventDataForProbes()
+
+            #
             for i, gratingMotion in enumerate([-1, 1]):
 
                 # Select just the extra-saccadic trials
                 trialIndices = np.where(np.vstack([
-                    self.session.gratingMotionDuringProbes == gratingMotion,
+                    gratingMotionDuringProbes == gratingMotion,
                     np.logical_or(
-                        self.session.probeLatencies > perisaccadicWindow[1],
-                        self.session.probeLatencies < perisaccadicWindow[0]
+                        probeLatencies > perisaccadicWindow[1],
+                        probeLatencies < perisaccadicWindow[0]
                     )
                 ]).all(0))[0]
 
-                # Compute firing rate
-                t, fr = self.unit.kde(
-                    self.session.probeTimestamps[trialIndices],
-                    responseWindow=responseWindow,
-                    binsize=binsize,
-                    sigma=smoothingKernelWidth,
-                )
+                #
+                try:
 
-                # Estimate baseline firing rate
-                t, bl1 = self.unit.kde(
-                    self.session.probeTimestamps[trialIndices],
-                    responseWindow=baselineWindow,
-                    binsize=binsize,
-                    sigma=smoothingKernelWidth
-                )
+                    # Compute firing rate
+                    t, fr = self.unit.kde(
+                        probeTimestamps[trialIndices],
+                        responseWindow=responseWindow,
+                        binsize=binsize,
+                        sigma=smoothingKernelWidth,
+                    )
 
-                # Estimate standard deviation of firing rate
-                t, bl2 = self.unit.kde(
-                    self.session.probeTimestamps[trialIndices],
-                    responseWindow=standardizationWindow,
-                    binsize=binsize,
-                    sigma=smoothingKernelWidth
-                )
+                    # Estimate baseline firing rate
+                    t, bl1 = self.unit.kde(
+                        probeTimestamps[trialIndices],
+                        responseWindow=baselineWindow,
+                        binsize=binsize,
+                        sigma=smoothingKernelWidth
+                    )
+
+                    # Estimate standard deviation of firing rate
+                    t, bl2 = self.unit.kde(
+                        probeTimestamps[trialIndices],
+                        responseWindow=standardizationWindow,
+                        binsize=binsize,
+                        sigma=smoothingKernelWidth
+                    )
+
+                #
+                except:
+                    continue
 
                 #
                 features['ppths'][i] = np.around(fr, 3)
@@ -136,8 +170,9 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             #
             iPref = np.argmax(features['amplitude'])
             iNull = 0 if iPref == 1 else 1
-            self.ns[f'globals/preference'][iUnit] = np.array([-1, 1])[iPref]
-            self.ns[f'globals/factor'][iUnit] = features['stats'][iPref, 1]
+            if saccadeType == 'real':
+                self.ns[f'globals/preference'][iUnit] = np.array([-1, 1])[iPref]
+                self.ns[f'globals/factor'][iUnit] = features['stats'][iPref, 1]
             for motionDirection, iRow in zip(['pref', 'null'], [iPref, iNull]):
                 z = (features['ppths'][iRow] - features['stats'][iRow, 0]) / self.ns[f'globals/factor'][iUnit]
                 self.ns[f'ppths/{motionDirection}/{saccadeType}/extra'][iUnit] = z
@@ -516,6 +551,10 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         ):
         """
         """
+
+        #
+        if type(cmap) == str:
+            cmap = plt.get_cmap(cmap)
 
         #
         labels = self.ns['globals/labels']

@@ -26,35 +26,12 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
 
         #
         self.examples = (
-            ('2023-07-12', 'mlati9', 710),
-            ('2023-07-20', 'mlati9', 337),
-            ('2023-05-26', 'mlati7', 336)
+            ('2023-07-05', 'mlati9', 288), # Enhanced
+            ('2023-07-20', 'mlati9', 337), # No modulation
+            ('2023-07-07', 'mlati9', 206), # Suppressed
         )
 
         return
-
-    def _loadEventDataForSaccades(
-        self,
-        ):
-        """
-        """
-
-        return (
-            self.session.saccadeTimestamps[:, 0],
-            self.session.saccadeLatencies,
-            self.session.saccadeLabels,
-            self.session.gratingMotionDuringSaccades
-        )
-    
-    def _loadEventDataForProbes(
-        self,
-        ):
-        """
-        """
-
-        saccadeLabels = self.session.load('stimuli/dg/probe/dos')
-
-        return self.session.probeTimestamps, self.session.probeLatencies, saccadeLabels, self.session.gratingMotionDuringProbes
 
     def _computeResponseTerms(
         self,
@@ -165,9 +142,9 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             # Set the unit (and session)
             self.ukey = self.ukeys[self.iUnit]
 
+
             #
             saccadeTimestamps, saccadeLatencies, saccadeLabels, gratingMotion = self._loadEventDataForSaccades()
-            import pdb; pdb.set_trace()
 
             # Compute saccade response templates
             for saccadeLabel, saccadeDirection in zip([-1, 1], ['temporal', 'nasal']):
@@ -295,18 +272,18 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         """
 
         #
-        params1 = self.ns[f'params/{probeDirection}/{saccadeType}/extra'][self.iUnit]
-        if np.isnan(params1).all():
+        paramsExtra = self.ns[f'params/{probeDirection}/{saccadeType}/extra'][self.iUnit]
+        if np.isnan(paramsExtra).all():
             return None, None
-        abcd = params1[np.invert(np.isnan(params1))]
+        abcd = np.delete(paramsExtra, np.isnan(paramsExtra))
         abc, d1 = abcd[:-1], abcd[-1]
         A1, B1, C1 = np.split(abc, 3)
         k = A1.size
 
         #
-        kmax = (params1.size - 1) // 3
+        kmax = (paramsExtra.size - 1) // 3
         dr = np.full(kmax, np.nan)
-        params2 = np.full([kmax, params1.size], np.nan)
+        paramsPeri = np.full([kmax, paramsExtra.size], np.nan)
 
         #
         for iComp in np.arange(k):
@@ -335,7 +312,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             B2 = np.split(gmm._popt[1:], 3)[1]
             C2 = np.split(gmm._popt[1:], 3)[2]
             d2 = gmm._popt[0]
-            params2[iComp, :abc.size + 1] = np.concatenate([
+            paramsPeri[iComp, :abc.size + 1] = np.concatenate([
                 A2,
                 B2,
                 C2,
@@ -345,12 +322,13 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             
             dr[iComp] = A2[iComp] - A1[iComp]
 
-        return dr, params2
+        return dr, paramsPeri
     
     def fitPerisaccadicPeths(
         self,
         maximumAmplitudeShift=200,
-        saccadeType='real'
+        saccadeType='real',
+        applyCorrection=False,
         ):
         """
         """
@@ -377,6 +355,8 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
                 # Extra-saccadic parameters
                 paramsExtra = self.ns[f'params/{probeDirection}/{saccadeType}/extra'][self.iUnit]
                 paramsExtra = np.delete(paramsExtra, np.isnan(paramsExtra))
+                if paramsExtra.size == 0:
+                    continue
                 abc = paramsExtra[:-1]
                 responseAmplitudes, B, C = np.split(abc, 3)
 
@@ -393,6 +373,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
                         peth=peth,
                         probeDirection=probeDirection,
                         maximumAmplitudeShift=maximumAmplitudeShift,
+                        saccadeType=saccadeType
                     )
                     if all([responseDeltas is None, paramsPeri is None]):
                         continue
@@ -402,6 +383,66 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
                     mi = responseDeltas / responseAmplitudes
                     self.ns[f'mi/{probeDirection}/{saccadeType}'][self.iUnit, iWin, :mi.size] = mi
                     self.ns[f'params/{probeDirection}/{saccadeType}/peri'][self.iUnit, iWin, :, :] = paramsPeri
+
+        # Correct the sign of modulation for the null probe based on the sign
+        # of the response to the preferred probe
+        if applyCorrection:
+            self._correctModulationIndexForNullProbes(
+                saccadeType,
+            )
+
+        return
+
+    def _correctModulationIndexForNullProbes(
+        self,
+        saccadeType='real',
+        maximumComponentDistance=0.01,
+        ):
+        """
+        Reverses the sign of modulation for null probes if the responses to the
+        preferred and null probes have opposite signs
+        """
+
+        nUnits, nBins, nWindows = self.ns[f'ppths/pref/{saccadeType}/peri'].shape
+        corrected = np.copy(self.ns[f'mi/null/{saccadeType}'])
+
+        #
+        for ukey in self.ukeys:
+
+            #
+            self.ukey = ukey
+
+            # Extra-saccadic params for the preferred direction
+            paramsPrefExtra = self.ns[f'params/pref/{saccadeType}/extra'][self.iUnit]
+            paramsPrefExtra = np.delete(paramsPrefExtra, np.isnan(paramsPrefExtra))
+            aPrefExtra, bPrefExtra, cPrefExtra = np.split(paramsPrefExtra[:-1], 3)
+
+            # Extra-saccadic params for the null direction
+            paramsNullExtra = self.ns[f'params/null/{saccadeType}/extra'][self.iUnit]
+            paramsNullExtra = np.delete(paramsNullExtra, np.isnan(paramsNullExtra))
+            aNullExtra, bNullExtra, cNullExtra = np.split(paramsNullExtra[:-1], 3)
+
+            #
+            for iComp in range(aNullExtra.size):
+
+                # Lookup the closest component in the extra-saccadic response to the preferred probe
+                closest = np.argmin(np.abs(bNullExtra[iComp] - bPrefExtra))
+                if closest > maximumComponentDistance:
+                    continue
+
+                #
+                flipSign = any([
+                    aNullExtra[iComp] < 0 and aPrefExtra[closest] > 0,
+                    aNullExtra[iComp] > 0 and aPrefExtra[closest] < 0
+                ])
+
+                #
+                if flipSign:
+                    for iWindow in range(nWindows):
+                        corrected[self.iUnit, iWindow, iComp] *= -1
+
+        #
+        self.ns[f'mi/null/{saccadeType}'] = corrected
 
         return
 
@@ -637,10 +678,11 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
 
     def plotExamplePeths(
         self,
-        figsize=(3, 3.5),
+        figsize=(2.5, 3.5),
         windowIndex=5,
-        yticks=(20,),
-        xticks=(0, 0.3)
+        yticks=(0, 50),
+        xticks=(-0.2, 0, 0.2),
+        xrange=(-0.2, 0.2),
         ):
         """
         """
@@ -664,22 +706,34 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             # Plot the raw PETHs
             rProbePeri = self.ns[f'ppths/pref/real/peri'][self.iUnit, :, windowIndex]
             rProbeExtra = self.ns[f'ppths/pref/real/extra'][self.iUnit, :]
-            grid[i, 1].plot(self.tProbe, rProbePeri, 'k')
-            grid[i, 0].plot(self.tProbe, rProbeExtra, color='k')
 
             # Plot the fit for the largest component of the response
             paramsExtra = self.ns[f'params/pref/real/extra'][self.iUnit, :]
             paramsPeri = self.ns[f'params/pref/real/peri'][self.iUnit, windowIndex, 0, :]
+
+            #
             for j, params in enumerate([paramsExtra, paramsPeri]):
+
+                #
                 params = np.delete(params, np.isnan(params))
                 if len(params) == 0:
                     continue
                 abc, d = params[:-1], params[-1]
                 A, B, C = np.split(abc, 3)
                 a, b, c = A[0], B[0], C[0]
-                t = np.linspace(-15 * C[0], 15 * C[0], 100) + B[0]
-                yFit = g(t, a, b, c, d)
-                grid[i, j].plot(t, yFit, color=cmap(0))
+
+                #
+                t2 =  np.linspace(*xrange, 100) + B[0]
+                yPeri = np.interp(t2, self.tProbe, rProbePeri)
+                yExtra = np.interp(t2, self.tProbe, rProbeExtra)
+                grid[i, 1].plot(t2- B[0], yPeri, 'k', alpha=0.1)
+                grid[i, 0].plot(t2 - B[0], yExtra, color='k', alpha=0.1)
+
+                #
+                t1 = np.linspace(-15 * C[0], 15 * C[0], 100) + B[0]
+                yFit = g(t1, a, b, c, d)
+                color = 'k' if j == 0 else 'g'
+                grid[i, j].plot(t1 - B[0], yFit, color=color, zorder=3, linestyle='-')
 
         #
         for axs in grid:
@@ -697,13 +751,22 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         for ax in grid.flatten():
             ax.set_yticks(yticks)
             ax.set_xticks(xticks)
+        for ax in grid[:, 1].flatten():
+            ax.set_yticks([])
+            ax.spines['left'].set_visible(False)
 
         #
         for ax in grid.flatten():
-            for sp in ('top', 'right', 'bottom', 'left'):
+            for sp in ('top', 'right'):
                 ax.spines[sp].set_visible(False)
 
         #
+        for ax in grid[-1, :].flatten():
+            ax.set_xticklabels(xticks, rotation=45)
+
+        #
+        fig.supxlabel('Time from response peak (sec)', fontsize=10)
+        fig.supylabel('FR (z-scored)', fontsize=10)
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()

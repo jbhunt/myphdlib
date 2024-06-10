@@ -490,7 +490,14 @@ class SaccadesProcessingMixin(object):
 
         #
         for eye in ('left', 'right'):
-            saccadeOnsetTimestamps = self.load(f'saccades/predicted/{eye}/timestamps')[:, 0]
+
+            #
+            saccadeEpochs = self.load(f'saccades/predicted/{eye}/timestamps')
+            if saccadeEpochs is None or saccadeEpochs.shape[0] == 0:
+                continue
+
+            #
+            saccadeOnsetTimestamps = saccadeEpochs[:, 0]
             gratingMotionBySaccade = list()
 
             if self.cohort in (1, 2, 3):

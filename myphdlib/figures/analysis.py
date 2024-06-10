@@ -167,6 +167,11 @@ class Namespace():
             'p/null/real': None,
             'p/null/fictive': None,
 
+            # Direction selectivity index
+            'dsi/probe': None,
+            'dsi/saccade': None,
+            'dsi/bar': None,
+
             # Global variables
             'globals/factor': None, # Scaling factor (standard deviation of baseline firing rate for preferred direction)
             'globals/preference': None, # Preferred direction of motion
@@ -545,6 +550,25 @@ class AnalysisBase():
                 mask[i] = True
 
         return mask
+
+    def _getSessionFromUnitKey(
+        self,
+        ukey
+        ):
+        """
+        """
+
+        date, animal, cluster = ukey
+        session = None
+        for session_ in self.sessions:
+            if str(session_.date) == date and session_.animal == animal:
+                session = session_
+                break
+
+        if session is None:
+            raise Exception('Could not get session')
+
+        return session
 
     def _saveLargeDataset(
         self,

@@ -64,8 +64,11 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
 
         #
         self.examples = (
-
+            ('2023-07-14', 'mlati9', 231),
+            ('2023-05-12', 'mlati7', 222),
+            ('2023-05-29', 'mlati7', 550),
         )
+        self.colors = ('c', 'y', 'm')
 
         return
 
@@ -78,7 +81,10 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         ])
         return
 
-    def _loadEventDataForSaccades(self):
+    def _loadEventDataForSaccades(
+        self,
+        coincidenceWindow=(-0.1, 0.1),
+        ):
         """
         """
 
@@ -87,20 +93,37 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         saccadeTimestamps = self.session.load('stimuli/fs/saccade/timestamps')
 
         #
-        saccadeLatencies = np.full(saccadeTimestamps.size, np.nan)
+        saccadeLatencies1 = np.full(saccadeTimestamps.size, np.nan)
         for iTrial in range(saccadeTimestamps.size):
             iProbe = np.argmin(np.abs(saccadeTimestamps[iTrial] - probeTimestamps))
-            saccadeLatencies[iTrial] = saccadeTimestamps[iTrial] - probeTimestamps[iProbe]
+            saccadeLatencies1[iTrial] = saccadeTimestamps[iTrial] - probeTimestamps[iProbe]
 
         saccadeDirection = np.array([
             convertGratingMotionToSaccadeDirection(gm, self.session.eye)
                 for gm in gratingMotion
         ])
         saccadeLabels = np.array([-1 if sd == 'temporal' else 1 for sd in saccadeDirection])
-            
-        return saccadeTimestamps, saccadeLatencies, saccadeLabels, gratingMotion
 
-    def _loadEventDataForProbes(self):
+        # Compute the latency from fictive saccades to real saccades
+        saccadeLatencies2 = np.full(saccadeTimestamps.size, np.nan)
+        saccadeTimestampsReal = np.delete(
+            self.session.saccadeTimestamps[:, 0],
+            np.isnan(self.session.saccadeTimestamps[:, 0])
+        )
+        for iTrial in range(saccadeTimestamps.size):
+            iSaccade = np.argmin(np.abs(saccadeTimestamps[iTrial] - saccadeTimestampsReal))
+            saccadeLatencies2[iTrial] = saccadeTimestamps[iTrial] - saccadeTimestampsReal[iSaccade]
+        include = np.logical_or(
+            saccadeLatencies2 < coincidenceWindow[0],
+            saccadeLatencies2 > coincidenceWindow[1]
+        )
+            
+        return saccadeTimestamps[include], saccadeLatencies1[include], saccadeLabels[include], gratingMotion[include]
+
+    def _loadEventDataForProbes(
+        self,
+        coincidenceWindow=(-0.1, 0.1),
+        ):
         """
         """
 
@@ -110,15 +133,29 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         saccadeTimestamps = self.session.load('stimuli/fs/saccade/timestamps')
         gratingMotionDuringSaccades = self.session.load('stimuli/fs/saccade/motion')
 
-        #
-        probeLatencies = np.full(probeTimestamps.size, np.nan)
+        # Compute latency from fictive saccade to probe stimulus
+        probeLatenciesFictive = np.full(probeTimestamps.size, np.nan)
         saccadeLabels = np.full(probeTimestamps.size, np.nan)
         for iTrial in range(probeTimestamps.size):
             iSaccade = np.argmin(np.abs(probeTimestamps[iTrial] - saccadeTimestamps))
-            probeLatencies[iTrial] = probeTimestamps[iTrial] - saccadeTimestamps[iSaccade]
+            probeLatenciesFictive[iTrial] = probeTimestamps[iTrial] - saccadeTimestamps[iSaccade]
             saccadeLabels[iTrial] = gratingMotionDuringSaccades[iSaccade] * -1
 
-        return probeTimestamps, probeLatencies, saccadeLabels, gratingMotionDuringProbes
+        # Compute the latency from real saccades to probe stimuli
+        probeLatenciesReal = np.full(probeTimestamps.size, np.nan)
+        saccadeTimestampsReal = np.delete(
+            self.session.saccadeTimestamps[:, 0],
+            np.isnan(self.session.saccadeTimestamps[:, 0])
+        )
+        for iTrial in range(probeTimestamps.size):
+            iSaccade = np.argmin(np.abs(probeTimestamps[iTrial] - saccadeTimestampsReal))
+            probeLatenciesReal[iTrial] = probeTimestamps[iTrial] - saccadeTimestampsReal[iSaccade]
+        trialIndices = np.where(np.logical_or(
+            probeLatenciesReal < coincidenceWindow[0],
+            probeLatenciesReal > coincidenceWindow[1]
+        ))[0]
+
+        return probeTimestamps[trialIndices], probeLatenciesFictive[trialIndices], saccadeLabels[trialIndices], gratingMotionDuringProbes[trialIndices]
 
     def computeExtrasaccadicPeths(
         self,
@@ -128,6 +165,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         """
 
         kwargs['saccadeType'] = 'fictive'
+        kwargs['perisaccadicWindow'] = (-0.2, 0.2)
         super().computeExtrasaccadicPeths(
             **kwargs
         )
@@ -226,253 +264,388 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
 
         return
 
-    def plotAnalysisDemo(
+    def measureSaccadeResponseCorrelation(
         self,
-        examples=(
-            ('2023-07-20', 'mlati9', 73),
-            ('2023-07-11', 'mlati10', 448),
-            ('2023-07-11', 'mlati10', 434)
-        ),
         responseWindow=(-0.2, 0.5),
-        perisaccadicWindow=(-0.5, 0.5),
-        figsize=(7, 4),
-        **kwargs_
         ):
         """
         """
 
-        kwargs = {
-            'marker': '.',
-            's': 3,
-            'alpha': 0.3
-        }
-        kwargs.update(kwargs_)
+        nUnits = len(self.ukeys)
+        R = np.full(nUnits, np.nan)
+        P = np.full(nUnits, np.nan)
+        binIndices = np.logical_and(
+            self.tSaccade >= responseWindow[0],
+            self.tSaccade <= responseWindow[1]
+        )
+        for iUnit in range(nUnits):
+            session = self._getSessionFromUnitKey(self.ukeys[iUnit])
+            saccadeDirection = convertGratingMotionToSaccadeDirection(
+                self.preference[iUnit],
+                session.eye,
+            )
+            pethReal = self.ns[f'psths/{saccadeDirection}/real'][iUnit, binIndices]
+            pethFictive = self.ns[f'psths/{saccadeDirection}/fictive'][iUnit, binIndices]
+            if any([np.isnan(pethReal).all(), np.isnan(pethFictive).all()]):
+                continue
+            r, p = pearsonr(pethReal, pethFictive)
+            R[iUnit] = r
+            P[iUnit] = p
 
-        fig, axs = plt.subplots(ncols=5, nrows=len(examples), sharex=True)
+        return R, P
+
+    def measureSaccadeResponseAmplitude(
+        self,
+        responseWindow=(-0.2, 0.5),
+        baselineWindow=(-1, -0.5),
+        ):
+        """
+        """
+
+        nUnits = len(self.ukeys)
+        aReal = np.full(nUnits, np.nan)
+        aFictive = np.full(nUnits, np.nan)
+        binIndicesForResponse = np.logical_and(
+            self.tSaccade >= responseWindow[0],
+            self.tSaccade <= responseWindow[1]
+        )
+        binIndicesForBaseline = np.logical_and(
+            self.tSaccade >= baselineWindow[0],
+            self.tSaccade <= baselineWindow[1]
+        )
+        for iUnit in range(nUnits):
+            session = self._getSessionFromUnitKey(self.ukeys[iUnit])
+            saccadeDirection = convertGratingMotionToSaccadeDirection(
+                self.preference[iUnit],
+                session.eye,
+            )
+            frReal = self.ns[f'psths/{saccadeDirection}/real'][iUnit, binIndicesForResponse]
+            frFictive = self.ns[f'psths/{saccadeDirection}/fictive'][iUnit, binIndicesForResponse]
+            blReal = self.ns[f'psths/{saccadeDirection}/real'][iUnit, binIndicesForBaseline].mean()
+            blFictive = self.ns[f'psths/{saccadeDirection}/fictive'][iUnit, binIndicesForBaseline].mean()
+            yReal = frReal - blReal
+            yFictive = frFictive - blFictive
+
+            aReal[iUnit] = yReal[np.argmax(np.abs(yReal))]
+            aFictive[iUnit] = yFictive[np.argmax(np.abs(yReal))]
+
+        return aReal, aFictive
+
+    def plotExamples(
+        self,
+        windowIndex=5,
+        componentIndex=0,
+        figsize=(5, 4),
+        ):
+        """
+        """
+
+        fig, grid = plt.subplots(nrows=len(self.examples), ncols=4)
+        if len(self.examples) == 1:
+            grid = np.atleast_2d(grid)
 
         #
-        for i in range(len(examples)):
-            self.ukey = examples[i]
-            probeTimestamps, probeLatencies, saccadeLabels, gratingMotionDuringProbes = self._loadEventDataForProbes()
-            t, M, spikeTimestamps = psth2(
-                probeTimestamps,
-                self.unit.timestamps,
-                window=responseWindow,
-                binsize=None,
-                returnTimestamps=True
-            )
-            
-            #
-            if trialIndices_.size == 0:
-                plt.close(fig)
-                print(f"Warning: Could not determine unit's preferred direction of motion")
-                return None, None
+        iterable = list(zip(
+            ['extra', 'peri', 'extra', 'peri'],
+            ['real', 'real', 'fictive', 'fictive'],
+            ['k', 'k', 'r', 'r']
+        ))
 
-            trialIndices = {
-                'peri': trialIndices_,
-                'extra': np.where(np.vstack([
-                    np.logical_or(
-                        probeLatencies < perisaccadicWindow[0],
-                        probeLatencies > perisaccadicWindow[1],
-                    ),
-                    gratingMotionDuringProbes == self.ambc[self.iUnit, 1]
-                ]).all(0))[0]
-            }
-            xy = {
-                'peri': list(),
-                'extra': list()
-            }
-            y = 0
-            for k in ['extra', 'peri']:
-                for iTrial in trialIndices[k]:
-                    for x in spikeTimestamps[iTrial]:
-                        xy[k].append([x, y])
-                    y += 1
-            for k in xy.keys():
-                xy[k] = np.array(xy[k])
+        for i, ukey in enumerate(self.examples):
+            iUnit = self._indexUnitKey(ukey)
+            for j, (trialType, saccadeType, color) in enumerate(iterable):
 
-            if len(xy['extra']) != 0:
-                axs[i, 0].scatter(xy['extra'][:, 0], xy['extra'][:, 1], color='k', **kwargs)
-            if len(xy['peri']) != 0:
-                axs[i, 0].scatter(xy['peri'][:, 0], xy['peri'][:, 1], color='r', **kwargs)
-
-            #
-            saccadeTimestamps, saccadeLatencies, saccadeLabels, gratingMotionDuringSaccades = self._loadEventDataForSaccades()
-            trialIndices = np.where(np.logical_and(
-                np.logical_or(
-                    saccadeLatencies < perisaccadicWindow[1] * -1,
-                    saccadeLatencies > perisaccadicWindow[0] * -1
-                ),
-                gratingMotionDuringSaccades == self.ambc[self.iUnit, 1]
-            ))[0]
-            averageLatency = np.mean(saccadeLatencies[
-                np.logical_and(
-                    saccadeLatencies >= perisaccadicWindow[1] * -1,
-                    saccadeLatencies <= perisaccadicWindow[0] * -1
-                )
-            ])
-            t, M, spikeTimestamps = psth2(
-                saccadeTimestamps[trialIndices],
-                self.unit.timestamps,
-                window=responseWindow,
-                binsize=None,
-                returnTimestamps=True
-            )
-            xy = list()
-            for iTrial in range(len(trialIndices)):
-                # l = saccadeLatencies[trialIndices][iTrial]
-                for x in spikeTimestamps[iTrial]:
-                    xy.append([x + averageLatency, iTrial + y])
-            xy = np.array(xy)
-            if len(xy) != 0:
-                axs[i, 0].scatter(xy[:, 0], xy[:, 1], color='b', **kwargs)
-
-            #
-            mu, sigma = self.ambc[self.iUnit, 2], self.ambc[self.iUnit, 3]
-            axs[i, 1].plot(
-                self.t,
-                (self.terms['rMixed'][self.iUnit, :, 0] - mu) / sigma,
-                color='k'
-            )
-            axs[i, 2].plot(
-                self.t,
-                self.terms['rSaccade'][self.iUnit, :, 0] / sigma,
-                color='k'
-            )
-            #
-            for k, j in zip(['peri', 'extra'], [3, 4]):
-                if k == 'peri':
-                    params = self.paramsRefit[self.iUnit, :]
-                    yRaw = self.peths[k][self.iUnit, :, 0]
+                #
+                if trialType == 'peri':
+                    if saccadeType == 'fictive':
+                        peth = self.ns[f'ppths/pref/{saccadeType}/{trialType}'][iUnit, :, 0]
+                        params = self.ns[f'params/pref/{saccadeType}/{trialType}'][iUnit, 0, componentIndex, :]
+                    else:
+                        peth = self.ns[f'ppths/pref/{saccadeType}/{trialType}'][iUnit, :, windowIndex]
+                        params = self.ns[f'params/pref/{saccadeType}/{trialType}'][iUnit, windowIndex, componentIndex, :]
                 else:
-                    params = self.params[self.iUnit, :]
-                    yRaw = self.peths[k][self.iUnit, :]
-                abcd = params[np.invert(np.isnan(params))]
+                    peth = self.ns[f'ppths/pref/{saccadeType}/{trialType}'][iUnit, :]
+                    params = self.ns[f'params/pref/{saccadeType}/{trialType}'][iUnit, :]
+
+                #
+                grid[i, j].plot(self.tProbe, peth, color='0.8')
+
+                #
+                abcd = np.delete(params, np.isnan(params))
+                if abcd.size == 0:
+                    continue
                 abc, d = abcd[:-1], abcd[-1]
                 A, B, C = np.split(abc, 3)
-                yFit = g(self.t, A[0], B[0], C[0], d)
-                axs[i, j].plot(
-                    self.t,
-                    yRaw,
-                    color='0.5'
-                ) 
-                axs[i, j].plot(
-                    self.t,
-                    yFit,
-                    color='k'
-                )
+                a, b, c = A[componentIndex], B[componentIndex], C[componentIndex]
+                t2 = np.linspace(-15 * c, 15 * c, 100) + b
+                y2 = g(t2, a, b, c, d)
+                if saccadeType == 'fictive':
+                    color = self.colors[i]
+                grid[i, j].plot(t2, y2, color=color)
 
-            #
+        #
+        for axs in grid:
             ylim = [np.inf, -np.inf]
-            for ax in axs[i, 1:].flatten():
+            for ax in axs:
                 y1, y2 = ax.get_ylim()
                 if y1 < ylim[0]:
                     ylim[0] = y1
                 if y2 > ylim[1]:
                     ylim[1] = y2
-            if ylim[1] < 5:
-                ylim[1] = 5
-            if abs(ylim[0]) < 5:
-                ylim[0] = -5
-            for ax in axs[i, 1:].flatten():
+            for ax in axs:
                 ax.set_ylim(ylim)
-                ax.set_yticks([-5, 0, 5])
-            for ax in axs[i, 2:].flatten():
-                ax.set_yticklabels([])
-
-        #
-        labels = (
-            f'Raster',
-            r'$R_{P}, R_{S}$',
-            r'$R_{S}$',
-            r'$R_{P (Peri)}$',
-            r'$R_{P (Extra)}$'
-        )
-        for j, l in enumerate(labels):
-            axs[0, j].set_title(l, fontsize=10)
-        axs[-1, 0].set_xlabel('Time from probe (s)')
         
         #
-        for ax in axs[:, 0].flatten():
-            ax.set_ylabel('Trial #')
-        for ax in axs[:, 1].flatten():
-            ax.set_ylabel('FR (z-scored)')
-        for ax in axs.flatten():
+        for ax in grid[:, 1:].flatten():
+            ax.set_yticklabels([])
+        
+        #
+        for ax in grid.flatten():
             for sp in ('top', 'right'):
                 ax.spines[sp].set_visible(False)
-        for ax in axs[:, 0].flatten():
-            for sp in ('bottom', 'left'):
-                ax.spines[sp].set_visible(False)
+
+        #
+        titles = (r'$R_{P (Extra, Real)}$', r'$R_{P (Peri, Real)}$', r'$R_{P (Extra, Fictive)}$', r'$R_{P (Peri, Fictive)}$')
+        for j in range(4):
+            grid[0, j].set_title(titles[j], fontsize=10)
+        fig.supxlabel('Time from probe (sec)', fontsize=10)
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, grid
+
+    def _classifyUnitsByAmplitude(
+        self,
+        minimumResponseAmplitude=2,
+        ):
+        """
+        """
+
+        nUnits = len(self.ukeys)
+        uTypes = np.full(nUnits, np.nan)
+        aReal, aFictive = self.measureSaccadeResponseAmplitude()
+        for iUnit in range(nUnits):
+            check = np.vstack([
+                aReal[iUnit] > (-1 * minimumResponseAmplitude),
+                aReal[iUnit] < minimumResponseAmplitude,
+                aFictive[iUnit] > (-1 * minimumResponseAmplitude),
+                aFictive[iUnit] < minimumResponseAmplitude
+            ]).all(0)
+            if check:
+                utype = 3
+            else:
+                if aReal[iUnit] > minimumResponseAmplitude and aFictive[iUnit] > minimumResponseAmplitude:
+                    utype = 2
+                elif aReal[iUnit] < (-1 * minimumResponseAmplitude) and aFictive[iUnit] < (-1 * minimumResponseAmplitude):
+                    utype = 2
+                elif abs(aReal[iUnit]) > minimumResponseAmplitude and abs(aFictive[iUnit]) < minimumResponseAmplitude:
+                    utype = 1
+                elif abs(aReal[iUnit]) < minimumResponseAmplitude and abs(aFictive[iUnit]) > minimumResponseAmplitude:
+                    utype = 4
+                else:
+                    utype = 4
+            uTypes[iUnit] = utype
+
+        return np.array(uTypes)
+
+    def _classifyUnitsWithCorrelation(
+        self,
+        minimumResponseAmplitude=2,
+        ):
+        """
+        """
+
+        nUnits = len(self.ukeys)
+        labels = np.full(nUnits, np.nan)
+        R, P = self.measureSaccadeResponseCorrelation()
+        aReal, aFictive = self.measureSaccadeResponseAmplitude()
+        for iUnit in range(nUnits):
+            check = np.vstack([
+                aReal[iUnit] > (-1 * minimumResponseAmplitude),
+                aReal[iUnit] < minimumResponseAmplitude,
+                aFictive[iUnit] > (-1 * minimumResponseAmplitude),
+                aFictive[iUnit] < minimumResponseAmplitude
+            ]).all(0)
+            if check:
+                label = 3
+            else:
+                if R[iUnit] > 0 and P[iUnit] < 0.05:
+                    label = 2
+                elif R[iUnit] < 0 and P[iUnit] < 0.05:
+                    label = 4
+                elif P[iUnit] >= 0.05:
+                    label = 1
+                else:
+                    label = 4
+            labels[iUnit] = label
+
+        return labels
+
+    def scatterModulationBySaccadeType(
+        self,
+        bounds=(-3, 3),
+        windowIndex=5,
+        componentIndex=0,
+        transform=True,
+        figsize=(9, 3),
+        ):
+        """
+        """
+
+        #
+        fig, axs = plt.subplots(ncols=4)
+
+        #
+        u = self._classifyUnitsByAmplitude()
+        x = self.ns['mi/pref/real'][:, windowIndex, componentIndex]
+        y = self.ns['mi/pref/fictive'][:, 0, componentIndex]
+        if transform:
+            x = np.tanh(x)
+            y = np.tanh(y)
+            bounds = (-1, 1)
+
+        #
+        for label, ax in zip(np.unique(u), axs):
+
+            #
+            mask = u == label
+
+            #
+            c = list()
+            p = list()
+            for iUnit in np.where(mask)[0]:
+                pReal = self.ns['p/pref/real'][iUnit, windowIndex, componentIndex]
+                pFictive = self.ns['p/pref/fictive'][iUnit, 0, componentIndex]
+                p.append(np.min([pReal, pFictive]))
+                if pReal < 0.05 and pFictive < 0.05:
+                    c.append('xkcd:purple')
+                elif pReal < 0.05 and pFictive >= 0.05:
+                    c.append('xkcd:orange')
+                elif pReal >= 0.05 and pFictive < 0.05:
+                    c.append('xkcd:green')
+                else:
+                    c.append('0.8')
+            c = np.array(c)
+            order = np.argsort(p)[::-1]
+
+            #
+            ax.scatter(
+                x[mask][order],
+                y[mask][order],
+                marker='.',
+                s=15,
+                c=c[order],
+                alpha=0.7,
+            )
+
+        #
+        for ax in axs:
+            ax.vlines(0, *bounds, color='k', alpha=0.5, linestyle=':')
+            ax.hlines(0, *bounds, color='k', alpha=0.5, linestyle=':')
+            ax.set_ylim(bounds)
+            ax.set_xlim(bounds)
+            ax.set_aspect('equal')
+            ax.set_xlabel('MI (Real)')
+        axs[0].set_ylabel('MI (Fictive)')
+        titles = ('Type 1', 'Type 2', 'Type 3', 'Type 4')
+        for i in range(len(axs)):
+            axs[i].set_title(titles[i], fontsize=10)
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
         return fig, axs
 
-    def plotExamples(
+    def scatterSaccadeResponseAmplitude(
         self,
-        windowIndex=5,
-        ):
-        """
-        """
-
-        with h5py.File(self.hdf, 'r') as stream:
-            pethsRealExtra = np.array(stream['clustering/peths/standard'])
-            pethsRealPeri = np.array(stream['modulation/peths/peri'])
-
-        fig, grid = plt.subplots(nrows=len(self.examples), ncols=2, sharey=True)
-        if len(self.examples) == 1:
-            grid = np.atleast_2d(grid)
-
-        for i, ukey in enumerate(self.examples):
-            iUnit = self._indexUnitKey(ukey)
-            grid[i, 0].plot(pethsRealExtra[iUnit])
-            grid[i, 0].plot(pethsRealPeri[iUnit, :, windowIndex])
-            grid[i, 1].plot(self.peths['standard'][iUnit])
-            grid[i, 1].plot(self.peths['peri'][iUnit, :, windowIndex])
-
-        return fig, grid
-
-    def plotModulationBySaccadeType(
-        self,
-        bounds=(-2, 2),
-        windowIndex=5,
-        figsize=(3, 3),
+        figsize=(4, 4)
         ):
         """
         """
 
         fig, ax = plt.subplots()
-
-        mask = np.vstack([
-            self.filter,
-            np.logical_or(
-                self.p['real'][:, 0] < 0.05,
-                self.p['fictive'][:, 0] < 0.05
-            ),
-        ]).all(0)
-        x = np.clip(self.mi['real'][mask, windowIndex, 0] / self.model['params3'][mask, 0], *bounds)
-        y = np.clip(self.mi['fictive'][mask, windowIndex, 0] / self.model['params1'][mask, 0], *bounds)
-        c = np.full(x.size, 'k')
-        
-        ax.scatter(
-            x,
-            y,
-            marker='.',
-            s=10,
-            c=c,
-            alpha=0.7,
-            clip_on=False,
-        )
-        ax.vlines(0, *bounds, color='k', alpha=0.5)
-        ax.hlines(0, *bounds, color='k', alpha=0.5)
-        ax.set_ylim(bounds)
-        ax.set_xlim(bounds)
-        ax.set_aspect('equal')
-        ax.set_xlabel('Modulation Index (Real)')
-        ax.set_ylabel('Modulation Index (Fictive)')
+        aReal, aFictive = self.measureSaccadeResponseAmplitude()
+        u = self._classifyUnitsByAmplitude()
+        colors = ('0.8', 'y', 'm', 'c')
+        alphas = (0.5, 0.7, 0.7, 0.7)
+        for i, label in enumerate(np.unique(u)[::-1]):
+            mask = u == label
+            ax.scatter(
+                aReal[mask],
+                aFictive[mask],
+                marker='.',
+                s=15,
+                color=colors[i],
+                alpha=alphas[i],
+            )
+            
+        ax.set_ylabel('Amplitude (Fictive)', fontsize=10)
+        ax.set_xlabel('Amplitude (Real)', fontsize=10)
+        ax.legend([
+            'IV',
+            'III',
+            'II',
+            'I'
+        ])
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
         return fig, ax
+
+    def plotSaccadeResponseHeatmaps(
+        self,
+        responseWindow=(-0.2, 0.5),
+        baselineWindow=(-1, -0.5),
+        vrange=(-30, 30),
+        cmap='coolwarm',
+        figsize=(4, 6),
+        ):
+        """
+        """
+
+        fig, axs = plt.subplots(ncols=2, sharey=True)
+        binIndicesForResponse = np.logical_and(
+            self.tSaccade >= responseWindow[0],
+            self.tSaccade <= responseWindow[1]
+        )
+        binIndicesForBaseline = np.logical_and(
+            self.tSaccade >= baselineWindow[0],
+            self.tSaccade <= baselineWindow[1]
+        )
+        nUnits = len(self.ukeys)
+        data = {
+            'real': np.full([nUnits, binIndicesForResponse.sum()], np.nan),
+            'fictive': np.full([nUnits, binIndicesForResponse.sum()], np.nan),
+        }
+        for saccadeType in data.keys():
+            for iUnit in range(len(self.ukeys)):
+                session = self._getSessionFromUnitKey(self.ukeys[iUnit])
+                saccadeDirection = convertGratingMotionToSaccadeDirection(
+                    self.preference[iUnit],
+                    session.eye,
+                )
+                fr = self.ns[f'psths/{saccadeDirection}/{saccadeType}'][iUnit, binIndicesForResponse]
+                bl = self.ns[f'psths/{saccadeDirection}/{saccadeType}'][iUnit, binIndicesForBaseline].mean()
+                data[saccadeType][iUnit, :] = (fr - bl) / self.factor[iUnit]
+
+        #
+        R, P = self.measureSaccadeResponseCorrelation()
+        aReal, aFictive = self.measureSaccadeResponseAmplitude()
+        amplitudeDifference = aFictive - aReal
+        unitIndex = np.argsort(np.abs(R))
+        # unitIndex = np.argsort(amplitudeDifference)
+        axs[0].pcolor(self.tSaccade[binIndicesForResponse], np.arange(nUnits), data['real'][unitIndex], vmin=vrange[0], vmax=vrange[1], cmap=cmap)
+        axs[1].pcolor(self.tSaccade[binIndicesForResponse], np.arange(nUnits), data['fictive'][unitIndex], vmin=vrange[0], vmax=vrange[1], cmap=cmap)
+
+        #
+        fig.supxlabel('Time from saccade', fontsize=10)
+        fig.supylabel('Unit # (Sorted by correlation coefficient)', fontsize=10)
+        axs[0].set_title('Real', fontsize=10)
+        axs[1].set_title('Fictive', fontsize=10)
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, axs

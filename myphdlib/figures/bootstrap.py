@@ -39,7 +39,7 @@ def _generateNullSampleForSingleUnit(
 
     #
     if np.isnan(params1).all():
-        return sample
+        return iUnit, sample
 
     #
     abcd = np.delete(params1, np.isnan(params1))
@@ -111,11 +111,11 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
         super().__init__(**kwargs)
 
-        # Example neurons
+        #
         self.examples = (
-            ('2023-07-12', 'mlati9', 710),
-            ('2023-07-20', 'mlati9', 337),
-            ('2023-05-26', 'mlati7', 336)
+            ('2023-07-05', 'mlati9', 288), # Enhanced
+            ('2023-07-20', 'mlati9', 337), # No modulation
+            ('2023-07-07', 'mlati9', 206), # Suppressed
         )
 
         return
@@ -352,17 +352,115 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
         return
 
+    def histModulationIndices(
+        self,
+        windowIndex=5,
+        componentIndex=0,
+        minimumResponseAmplitude=0,
+        nbins=30,
+        colors=('b', 'r', '0.8'),
+        xrange=(-1, 1),
+        xticks=np.linspace(-1, 1, 5),
+        figsize=(4, 2),
+        ):
+        """
+        """
+
+        samples = list()
+        include = self.ns['params/pref/real/extra'][:, 0] >= minimumResponseAmplitude
+        for sign in (-1, 1, 0):
+            sample = list()
+            for iUnit in range(len(self.ukeys)):
+                if include[iUnit] == False:
+                    continue
+                # mi = np.clip(
+                #     self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex],
+                #     *xrange
+                # )
+                mi = np.tanh(self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex])
+                p = self.ns['p/pref/real'][iUnit, windowIndex, componentIndex]
+                if sign == -1:
+                    if mi < 0 and p < 0.05:
+                        sample.append(mi)
+                elif sign == 0:
+                    if p >= 0.05:
+                        sample.append(mi)
+                elif sign == 1:
+                    if mi > 0 and p < 0.05:
+                        sample.append(mi)
+            samples.append(sample)
+
+        #
+        fig, ax = plt.subplots()
+        binCounts_, binEdges, patchList = ax.hist(
+            samples,
+            bins=nbins,
+            histtype='barstacked',
+            range=xrange
+        )
+        for i, patches in enumerate(patchList):
+            for patch in patches:
+                patch.set_facecolor(colors[i])
+
+        # ax.hist(
+        #     np.concatenate([sample for sample in samples]),
+        #     bins=nbins,
+        #     facecolor=None,
+        #     edgecolor='k', 
+        #     range=xrange,
+        #     histtype='step'
+        # )
+
+        binCounts = binCounts_.max(0)
+        binCenters = binEdges[:-1] + ((binEdges[1] - binEdges[0]) / 2)
+        leftEdges = binEdges[:-1]
+        rightEdges = binEdges[1:]
+
+        #
+        for ukey in self.examples:
+            iUnit = self._indexUnitKey(ukey)
+            if iUnit is None:
+                continue
+            mi = np.tanh(self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex])
+            if np.isnan(mi).item():
+                continue
+            binIndex = np.where(np.logical_and(
+                mi >= leftEdges,
+                mi <  rightEdges
+            ))[0].item()
+            ax.scatter(
+                binCenters[binIndex],
+                binCounts[binIndex] + 10,
+                marker='v',
+                color='k',
+                s=20
+            )
+
+        #
+        for sp in ('top', 'right'):
+            ax.spines[sp].set_visible(False)
+
+        #
+        ax.set_xticks(xticks)
+        ax.set_ylabel('# of units')
+        ax.set_xlabel(f'Modulation index (MI)')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax
+
     def plotModulationDistributionsWithHistogram(
         self,
         alpha=0.05,
         windowIndex=5,
         componentIndex=0,
         figsize=(3, 2),
-        colorspace=('k', 'k', 'w'),
+        colorspace=('b', 'r', 'w'),
         minimumResponseAmplitude=0,
         nBins=20,
         labels=(1, 2, 3, -1),
-        xrange=(-3, 3),
+
         ):
         """
         """
@@ -383,7 +481,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             -1 if mi[i, windowIndex, componentIndex] < 0 else 1
                 for i in range(len(self.ukeys))
         ])
-        polarity[np.isnan(mi[:, windowIndex, componentIndex])]
+        # polarity[np.isnan(mi[:, windowIndex, componentIndex])]
         samples = ([], [], [])
         for i, l in enumerate(labels):
             for sign in [-1, 1]:
@@ -446,6 +544,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             )
 
         #
+        ax.set_xticks(xticks)
         ax.set_xlabel(f'Modulation index (MI)')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
