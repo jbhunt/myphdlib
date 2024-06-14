@@ -570,6 +570,23 @@ class AnalysisBase():
 
         return session
 
+    def _matchUnitKey(self, test, unitkeys):
+        """
+        """
+
+        result = False
+        for ukey in unitkeys:
+            matched = np.all([
+                str(ukey[0]) == str(test[0]),
+                ukey[1] == test[1],
+                ukey[2] == test[2]
+            ])
+            if matched:
+                result = True
+                break
+
+        return result
+
     def _saveLargeDataset(
         self,
         hdf,
