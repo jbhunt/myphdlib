@@ -42,7 +42,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             ('2023-07-11', 'mlati10', 291),
             ('2023-07-19', 'mlati10', 327),
             ('2023-07-11', 'mlati10', 295),
-            ('2023-07-19', 'mlati10', 268),
+            # ('2023-07-19', 'mlati10', 268),
+            ('2023-07-14', 'mlati9', 165),
         )
 
         return
@@ -396,7 +397,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
     def _plotExampleRasterplots(
         self,
         axs,
-        nTrials=300,
+        nTrials=1000,
         responseWindow=(-0.2, 0.5),
         perisaccadicWindow=(-0.05, 0.1),
         **kwargs_,
@@ -407,8 +408,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         kwargs = {
             'marker': '.',
             'color': 'k',
-            's': 3,
-            'alpha': 0.25
+            's': 7,
+            'alpha': 0.3
         }
         kwargs.update(kwargs_)
         
@@ -445,6 +446,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 x,
                 y,
                 rasterized=True,
+                ec='none',
                 **kwargs
             )
             axs[i].set_ylim([-1, nTrials + 1])

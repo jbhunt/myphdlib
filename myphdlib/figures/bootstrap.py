@@ -241,7 +241,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         nRuns=None,
         maximumAmplitudeShift=200,
         saccadeType='real',
-        parallelize=False,
+        parallelize=True,
         nProcesses=30,
         chunksize=1,
         maxfevs=100,

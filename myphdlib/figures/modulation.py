@@ -2,6 +2,7 @@ import h5py
 import numpy as np
 import pathlib as pl
 from scipy.signal import find_peaks as findPeaks
+from scipy.stats import pearsonr
 from matplotlib import pylab as plt
 from myphdlib.general.toolkit import psth2
 from myphdlib.figures.analysis import GaussianMixturesModel, g
@@ -446,6 +447,111 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
 
         return
 
+    def plotSaccadeAccountingPerformance(
+        self,
+        examples=(
+            ('2023-05-12', 'mlati7', 163),
+            ('2023-05-29', 'mlati7', 366)
+        ),
+        figsize=(9, 2)
+        ):
+        """
+        """
+
+        nUnits = len(self.ukeys)
+        nWindows = len(self.windows)
+        R, P = np.full([nUnits, nWindows], np.nan), np.full([nUnits, nWindows], np.nan)
+        for iUnit in range(nUnits):
+            rProbe = self.ns['ppths/pref/real/extra'][iUnit]
+            baselineLevel, scalingFactor = self.ns['stats/pref/real/extra'][iUnit, :]
+            rProbe = (rProbe + baselineLevel) * scalingFactor
+
+            for iWindow in range(nWindows):
+                rMixed = self.ns['terms/pref/real/mixed'][iUnit, :, iWindow]
+                rSaccade = self.ns['terms/pref/real/saccade'][iUnit, :, iWindow]
+                rTest = rMixed - rProbe
+                # rTest -= rTest[binIndices].mean()
+                if np.any([np.isnan(rProbe).all(), np.isnan(rSaccade).all(), np.isnan(rTest).all()]):
+                    continue
+                r, p = pearsonr(rSaccade, rTest)
+                R[iUnit, iWindow] = r
+                P[iUnit, iWindow] = p
+
+        #
+        fig, axs = plt.subplots(ncols=2)
+        y = np.dstack([P < 0.05, R > 0]).all(-1).sum(0) / P.shape[0]
+        x = self.windows.mean(1)
+        axs[0].plot(x, y, color='k', marker='o', markersize=5)
+
+        #
+        samples = list()
+        for iWindow in range(nWindows):
+            mask = np.logical_and(
+                P[:, iWindow] < 0.05,
+                R[:, iWindow] > 0
+            )
+            sample = R[mask, iWindow]
+            samples.append(sample)
+        y = np.array([np.nanmean(sample) for sample in samples])
+        e = np.array([np.nanstd(sample) for sample in samples])
+        axs[1].plot(x, y, color='k', marker='o', markersize=5)
+        # axs[1].vlines(x, y - e, y + e, color='k')
+        axs[1].fill_between(
+            x,
+            y - e,
+            y + e,
+            color='k',
+            alpha=0.1,
+            edgecolor=None,
+        )
+        colors = ('xkcd:orange', 'xkcd:purple')
+        counter = 0
+        for iUnit in range(nUnits):
+            ukey = self.ukeys[iUnit]
+            if self._matchUnitKey(ukey, examples):
+                axs[1].plot(
+                    x,
+                    R[iUnit],
+                    color=colors[counter],
+                    marker='o',
+                    markersize=5,
+                    clip_on=False,
+                )
+                counter += 1
+
+        #
+        for ax in axs:
+            ax.set_xticks([-0.5, -0.25, 0, 0.25, 0.5])
+            ax.set_xticklabels(
+                np.around(ax.get_xticks(), 2),
+                rotation=45
+            )
+            ax.set_xlim([
+                self.windows.min(),
+                self.windows.max()
+            ])
+            ax.set_yticks([0, 0.5, 1])
+            ax.set_yticklabels(['0', '', '1'])
+            ax.set_ylim([0, 1])
+            for sp in ('top', 'right'):
+                ax.spines[sp].set_visible(False)
+            ax.fill_between(
+                [0, 0.1],
+                0,
+                1,
+                color='r',
+                alpha=0.1,
+                edgecolor=None,
+            )
+        axs[0].set_xlabel('Time from saccade (sec)')
+        axs[0].set_ylabel('Frac. of units')
+        axs[1].set_ylabel('Corr. Coeff.')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax
+
     def plotLatencySortedRasterplot(
         self,
         ukey,
@@ -461,13 +567,12 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         #
         kwargs = {
             'marker': '.',
-            's': 5
+            's': 15
         }
         kwargs.update(kwargs_)
 
         #
-        if self.ukey is not None:
-            self.ukey = ukey
+        self.ukey = ukey
 
         #
         nWindows = len(self.windows)
@@ -512,27 +617,34 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
                     x.append(t)
                 for r in np.full(nSpikes, i):
                     y.append(r)
+            x = np.array(x)
+            y = np.array(y)
 
             #
-            axs[iWin].scatter(x, y, rasterized=True, color='k', alpha=alpha, **kwargs)
+            axs[iWin].scatter(x, y, rasterized=True, color='k', alpha=alpha, **kwargs, ec='none')
+            # axs[iWin].vlines(x, y - 0.5, y + 0.5, color='k', alpha=1, lw=1)
 
             # Indicate the time of saccade onset
             x, y = list(), list()
             for i, t in enumerate(self.session.probeLatencies[trialIndices][latencySortedIndex]):
                 x.append(-1 * t)
                 y.append(i)
+            x, y = np.array(x), np.array(y)
             axs[iWin].scatter(
                 x,
                 y,
                 rasterized=True,
                 color='m',
+                ec='none',
                 **kwargs
             )
+            # axs[iWin].vlines(x, y - 0.5, y + 0.5, rasterized=True, color='m', alpha=1, lw=1)
 
             # TODO: Indicate the time of probe onset
             y = np.arange(trialIndices.size)
             x = np.full(y.size, 0)
-            axs[iWin].scatter(x, y, rasterized=True, color='c', **kwargs)
+            axs[iWin].scatter(x, y, rasterized=True, color='c', **kwargs, ec='none')
+            # axs[iWin].vlines(x, y - 0.5, y + 0.5, rasterized=True, color='c', alpha=1, lw=1)
 
         #
         for ax in axs[:-1]:

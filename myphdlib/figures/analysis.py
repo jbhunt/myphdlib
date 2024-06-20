@@ -371,6 +371,8 @@ class AnalysisBase():
                 if str(session.date) == date and session.animal == animal:
                     self._session = session
                     break
+            if self.session is None:
+                raise Exception(f'Could not determine session from unit key: {value}')
         self._unit = self.session.population.indexByCluster(cluster)
         self._ukey = value
         return
@@ -500,7 +502,7 @@ class AnalysisBase():
 
                 # Exclude units Anna identified as noise or multi-unit
                 # NOTE: 0 codes noise units and 1 codes multi-units
-                if qualityLabels[iUnit] in (0, 1):
+                if qualityLabels is not None and qualityLabels[iUnit] in (0, 1):
                     continue
                 
                 #
