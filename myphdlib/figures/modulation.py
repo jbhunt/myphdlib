@@ -908,3 +908,45 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         ax.scatter(x, y, color='k', marker='.', s=15, alpha=0.5)
 
         return fig, ax
+
+    def scatterModulationByComplexity(
+        self,
+        windowIndex=5,
+        componentIndex=0,
+        xrange=(-3, 3),
+        figsize=(4, 4)
+        ):
+        """
+        """
+
+        #
+        nUnits = len(self.ukeys)
+        complexity = np.full(nUnits, np.nan)
+        for iUnit in range(nUnits):
+            params = self.ns['params/pref/real/extra'][iUnit]
+            params = np.delete(params, np.isnan(params))
+            abc, d = params[:-1], params[-1]
+            A, B, C = np.split(abc, 3)
+            complexity[iUnit] = A.size
+
+        #
+        mi = np.clip(
+            self.ns['mi/pref/real'][:, windowIndex, componentIndex],
+            *xrange
+        )
+        p = self.ns['p/pref/real'][:, windowIndex, componentIndex]
+        c = np.full(p.size, '0.7')
+        c[np.logical_and(mi < 0, p < 0.05)] = 'b'
+        c[np.logical_and(mi > 0, p < 0.05)] = 'r'
+
+        #
+        fig, ax = plt.subplots()
+        ax.vlines(
+            mi,
+            complexity - 0.4,
+            complexity + 0.4,
+            color=c,
+            alpha=0.2
+        )
+
+        return fig, ax, mi, complexity
