@@ -6,6 +6,7 @@ from myphdlib.general.toolkit import psth2
 from myphdlib.figures.analysis import AnalysisBase
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
 from myphdlib.figures.analysis import convertSaccadeDirectionToGratingMotion, convertGratingMotionToSaccadeDirection
+from matplotlib.colors import LinearSegmentedColormap
 
 class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
     """
@@ -323,93 +324,6 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
     def scatterModulationByPreference(
         self,
-        figsize=(2, 3.5),
-        windowIndex=5,
-        transform=False,
-        yrange=(-3, 3),
-        ):
-        """
-        """
-
-        fig, ax = plt.subplots()
-
-        #
-        miRaw = np.copy(self.ns[f'mi/null/real'])
-        # self._correctModulationIndexForNullProbes()
-
-        #
-        mask = list()
-        for iUnit in range(len(self.ukeys)):
-            include = np.all([
-                self.ns[f'mi/pref/real'][iUnit, windowIndex, 0] < 0,
-                self.ns[f'p/pref/real'][iUnit, windowIndex, 0] < 0.05
-            ])
-            if include:
-                mask.append(True)
-            else:
-                mask.append(False)
-        mask = np.array(mask)
-
-        #
-        x = self.ns[f'mi/pref/real'][:, windowIndex, 0]
-        y = self.ns[f'mi/null/real'][:, windowIndex, 0]
-        if transform:
-            x = np.tanh(x)
-            y = np.tanh(y)
-        
-        #
-        ax.scatter(
-            np.full(mask.sum(), 0),
-            np.clip(x[mask], *yrange),
-            marker='.',
-            color='0.5',
-            s=15,
-            alpha=0.1
-        )
-        s = np.full(x.size, 0.0)
-        s[self.ns[f'p/null/real'][:, windowIndex, 0] < 0.05] = 15.0
-        ax.scatter(
-            np.full(mask.sum(), 1),
-            np.clip(y[mask], *yrange),
-            marker='.',
-            color='0.5',
-            s=s[mask],
-            alpha=0.1
-        )
-        for xy in zip(x[mask], y[mask]):
-            ax.plot([0, 1], np.clip(np.array(xy), *yrange), color='0.5', lw=0.5, alpha=0.1)
-
-        for i, a in zip([0, 1], [x, y]):
-            q1 = np.quantile(a[mask], 0.25)
-            q2 = np.quantile(a[mask], 0.5)
-            q3 = np.quantile(a[mask], 0.75)
-            ax.bar(
-                i,
-                q3 - q1,
-                0.35,
-                q1,
-                facecolor='none',
-                edgecolor='k',
-                zorder=2
-            )
-            ax.scatter(i, q2, color='k', s=30, zorder=2)
-        ax.plot([0, 1], [np.median(x[mask]), np.median(y[mask])], color='k')
-
-        #
-        ax.set_ylabel('Modulation index')
-        ax.set_xticks([0, 1])
-        ax.set_xticklabels(['Pref', 'Null'], rotation=45)
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        #
-        self.ns[f'mi/null/real'] = miRaw
-
-        return fig, ax
-
-    def scatterModulationByPreference(
-        self,
         alpha=0.05,
         windowIndex=5,
         modulationSign=-1,
@@ -451,49 +365,64 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
         #
         colors = list()
+        ratios = list()
         markers = list()
+        uniqueColors = (
+            '0.75',
+            '0.75',
+            '0.75', # both
+            'xkcd:gray',
+        )
+        labels = list()
         for iUnit in range(len(self.ukeys)):
             if include[iUnit]:
                 fPref = self.ns[f'p/pref/real'][iUnit, windowIndex, 0] < alpha
                 fNull = self.ns[f'p/null/real'][iUnit, windowIndex, 0] < alpha
                 if fNull and fPref:
-                    color = 'xkcd:violet'
+                    color = uniqueColors[2]
+                    label = 3
                 elif fNull:
-                    color = 'xkcd:pink'
+                    color = uniqueColors[0]
+                    label = 1
                 elif fPref:
-                    color = 'xkcd:light blue'
-                # else:
-                #     color = 'xkcd:gray'
-                markers.append('.')
+                    color = uniqueColors[1]
+                    label = 2
+                else:
+                    color = uniqueColors[3]
+                    label = 0
+                markers.append('o')
                 colors.append(color)
+                labels.append(label)
+                ratio = self.ns['p/pref/real'][iUnit, windowIndex, 0] - self.ns['p/null/real'][iUnit, windowIndex, 0]
+                ratios.append(ratio)
 
         #
-        uniqueColors = (
-            'xkcd:pink',
-            'xkcd:light blue',
-            'xkcd:violet'
-        )
-        for color in uniqueColors:
-            mask = np.array(colors) == color
+        for label, color in zip([1, 2, 3, 0], uniqueColors):
+            mask = np.array(labels) == label
             ax.scatter(
                 x[mask],
                 y[mask],
-                s=30,
+                s=10,
                 color=color,
-                alpha=0.7,
-                marker='.',
-                edgecolor=None,
-                clip_on=False
+                alpha=1,
+                marker='o',
+                clip_on=False,
+                edgecolor='none',
             )
 
         # ax.vlines(0, *xyrange, color='k', linestyle=':')
-        ax.hlines(0, *xyrange, color='k', linestyle=':')
+        ax.hlines(0, *xyrange, color='k', linestyle='-')
+
+        #
+        f = np.poly1d(np.polyfit(x, y, deg=1))
+        x2 = np.linspace(x.min(), x.max(), 100)
+        ax.plot(x2, f(x2), color='k', linestyle=':')
 
         #
         ax.set_ylim(xyrange)
         ax.set_xlim([xyrange[0], 0])
         ax.set_xlabel(r'$MI_{Pref}$')
-        ax.set_ylabel(r'$MI_{Null}}$')
+        ax.set_ylabel(r'$MI_{Null}$')
         ax.set_aspect('equal')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
@@ -502,7 +431,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
         #
         self.ns[f'mi/null/real'] = miRaw
 
-        return fig, ax
+        return fig, ax, x, y
 
     def histSaccadeResponseAmplitudeBySelectivity(
         self,
