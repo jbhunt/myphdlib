@@ -352,20 +352,17 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
         return
     
-
-    # TODO: Indicate which significantly modulated units have little or no saccade response
     def histModulationIndices(
         self,
         windowIndex=5,
         componentIndex=0,
         minimumProbeResponseAmplitude=0,
-        maximumSaccadeResponseAmplitude=2,
         transform=False,
         nbins=30,
-        colors=('b', 'r', '0.8'),
+        cmap='coolwarm',
         xrange=(-3, 3),
         xticks=None,
-        figsize=(4, 2),
+        figsize=(5, 2),
         ):
         """
         """
@@ -398,15 +395,38 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
         #
         fig, ax = plt.subplots()
+        cf = plt.get_cmap(cmap, 3)
         binCounts_, binEdges, patchList = ax.hist(
             samples,
             bins=nbins,
             histtype='barstacked',
+            color=[cf(i) for i in (0, 2, 1)],
             range=xrange
         )
-        for i, patches in enumerate(patchList):
-            for patch in patches:
-                patch.set_facecolor(colors[i])
+        ax.hist(
+            samples[0],
+            bins=nbins,
+            color=None,
+            range=xrange,
+            histtype='step',
+            edgecolor='k'
+        )
+        ax.hist(
+            samples[1],
+            bins=nbins,
+            color=None,
+            range=xrange,
+            histtype='step',
+            edgecolor='k'
+        )
+        ax.hist(
+            np.concatenate(samples),
+            bins=nbins,
+            color=None,
+            range=xrange,
+            histtype='step',
+            edgecolor='k'
+        )
 
         binCounts = binCounts_.max(0)
         binCenters = binEdges[:-1] + ((binEdges[1] - binEdges[0]) / 2)

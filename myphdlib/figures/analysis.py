@@ -4,6 +4,48 @@ from myphdlib.interface.factory import SessionFactory
 from scipy.optimize import curve_fit as fitCurve
 import h5py
 
+def convertGratingMotionToSaccadeDirection(
+    gratingMotion=-1,
+    referenceEye='left'
+    ):
+    """
+    """
+
+    saccadeDirection = None
+    if referenceEye == 'left':
+        if gratingMotion == -1:
+            saccadeDirection = 'nasal'
+        else:
+            saccadeDirection = 'temporal'
+    elif referenceEye == 'right':
+        if gratingMotion == -1:
+            saccadeDirection = 'temporal'
+        else:
+            saccadeDirection = 'nasal'
+
+    return saccadeDirection
+
+def convertSaccadeDirectionToGratingMotion(
+    saccadeDirection,
+    referenceEye='left'
+    ):
+    """
+    """
+
+    gratingMotion = None
+    if referenceEye == 'left':
+        if saccadeDirection == 'nasal':
+            gratingMotion = -1
+        else:
+            gratingMotion = +1
+    else:
+        if saccadeDirection == 'nasal':
+            gratingMotion = +1
+        else:
+            gratingMotion = -1
+
+    return gratingMotion
+
 def g(x, a, mu, sigma, d):
     """
     """

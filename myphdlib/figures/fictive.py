@@ -3,53 +3,11 @@ import numpy as np
 from scipy.signal import find_peaks as findPeaks
 from scipy.stats import pearsonr, sem
 from matplotlib import pyplot as plt
-from myphdlib.figures.analysis import g
+from myphdlib.figures.analysis import g, convertGratingMotionToSaccadeDirection, convertSaccadeDirectionToGratingMotion
 from myphdlib.figures.bootstrap import BootstrappedSaccadicModulationAnalysis
 from myphdlib.general.toolkit import psth2
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib.gridspec as gridspec
-
-def convertGratingMotionToSaccadeDirection(
-    gratingMotion=-1,
-    referenceEye='left'
-    ):
-    """
-    """
-
-    saccadeDirection = None
-    if referenceEye == 'left':
-        if gratingMotion == -1:
-            saccadeDirection = 'nasal'
-        else:
-            saccadeDirection = 'temporal'
-    elif referenceEye == 'right':
-        if gratingMotion == -1:
-            saccadeDirection = 'temporal'
-        else:
-            saccadeDirection = 'nasal'
-
-    return saccadeDirection
-
-def convertSaccadeDirectionToGratingMotion(
-    saccadeDirection,
-    referenceEye='left'
-    ):
-    """
-    """
-
-    gratingMotion = None
-    if referenceEye == 'left':
-        if saccadeDirection == 'nasal':
-            gratingMotion = -1
-        else:
-            gratingMotion = +1
-    else:
-        if saccadeDirection == 'nasal':
-            gratingMotion = +1
-        else:
-            gratingMotion = -1
-
-    return gratingMotion
 
 class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
     """

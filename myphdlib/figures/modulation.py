@@ -2,10 +2,10 @@ import h5py
 import numpy as np
 import pathlib as pl
 from scipy.signal import find_peaks as findPeaks
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, chi2_contingency
 from matplotlib import pylab as plt
 from myphdlib.general.toolkit import psth2
-from myphdlib.figures.analysis import GaussianMixturesModel, g
+from myphdlib.figures.analysis import GaussianMixturesModel, g, convertGratingMotionToSaccadeDirection
 from myphdlib.figures.clustering import GaussianMixturesFittingAnalysis
 
 class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
@@ -885,39 +885,21 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
 
         return fig, grid
 
-    def plotModulationIndexByFiringRate(
-        self,
-        ):
-        """
-        """
-
-        x, y = list(), list()
-        for session in self.sessions:
-            firingRate = session.load('metrics/fr')
-            for ukey in self.ukeys:
-                date, animal, cluster = ukey
-                if date != session.date or animal != session.animal:
-                    continue
-                unit = session.indexByCluster(cluster)
-                x.append(firingRate[unit.index])
-                iUnit = self._indexUnitKey(ukey)
-                y.append(self.mi[iUnit])
-
-        #
-        fig, ax = plt.subplots()
-        ax.scatter(x, y, color='k', marker='.', s=15, alpha=0.5)
-
-        return fig, ax
-
-    def scatterModulationByComplexity(
+    def barModulationByComplexity(
         self,
         windowIndex=5,
         componentIndex=0,
+        cmap='coolwarm',
         xrange=(-3, 3),
-        figsize=(4, 4)
+        figsize=(2, 3)
         ):
         """
         """
+
+        cmap = plt.get_cmap(
+            cmap,
+            3
+        )
 
         #
         nUnits = len(self.ukeys)
@@ -935,18 +917,281 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             *xrange
         )
         p = self.ns['p/pref/real'][:, windowIndex, componentIndex]
-        c = np.full(p.size, '0.7')
-        c[np.logical_and(mi < 0, p < 0.05)] = 'b'
-        c[np.logical_and(mi > 0, p < 0.05)] = 'r'
+        k = int(np.nanmax(complexity))
 
         #
-        fig, ax = plt.subplots()
-        ax.vlines(
-            mi,
-            complexity - 0.4,
-            complexity + 0.4,
-            color=c,
-            alpha=0.2
+        fig, ax = plt.subplots()   
+        table = np.full([k, 3], np.nan)
+        for i, label in enumerate(np.unique(complexity)):
+
+            #
+            counts = list()
+            counts.append(np.sum(np.vstack([
+                complexity == label,
+                mi < 0,
+                p < 0.05
+            ]).all(0)))
+            counts.append(np.sum(np.vstack([
+                complexity == label,
+                p >= 0.05
+            ]).all(0)))
+            counts.append(np.sum(np.vstack([
+                complexity == label,
+                mi > 0,
+                p < 0.05
+            ]).all(0)))
+            counts = np.array(counts)
+            proportions = counts / counts.sum()
+            bottoms = np.cumsum(proportions) - proportions
+
+            #
+            table[i, :] = counts 
+
+            #
+            ax.bar(
+                np.full(3, label),
+                height=proportions,
+                bottom=bottoms,
+                width=1,
+                color=[cmap(i) for i in range(3)],
+                edgecolor='k'
+            )
+        
+        #
+        x1 = np.nanmin(complexity) - 0.5
+        x2 = np.nanmax(complexity) + 0.5
+        ax.set_xlim([x1, x2])
+        ax.set_ylim([0, 1])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax, table
+
+    def barModulationBySaccadeResponseAmplitude(
+        self,
+        threshold=0.2,
+        windowIndex=5,
+        componentIndex=0,
+        responseWindow=(0, 0.5),
+        baselineWindow=(-1, -0.5),
+        xrange=(-3, 3),
+        cmap='coolwarm',
+        method='absolute',
+        figsize=(1.5, 3)
+        ):
+        """
+        Split units into units with and without a saccade response then show the
+        fraction of units in each group that are suppressed, unmodulated, and
+        enhanced
+        """
+
+        #
+        binIndicesForSaccadeResponse = np.logical_and(
+            self.tSaccade >= responseWindow[0],
+            self.tSaccade <  responseWindow[1]
+        )
+        binIndicesForProbeResponse = np.logical_and(
+            self.tProbe >= responseWindow[0],
+            self.tProbe <  responseWindow[1]
+        )
+        binIndicesForBaseline = np.logical_and(
+            self.tSaccade >= baselineWindow[0],
+            self.tSaccade <  baselineWindow[1]
         )
 
-        return fig, ax, mi, complexity
+        #
+        nUnits = len(self.ukeys)
+        responseRatios = np.full(nUnits, np.nan)
+        psths = list()
+        for iUnit in range(nUnits):
+            #
+            session = self._getSessionFromUnitKey(self.ukeys[iUnit])
+            saccadeDirection = convertGratingMotionToSaccadeDirection(
+                self.preference[iUnit],
+                session.eye,
+            )
+            psth = self.ns[f'psths/{saccadeDirection}/real'][iUnit]
+            bl = psth[binIndicesForBaseline].mean()
+            psth = (psth[binIndicesForSaccadeResponse] - bl) / self.factor[iUnit]
+            psths.append(psth)
+
+            #
+            ppth = self.ns['ppths/pref/real/extra'][iUnit, binIndicesForProbeResponse]
+
+            #
+            yProbe = ppth[np.argmax(np.abs(ppth))]
+            ySaccade = psth[np.argmax(np.abs(psth))]
+            if method == 'absolute':
+                responseRatios[iUnit] = np.abs(ySaccade)
+            elif method == 'ratio':
+                responseRatios[iUnit] = np.abs(ySaccade / yProbe)
+            
+        #
+        if method == 'ratio':
+            masks = (
+                responseRatios < threshold,
+                responseRatios >= threshold
+            )
+        elif method == 'absolute':
+            masks = (
+                responseRatios < np.percentile(responseRatios, threshold),
+                responseRatios >= np.percentile(responseRatios, threshold)
+            )
+        mi = np.clip(
+            self.ns['mi/pref/real'][:, windowIndex, componentIndex],
+            *xrange
+        )
+        p = self.ns['p/pref/real'][:, windowIndex, componentIndex]
+        fig, ax = plt.subplots()
+        cf = plt.get_cmap(cmap, 3)
+        table = np.full([2, 3], np.nan)
+        for i, mask in enumerate(masks):
+
+            #
+            counts = list()
+            counts.append(np.sum(np.vstack([
+                mask,
+                mi < 0,
+                p < 0.05
+            ]).all(0)))
+            counts.append(np.sum(np.vstack([
+                mask,
+                p >= 0.05
+            ]).all(0)))
+            counts.append(np.sum(np.vstack([
+                mask,
+                mi > 0,
+                p < 0.05
+            ]).all(0)))
+            counts = np.array(counts)
+            proportions = counts / counts.sum()
+            bottoms = np.cumsum(proportions) - proportions
+            ax.bar(
+                np.full(3, i),
+                height=proportions,
+                bottom=bottoms,
+                width=1,
+                color=[cf(i) for i in range(3)],
+                edgecolor='k'
+            )
+            table[i, :] = counts
+
+        #
+        ax.set_xlim([-0.5, 1.5])
+        ax.set_ylim([0, 1])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax, table, responseRatios, np.array(psths)
+
+    def barModulationBySaccadeAmplitude2(
+        self,
+        windowIndex=5,
+        componentIndex=0,
+        responseWindow=(0, 0.5),
+        baselineWindow=(-1, -0.5),
+        xrange=(-3, 3),
+        cmap='coolwarm',
+        method='absolute',
+        nq=5,
+        figsize=(3, 3)
+        ):
+        """
+        """
+
+        #
+        binIndicesForSaccadeResponse = np.logical_and(
+            self.tSaccade >= responseWindow[0],
+            self.tSaccade <  responseWindow[1]
+        )
+        binIndicesForProbeResponse = np.logical_and(
+            self.tProbe >= responseWindow[0],
+            self.tProbe <  responseWindow[1]
+        )
+        binIndicesForBaseline = np.logical_and(
+            self.tSaccade >= baselineWindow[0],
+            self.tSaccade <  baselineWindow[1]
+        )
+
+        #
+        nUnits = len(self.ukeys)
+        responseRatios = np.full(nUnits, np.nan)
+        psths = list()
+        for iUnit in range(nUnits):
+            #
+            session = self._getSessionFromUnitKey(self.ukeys[iUnit])
+            saccadeDirection = convertGratingMotionToSaccadeDirection(
+                self.preference[iUnit],
+                session.eye,
+            )
+            psth = self.ns[f'psths/{saccadeDirection}/real'][iUnit]
+            bl = psth[binIndicesForBaseline].mean()
+            psth = (psth[binIndicesForSaccadeResponse] - bl) / self.factor[iUnit]
+            psths.append(psth)
+
+            #
+            ppth = self.ns['ppths/pref/real/extra'][iUnit, binIndicesForProbeResponse]
+
+            #
+            yProbe = ppth[np.argmax(np.abs(ppth))]
+            ySaccade = psth[np.argmax(np.abs(psth))]
+            if method == 'absolute':
+                responseRatios[iUnit] = np.abs(ySaccade)
+            elif method == 'ratio':
+                responseRatios[iUnit] = np.abs(ySaccade / yProbe)
+
+        #
+        quantileIndexSets = np.array_split(np.argsort(responseRatios), 5)
+        mi = np.clip(
+            self.ns['mi/pref/real'][:, windowIndex, componentIndex],
+            *xrange
+        )
+        p = self.ns['p/pref/real'][:, windowIndex, componentIndex]
+        fig, ax = plt.subplots()
+        cf = plt.get_cmap(cmap, 3)
+        table = np.full([nq, 3], np.nan)
+        for i, quantileIndices in enumerate(quantileIndexSets):
+
+            #
+            mask = np.full(nUnits, False)
+            mask[quantileIndices] = True
+
+            #
+            counts = list()
+            counts.append(np.sum(np.vstack([
+                mask,
+                mi < 0,
+                p < 0.05
+            ]).all(0)))
+            counts.append(np.sum(np.vstack([
+                mask,
+                p >= 0.05
+            ]).all(0)))
+            counts.append(np.sum(np.vstack([
+                mask,
+                mi > 0,
+                p < 0.05
+            ]).all(0)))
+            counts = np.array(counts)
+            proportions = counts / counts.sum()
+            bottoms = np.cumsum(proportions) - proportions
+            ax.bar(
+                np.full(3, i),
+                height=proportions,
+                bottom=bottoms,
+                width=1,
+                color=[cf(i) for i in range(3)],
+                edgecolor='k'
+            )
+            table[i, :] = counts
+
+        #
+        ax.set_xlim([0 - 0.5, nq - 1 + 0.5])
+        ax.set_ylim([0, 1])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax, table

@@ -99,7 +99,8 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         figsize=(3, 3),
         cmap='coolwarm',
         vrange=(-0.5, 0.5),
-        xticks=np.array([0.05, 0.1, 0.2])
+        xticks=np.array([0.05, 0.1, 0.2]),
+        yticks=np.array([-0.5, -0.25, 0, 0.25, 0.5])
         ):
         """
         """
@@ -212,6 +213,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             tf(xticks)
         )
         ax.set_xticklabels(xticks, rotation=45)
+        ax.set_yticks(yticks)
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
 
@@ -220,7 +222,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         ax.set_ylabel('Saccade to probe latency (s)')
         fig.colorbar(
             mesh,
-            fraction=0.2,
+            fraction=0.3,
             ticks=np.arange(-0.5, 0.5 + 0.25, 0.25)
         )
         fig.set_figwidth(figsize[0])
@@ -401,9 +403,10 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
                         y.append(np.tanh(mi))
                     else:
                         y.append(mi)
-                # ax.plot(t, np.clip(y, *yrange), color='0.6', alpha=0.1, lw=0.5)
-                if np.random.choice([True, False], size=1):
-                    ax.scatter(t, np.clip(y, *yrange), color='k', alpha=0.05, s=5, marker='.', rasterized=True, clip_on=False)
+                # ax.plot(t, np.clip(y, *yrange), color='0.6', alpha=0.05, lw=1)
+                # if np.random.choice([True, False], size=1):
+                #    ax.scatter(t, np.clip(y, *yrange), color='k', alpha=0.05, s=5, marker='.', rasterized=True, clip_on=False)
+
 
                 # Interpolate
                 interpolated = np.interp(
@@ -423,13 +426,15 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             y1,
             color='k'
         )
-        # ax.fill_between(
-        #     np.linspace(*interpolationWindow, nPointsForEvaluation),
-        #     np.nanmean(lines, axis=0) - np.nanstd(lines, axis=0),
-        #     np.nanmean(lines, axis=0) + np.nanstd(lines, axis=0),
-        #     color='0.5',
-        #     alpha=0.1
-        # )
+        error = 1.96 * (np.nanstd(lines, axis=0) / np.sqrt(np.sum(np.invert(np.isnan(lines)), axis=0)))
+        ax.fill_between(
+            np.linspace(*interpolationWindow, nPointsForEvaluation),
+            np.nanmean(lines, axis=0) - error,
+            np.nanmean(lines, axis=0) + error,
+            color='k',
+            alpha=0.1,
+            edgecolor=None
+        )
         xlim = ax.get_xlim()
         ax.vlines(0, *yrange, color='k', alpha=0.7, linestyle=':')
         ax.hlines(0, *xlim, color='k', alpha=0.7, linestyle=':')

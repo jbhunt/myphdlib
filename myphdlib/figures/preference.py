@@ -5,7 +5,7 @@ from matplotlib import pyplot as plt
 from myphdlib.general.toolkit import psth2
 from myphdlib.figures.analysis import AnalysisBase
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
-from myphdlib.figures.fictive import convertSaccadeDirectionToGratingMotion, convertGratingMotionToSaccadeDirection
+from myphdlib.figures.analysis import convertSaccadeDirectionToGratingMotion, convertGratingMotionToSaccadeDirection
 
 class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
     """
@@ -321,11 +321,11 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
         return fig, grid
 
-    def plotModulationByPreference(
+    def scatterModulationByPreference(
         self,
         figsize=(2, 3.5),
         windowIndex=5,
-        transform=True,
+        transform=False,
         yrange=(-3, 3),
         ):
         """
@@ -414,10 +414,10 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
         windowIndex=5,
         modulationSign=-1,
         minimumResponseAmplitude=10,
-        minimumSelectivity=0.2,
+        minimumSelectivity=0.25,
         transform=False,
         xyrange=(-3, 3),
-        figsize=(4, 4),
+        figsize=(2.5, 5),
         ):
         """
         """
@@ -457,35 +457,43 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                 fPref = self.ns[f'p/pref/real'][iUnit, windowIndex, 0] < alpha
                 fNull = self.ns[f'p/null/real'][iUnit, windowIndex, 0] < alpha
                 if fNull and fPref:
-                    color = 'xkcd:purple'
+                    color = 'xkcd:violet'
                 elif fNull:
-                    color = 'xkcd:orange'
+                    color = 'xkcd:pink'
                 elif fPref:
-                    color = 'xkcd:green'
+                    color = 'xkcd:light blue'
                 # else:
                 #     color = 'xkcd:gray'
                 markers.append('.')
                 colors.append(color)
 
         #
-        for i in range(x.size):
+        uniqueColors = (
+            'xkcd:pink',
+            'xkcd:light blue',
+            'xkcd:violet'
+        )
+        for color in uniqueColors:
+            mask = np.array(colors) == color
             ax.scatter(
-                x[i],
-                y[i],
+                x[mask],
+                y[mask],
                 s=30,
-                color=colors[i],
-                marker=markers[i],
-                alpha=0.5,
+                color=color,
+                alpha=0.7,
+                marker='.',
+                edgecolor=None,
                 clip_on=False
             )
-        ax.vlines(0, *xyrange, color='k', linestyle=':')
+
+        # ax.vlines(0, *xyrange, color='k', linestyle=':')
         ax.hlines(0, *xyrange, color='k', linestyle=':')
 
         #
-        ax.set_xlabel(r'$MI_{Pref}$')
-        ax.set_ylabel(r'$MI_{Null}$')
-        ax.set_xlim(xyrange)
         ax.set_ylim(xyrange)
+        ax.set_xlim([xyrange[0], 0])
+        ax.set_xlabel(r'$MI_{Pref}$')
+        ax.set_ylabel(r'$MI_{Null}}$')
         ax.set_aspect('equal')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
@@ -585,40 +593,51 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
         return fig, ax, amplitude
 
-    def plotExampleDirectionSelectiveUnit(
+    def plotExamplePeths(
         self,
-        ukeys=None,
         figsize=(5, 2)
         ):
         """
         """
 
         #
-        if ukeys is None:
-            ukeys = self.examples
-        fig, axs = plt.subplots(ncols=len(ukeys))
+        fig, axs = plt.subplots(ncols=int(len(self.examples) * 2))
         axs = np.atleast_1d(axs)
 
         #
-        for j, ukey in enumerate(ukeys):
+        for i, ukey in enumerate(self.examples):
 
             #
-            self.ukey = ukey
+            j = int(i * 2)
 
             #
-            yPref = self.ns['ppths/pref/real/extra'][self.iUnit]
-            yNull = self.ns['ppths/null/real/extra'][self.iUnit]
-            axs[j].plot(self.tProbe, yNull, color='0.7', label='Null')
-            axs[j].plot(self.tProbe, yPref, color='k', label='Pref')
+            iUnit = self._indexUnitKey(ukey)
 
             #
-            dsi = self.ns['dsi/probe'][self.iUnit]
+            yPref = self.ns['ppths/pref/real/extra'][iUnit]
+            yNull = self.ns['ppths/null/real/extra'][iUnit]
+            axs[j].plot(self.tProbe, yPref, color='k')
+            axs[j + 1].plot(self.tProbe, yNull, color='k')
+
+            #
+            dsi = self.ns['dsi/probe'][iUnit]
             axs[j].set_title(f'DSI={dsi:.3f}', fontsize=10)
             axs[j].set_xlabel('Time from probe (sec)')
 
+            #
+            ylim = [np.inf, -np.inf]
+            for ax in axs[j:j + 2]:
+                y1, y2 = ax.get_ylim()
+                if y1 < ylim[0]:
+                    ylim[0] = y1
+                if y2 > ylim[1]:
+                    ylim[1] = y2
+            for ax in axs[j:j + 2]:
+                ax.set_ylim(ylim)
+            axs[j + 1].set_yticklabels([])
+
         #
-        axs[0].set_ylabel('FR (z-scored)')
-        axs[0].legend()
+        axs[0].set_ylabel('FR (SD)')
 
         #
         fig.set_figwidth(figsize[0])
