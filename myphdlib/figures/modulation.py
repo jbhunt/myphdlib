@@ -1086,12 +1086,13 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
 
         return fig, ax, table, responseRatios, np.array(psths)
 
-    def barModulationBySaccadeAmplitude2(
+    def barModulationBySaccadeResponseAmplitude2(
         self,
         windowIndex=5,
         componentIndex=0,
         responseWindow=(0, 0.5),
         baselineWindow=(-1, -0.5),
+        minimumResponseAmplitude=5,
         xrange=(-3, 3),
         cmap='coolwarm',
         method='absolute',
@@ -1137,10 +1138,17 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             #
             yProbe = ppth[np.argmax(np.abs(ppth))]
             ySaccade = psth[np.argmax(np.abs(psth))]
+            if np.abs(yProbe) < minimumResponseAmplitude:
+                continue
+            # if yProbe < 0:
+            #     continue
             if method == 'absolute':
                 responseRatios[iUnit] = np.abs(ySaccade)
             elif method == 'ratio':
                 responseRatios[iUnit] = np.abs(ySaccade / yProbe)
+
+        #
+        responseRatios = np.delete(responseRatios, np.isnan(responseRatios))
 
         #
         quantileIndexSets = np.array_split(np.argsort(responseRatios), 5)
@@ -1194,4 +1202,4 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, ax, table
+        return fig, ax
