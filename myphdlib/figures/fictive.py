@@ -326,9 +326,9 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                     elif abs(aReal[iUnit]) > minimumResponseAmplitude and abs(aFictive[iUnit]) < minimumResponseAmplitude:
                         utype = 2
                     elif abs(aReal[iUnit]) < minimumResponseAmplitude and abs(aFictive[iUnit]) > minimumResponseAmplitude:
-                        utype = 4
+                        utype = 2
                     else:
-                        utype = 4
+                        utype = 2
 
                 #
                 elif method == 'ratio':
@@ -339,7 +339,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                     elif r <= ratioThreshold:
                         utype = 1
                     else:
-                        utype = 4
+                        utype = 2
 
             #
             U[iUnit] = utype
@@ -418,13 +418,12 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         componentIndex=0,
         responseWindowForSaccades=(-0.5, 0.5),
         baselineWindowForSaccades=(-1, -0.5),
-        colors=('c', 'm'),
-        figsize=(5, 3),
+        figsize=(3, 5),
         ):
         """
         """
 
-        fig, grid = plt.subplots(nrows=len(self.examples), ncols=4)
+        fig, grid = plt.subplots(ncols=4, nrows=len(self.examples))
         if len(self.examples) == 1:
             grid = np.atleast_2d(grid)
 
@@ -515,7 +514,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                 ax.spines[sp].set_visible(False)
 
         #
-        titles = (r'$R_{P (Extra, Real)}$', r'$R_{P (Peri, Real)}$', r'$R_{P (Peri, Fictive)}$', r'$R_{Saccade}$')
+        titles = (r'$R_{P (Extra)}$', r'$R_{P (Peri, Real)}$', r'$R_{P (Peri, Fictive)}$', r'$R_{Saccade}$')
         for j in range(4):
             grid[0, j].set_title(titles[j], fontsize=10)
         fig.supxlabel('Time from probe (sec)', fontsize=10)
@@ -530,7 +529,6 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         labels=(1, 2),
         responseWindow=(-0.2, 0.5),
         baselineWindow=(-1, -0.5),
-        error='sem',
         figsize=(2, 4),
         axs=None,
         ):
@@ -541,7 +539,8 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
             fig, axs = plt.subplots(nrows=len(labels), sharey=True)
         else:
             fig = axs[0].figure
-        u, r = self.classifyUnitsByAmplitude()
+        # u, r = self.classifyUnitsByAmplitude()
+        u, r = self.classifyUnitsByCorrelation()
         binIndicesForResponse = np.logical_and(
             self.tSaccade >= responseWindow[0],
             self.tSaccade <= responseWindow[1]
@@ -585,10 +584,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                 alpha=0.5,
                 label='Real'
             )
-            if error == 'std':
-                e = np.nanstd(psths['real'], axis=0)
-            elif error == 'sem':
-                e = sem(psths['real'], axis=0, nan_policy='omit')
+            e = sem(psths['real'], axis=0, nan_policy='omit') * 1.96
             ax.fill_between(
                 self.tSaccade[binIndicesForResponse],
                 np.nanmean(psths['real'], axis=0) - e,
@@ -603,10 +599,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                 alpha=0.5,
                 label='Fictive'
             )
-            if error == 'std':
-                e = np.nanstd(psths['fictive'], axis=0)
-            elif error == 'sem':
-                e = sem(psths['fictive'], axis=0, nan_policy='omit')
+            e = sem(psths['fictive'], axis=0, nan_policy='omit') * 1.96
             ax.fill_between(
                 self.tSaccade[binIndicesForResponse],
                 np.nanmean(psths['fictive'], axis=0) - e,
@@ -619,9 +612,11 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         for ax in axs:
             for sp in ('top', 'right'):
                 ax.spines[sp].set_visible(False)
-        axs[0].set_title('Type I', fontsize=10)
-        axs[1].set_title('Type II', fontsize=10)
-        axs[-1].legend()
+        n = np.sum(u == 1)
+        axs[0].set_title(f'Type I (n={n})', fontsize=10)
+        n = np.sum(u == 2)
+        axs[1].set_title(f'Type II (n={n})', fontsize=10)
+        # axs[-1].legend()
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
@@ -699,7 +694,8 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                 x[mask][order],
                 y[mask][order],
                 marker='.',
-                s=15,
+                s=30,
+                edgecolor='none',
                 c=C[order],
                 alpha=0.5,
                 clip_on=False,
