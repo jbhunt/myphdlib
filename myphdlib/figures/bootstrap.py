@@ -5,9 +5,7 @@ from scipy.signal import find_peaks as findPeaks
 from matplotlib.colors import LinearSegmentedColormap
 from myphdlib.general.toolkit import psth2
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
-from myphdlib.figures.analysis import GaussianMixturesModel
-import seaborn as sns
-import pandas as pd
+from myphdlib.figures.analysis import GaussianMixturesModel, convertGratingMotionToSaccadeDirection
 from itertools import product
 from scipy.stats import spearmanr
 from multiprocessing import Pool, cpu_count
@@ -467,108 +465,96 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         fig.tight_layout()
 
         return fig, ax
-
-    def plotModulationDistributionsWithHistogram(
+    
+    def histModulationIndexByUnitType(
         self,
-        alpha=0.05,
+        responseWindow=(-0.2, 0.5),
+        baselineWindow=(-1, -0.5),
         windowIndex=5,
         componentIndex=0,
-        figsize=(3, 2),
-        colorspace=('b', 'r', 'w'),
-        minimumResponseAmplitude=0,
-        nBins=20,
-        labels=(1, 2, 3, -1),
-
+        minmumResponseAmplitude=3,
+        figsize=(3, 5)
         ):
         """
         """
 
         #
-        if minimumResponseAmplitude is None:
-            minimumResponseAmplitude = 0
-
-        #
-        cmap = LinearSegmentedColormap.from_list('mycmap', colorspace, N=3)
         fig, ax = plt.subplots()
+        cmap = plt.get_cmap('coolwarm', 3)
 
-        #
-        mi = self.ns[f'mi/pref/real']
-        paramsExtra = self.ns[f'params/pref/real/extra']
-        pvalues = self.ns[f'p/pref/real']
-        polarity = np.array([
-            -1 if mi[i, windowIndex, componentIndex] < 0 else 1
-                for i in range(len(self.ukeys))
-        ])
-        # polarity[np.isnan(mi[:, windowIndex, componentIndex])]
-        samples = ([], [], [])
-        for i, l in enumerate(labels):
-            for sign in [-1, 1]:
-                mask = np.vstack([
-                    polarity == sign,
-                    self.labels == l,
-                    np.abs(paramsExtra[:, 0]) >= minimumResponseAmplitude,
-                ]).all(0)
-                for dr, p, iUnit in zip(mi[mask, windowIndex, componentIndex], pvalues[mask, windowIndex, componentIndex], np.arange(len(self.ukeys))[mask]):
-                    if l == -1:
-                        dr *= -1
-                    if p < alpha:
-                        if sign == -1:
-                            samples[0].append(dr)
-                        else:
-                            samples[1].append(dr)
-                    else:
-                        samples[2].append(dr)
-
-        #
-        xmin, xmax = xrange
-        ax.hist(
-            [np.clip(sample, xmin, xmax) for sample in samples],
-            range=(xmin, xmax),
-            bins=nBins,
-            histtype='barstacked',
-            color=cmap(np.arange(3)),
+        # Type units based on the saccade response, 0 = negative, 1 = no response, 2 = positive
+        nUnits = len(self.ukeys)
+        saccadeResponseTypes = np.full(nUnits, np.nan)
+        binIndicesForResponse = np.logical_and(
+            self.tSaccade >= responseWindow[0],
+            self.tSaccade <= responseWindow[1]
         )
-        binCounts_, binEdges, patches = ax.hist(
-            [np.clip(sample, xmin, xmax) for sample in samples],
-            range=(xmin, xmax),
-            bins=nBins,
-            histtype='barstacked',
-            facecolor='none',
-            edgecolor='k',
+        binIndicesForBaseline = np.logical_and(
+            self.tSaccade >= baselineWindow[0],
+            self.tSaccade <= baselineWindow[1]
         )
-        binCounts = binCounts_.max(0)
-        binCenters = binEdges[:-1] + ((binEdges[1] - binEdges[0]) / 2)
-        leftEdges = binEdges[:-1]
-        rightEdges = binEdges[1:]
+        for iUnit in range(nUnits):
+            session = self._getSessionFromUnitKey(self.ukeys[iUnit])
+            saccadeDirection = convertGratingMotionToSaccadeDirection(
+                self.preference[iUnit],
+                session.eye,
+            )
+            fr = self.ns[f'psths/{saccadeDirection}/real'][iUnit, binIndicesForResponse]
+            bl = self.ns[f'psths/{saccadeDirection}/real'][iUnit, binIndicesForBaseline].mean()
+            y = fr - bl
+            tv = y[np.argmax(np.abs(y))]
+            if tv <= -minmumResponseAmplitude:
+                label = -1
+            elif tv >= minmumResponseAmplitude:
+                label = 1
+            else:
+                label = 0
+            saccadeResponseTypes[iUnit] = label        
 
-        #
-        for ukey in self.examples:
-            iUnit = self._indexUnitKey(ukey)
-            if iUnit is None:
-                continue
-            dr = mi[iUnit, windowIndex, componentIndex]
-            if np.isnan(dr).item():
-                continue
-            binIndex = np.where(np.logical_and(
-                dr >= leftEdges,
-                dr <  rightEdges
-            ))[0].item()
-            ax.scatter(
-                binCenters[binIndex],
-                binCounts[binIndex] + 10,
-                marker='v',
-                color='k',
-                s=20
+        # Type units based on the response to the probe, 0 = negative, 1 = positive
+        probeResponseTypes = np.full(nUnits, -1)
+        probeResponseTypes[self.labels != -1] = 1
+
+        # Type units based on unique combinations of probe and saccade responses
+        uniqueResponseCombos = np.unique(np.vstack([
+            probeResponseTypes,
+            saccadeResponseTypes
+        ]).T, axis=0)
+        mi = self.ns['mi/pref/real'][:, windowIndex, componentIndex]
+        p = self.ns['p/pref/real'][:, windowIndex, componentIndex]
+        for x, (l1, l2) in enumerate(uniqueResponseCombos):
+            unitIndices = np.where(np.logical_and(
+                probeResponseTypes == l1,
+                saccadeResponseTypes == l2
+            ))[0]
+            N = np.full(3, np.nan)
+            N[0] = np.sum(np.logical_and(
+                mi[unitIndices] < 0,
+                p[unitIndices] < 0.05
+            ))
+            N[1] = np.sum(p[unitIndices] >= 0.05)
+            N[2] = np.sum(np.logical_and(
+                mi[unitIndices] > 0,
+                mi[unitIndices] < 0.05
+            ))
+            N /= N.sum()
+            ax.bar(
+                x,
+                N,
+                width=0.8,
+                color=[cmap(i) for i in range(3)],
+                bottom=np.concatenate([[0], np.cumsum(N)[:-1]])
             )
 
         #
-        ax.set_xticks(xticks)
-        ax.set_xlabel(f'Modulation index (MI)')
+        ax.set_xticks(np.arange(uniqueResponseCombos.shape[0]))
+        ax.set_xticklabels(uniqueResponseCombos, rotation=45)
+        ax.set_ylim([0, 1.02])
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, ax
+        return fig, (ax,)
 
     def plotComplexityByModulation(
         self,
@@ -637,3 +623,4 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         fig.tight_layout()
 
         return fig, ax, r, p
+    

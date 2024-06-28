@@ -3,7 +3,7 @@ import numpy as np
 import pathlib as pl
 from matplotlib import pyplot as plt
 from myphdlib.general.toolkit import psth2
-from myphdlib.figures.analysis import AnalysisBase
+from myphdlib.figures.analysis import AnalysisBase, g
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
 from myphdlib.figures.analysis import convertSaccadeDirectionToGratingMotion, convertGratingMotionToSaccadeDirection
 from matplotlib.colors import LinearSegmentedColormap
@@ -524,6 +524,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
     def plotExamplePeths(
         self,
+        componentIndex=0,
         figsize=(5, 2)
         ):
         """
@@ -544,9 +545,27 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
             #
             yPref = self.ns['ppths/pref/real/extra'][iUnit]
+            params = self.ns['params/pref/real/extra'][iUnit]
+            abcd = np.delete(params, np.isnan(params))
+            abc, d = abcd[:-1], abcd[-1]
+            A, B, C = np.split(abc, 3)
+            a, b, c = A[componentIndex], B[componentIndex], C[componentIndex]
+            t2 = np.linspace(-15 * c, 15 * c, 100) + b
+            y2 = g(t2, a, b, c, d)
+            axs[j].plot(self.tProbe, yPref, color='0.7')
+            axs[j].plot(t2, y2, color='k')
+
+            #
             yNull = self.ns['ppths/null/real/extra'][iUnit]
-            axs[j].plot(self.tProbe, yPref, color='k')
-            axs[j + 1].plot(self.tProbe, yNull, color='k')
+            params = self.ns['params/null/real/extra'][iUnit]
+            abcd = np.delete(params, np.isnan(params))
+            abc, d = abcd[:-1], abcd[-1]
+            A, B, C = np.split(abc, 3)
+            a, b, c = A[componentIndex], B[componentIndex], C[componentIndex]
+            t2 = np.linspace(-15 * c, 15 * c, 100) + b
+            y2 = g(t2, a, b, c, d)
+            axs[j + 1].plot(self.tProbe, yNull, color='0.7')
+            axs[j + 1].plot(t2, y2, color='k')
 
             #
             dsi = self.ns['dsi/probe'][iUnit]
@@ -564,6 +583,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
             for ax in axs[j:j + 2]:
                 ax.set_ylim(ylim)
             axs[j + 1].set_yticklabels([])
+            
 
         #
         axs[0].set_ylabel('FR (SD)')
@@ -603,3 +623,44 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
         fig.tight_layout()
 
         return fig, ax, dsi
+    
+    def plotSelectivityByUnitType(
+        self,
+        threshold=0.3,
+        figsize=(1.5, 3.5)
+        ):
+        """
+        """
+
+        fig, ax = plt.subplots()
+        dsi = self.ns['dsi/probe']
+        ds = np.full(dsi.size, False)
+        ds[dsi >= threshold] = True
+        ds = ds.astype(int)
+        combos = np.vstack([
+            ds,
+            self.labels
+        ]).T
+        uniqueCombos, counts = np.unique(combos, axis=0, return_counts=True)
+        data = np.full([np.unique(self.labels).size, np.unique(ds).size], np.nan)
+        for i, l1 in enumerate(np.unique(self.labels)):
+            for j, l2 in enumerate(np.unique(ds)):
+                k = np.where(np.logical_and(
+                    uniqueCombos[:, 0] == l2,
+                    uniqueCombos[:, 1] == l1
+                ))[0]
+                data[i, j] = counts[k]
+        data[:, 0] /= np.nansum(data[:, 0])
+        data[:, 1] /= np.nansum(data[:, 1])
+        
+        #
+        for (i, j), f in np.ndenumerate(data):
+            ax.scatter(np.unique(ds)[j], np.unique(self.labels)[i], s=f * 300, color='k', marker='o')
+
+        #
+        ax.set_xlim([-0.5, 1.5])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, (ax,), data

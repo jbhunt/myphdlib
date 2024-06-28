@@ -8,6 +8,8 @@ from myphdlib.figures.bootstrap import BootstrappedSaccadicModulationAnalysis
 from myphdlib.general.toolkit import psth2
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib.gridspec as gridspec
+from matplotlib.colors import LinearSegmentedColormap
+from cmcrameri import cm
 
 class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
     """
@@ -24,8 +26,8 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
 
         #
         self.examples = (
-            ('2023-07-20', 'mlati9', 329),
-            ('2023-07-03', 'mlati10', 152),
+            ('2023-07-21', 'mlati10', 47),
+            ('2023-07-05', 'mlati9', 206)
         )
 
         return
@@ -312,7 +314,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                 aFictive[iUnit] < minimumResponseAmplitude
             ]).all(0)
             if check:
-                utype = 3
+                utype = 2
 
             #
             else:
@@ -383,7 +385,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                 aFictive[iUnit] < minimumResponseAmplitude
             ]).all(0)
             if check:
-                utype = 3
+                utype = 2
 
             #
             else:
@@ -403,7 +405,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                     if r > 0 and p < alpha:
                         utype = 1
                     elif r < 0 and p >= alpha:
-                        utype = 4
+                        utype = 2
                     elif p >= alpha:
                         utype = 2
 
@@ -412,20 +414,44 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
 
         return U, R
 
-    def plotExamples(
+    def _plotExamples(
         self,
+        grid,
         windowIndex=5,
         componentIndex=0,
-        responseWindowForSaccades=(-0.5, 0.5),
+        responseWindowForSaccades=(-0.2, 0.5),
         baselineWindowForSaccades=(-1, -0.5),
-        figsize=(3, 5),
         ):
         """
         """
 
-        fig, grid = plt.subplots(ncols=4, nrows=len(self.examples))
-        if len(self.examples) == 1:
-            grid = np.atleast_2d(grid)
+        #
+        binIndicesForResponse = np.logical_and(
+            self.tSaccade >= responseWindowForSaccades[0],
+            self.tSaccade <= responseWindowForSaccades[1]
+        )
+        binIndicesForBaseline = np.logical_and(
+            self.tSaccade >= baselineWindowForSaccades[0],
+            self.tSaccade <= baselineWindowForSaccades[1]
+        )
+        for i, ukey in enumerate(self.examples):
+            iUnit = self._indexUnitKey(ukey)
+            session = self._getSessionFromUnitKey(ukey)
+            saccadeDirection = convertGratingMotionToSaccadeDirection(
+                self.preference[iUnit],
+                session.eye
+            )
+            for saccadeType, linestyle, color in zip(['real', 'fictive'], ['-', '-'], ['k', 'r']):
+                psth = self.ns[f'psths/{saccadeDirection}/{saccadeType}'][iUnit, :]
+                bl = psth[binIndicesForBaseline].mean()
+                fr = (psth - bl) / self.factor[iUnit]
+                grid[i, 0].plot(
+                    self.tSaccade[binIndicesForResponse],
+                    fr[binIndicesForResponse],
+                    color=color,
+                    alpha=0.5,
+                    linestyle=linestyle
+                )
 
         #
         iterable = list(zip(
@@ -451,7 +477,7 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                     params = self.ns[f'params/pref/{saccadeType}/{trialType}'][iUnit, :]
 
                 #
-                grid[i, j].plot(self.tProbe, peth, color='0.8')
+                grid[i, j + 1].plot(self.tProbe, peth, color='0.8')
 
                 #
                 abcd = np.delete(params, np.isnan(params))
@@ -462,35 +488,11 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                 a, b, c = A[componentIndex], B[componentIndex], C[componentIndex]
                 t2 = np.linspace(-15 * c, 15 * c, 100) + b
                 y2 = g(t2, a, b, c, d)
-                grid[i, j].plot(t2, y2, color='k')
-
-        #
-        binIndicesForResponse = np.logical_and(
-            self.tSaccade >= responseWindowForSaccades[0],
-            self.tSaccade <= responseWindowForSaccades[1]
-        )
-        binIndicesForBaseline = np.logical_and(
-            self.tSaccade >= baselineWindowForSaccades[0],
-            self.tSaccade <= baselineWindowForSaccades[1]
-        )
-        for i, ukey in enumerate(self.examples):
-            iUnit = self._indexUnitKey(ukey)
-            session = self._getSessionFromUnitKey(ukey)
-            saccadeDirection = convertGratingMotionToSaccadeDirection(
-                self.preference[iUnit],
-                session.eye
-            )
-            for saccadeType, linestyle, color in zip(['real', 'fictive'], ['-', '-'], ['k', 'r']):
-                psth = self.ns[f'psths/{saccadeDirection}/{saccadeType}'][iUnit, :]
-                bl = psth[binIndicesForBaseline].mean()
-                fr = (psth - bl) / self.factor[iUnit]
-                grid[i, -1].plot(
-                    self.tSaccade[binIndicesForResponse],
-                    fr[binIndicesForResponse],
-                    color=color,
-                    alpha=0.5,
-                    linestyle=linestyle
-                )
+                if saccadeType == 'fictive':
+                    color = 'r'
+                else:
+                    color = 'k'
+                grid[i, j + 1].plot(t2, y2, color=color)
 
         #
         for axs in grid:
@@ -506,41 +508,36 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         
         #
         for ax in grid[:, 1:].flatten():
-            ax.set_yticklabels([])
+            ax.set_yticks([])
+            ax.spines['left'].set_visible(False)
         
         #
         for ax in grid.flatten():
             for sp in ('top', 'right'):
                 ax.spines[sp].set_visible(False)
+            ax.set_xticks([-0.2, 0, 0.5])
+            ax.set_xlim(responseWindowForSaccades)
 
         #
-        titles = (r'$R_{P (Extra)}$', r'$R_{P (Peri, Real)}$', r'$R_{P (Peri, Fictive)}$', r'$R_{Saccade}$')
-        for j in range(4):
-            grid[0, j].set_title(titles[j], fontsize=10)
-        fig.supxlabel('Time from probe (sec)', fontsize=10)
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
+        # titles = (r'$R_{P (Extra)}$', r'$R_{P (Peri, Real)}$', r'$R_{P (Peri, Fictive)}$', r'$R_{Saccade}$')
+        # for j in range(4):
+        #     grid[0, j].set_title(titles[j], fontsize=10)
+                
 
-        return fig, grid
+        return
 
-    def plotAverageSaccadeResponseBySaccadeType(
+    def _plotAverageSaccadeResponseBySaccadeType(
         self,
+        axs,
         labels=(1, 2),
         responseWindow=(-0.2, 0.5),
         baselineWindow=(-1, -0.5),
-        figsize=(2, 4),
-        axs=None,
         ):
         """
         """
 
-        if axs is None:
-            fig, axs = plt.subplots(nrows=len(labels), sharey=True)
-        else:
-            fig = axs[0].figure
-        # u, r = self.classifyUnitsByAmplitude()
-        u, r = self.classifyUnitsByCorrelation()
+        u, r = self.classifyUnitsByAmplitude(method='ratio')
+        # u, r = self.classifyUnitsByCorrelation()
         binIndicesForResponse = np.logical_and(
             self.tSaccade >= responseWindow[0],
             self.tSaccade <= responseWindow[1]
@@ -616,10 +613,46 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         axs[0].set_title(f'Type I (n={n})', fontsize=10)
         n = np.sum(u == 2)
         axs[1].set_title(f'Type II (n={n})', fontsize=10)
-        # axs[-1].legend()
+        
+        ylim = [np.inf, -np.inf]
+        for ax in axs:
+            y1, y2 = ax.get_ylim()
+            if y1 < ylim[0]:
+                ylim[0] = y1
+            if y2 > ylim[1]:
+                ylim[1] = y2
+        for ax in axs:
+            ax.set_ylim(ylim)
+            ax.set_xticks([-0.2, 0, 0.5])
+            ax.set_xlim(responseWindow)
+
+        return
+    
+    def plotEventRelatedActivity(
+        self,
+        figsize=(4, 5)
+        ):
+        """
+        """
+
+        fig = plt.figure()
+        gs = gridspec.GridSpec(2, 6)
+        axs1 = [
+            fig.add_subplot(gs[0, :2]),
+            fig.add_subplot(gs[1, :2])
+        ]
+        self._plotAverageSaccadeResponseBySaccadeType(
+            axs1
+        )
+        axs2 = np.array([
+            [fig.add_subplot(gs[0, j]) for j in range(2, 6, 1)],
+            [fig.add_subplot(gs[1, j]) for j in range(2, 6, 1)],
+        ])
+        self._plotExamples(axs2)
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
-        fig.tight_layout()
+        fig.subplots_adjust(hspace=0.3)
+        axs = np.hstack([np.array(axs1).reshape(-1, 1), axs2])
 
         return fig, axs
 
@@ -629,11 +662,22 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         windowIndex=5,
         componentIndex=0,
         labels=(1, 2),
-        colors=('xkcd:violet', 'xkcd:light blue', 'xkcd:light red', 'xkcd:gray'),
         figsize=(2.5, 4.5),
         ):
         """
         """
+
+        colorspace = [
+            (0, '#ff8080'),
+            (0.5, '#8c4d4d'),
+            (1, '#808080')
+
+        ]
+        cmap = LinearSegmentedColormap.from_list(
+            'kr',
+            colorspace,
+            3
+        )        
 
         #
         fig, axs = plt.subplots(nrows=len(labels))
@@ -650,55 +694,71 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
             mask = np.vstack([
                 u == label,
                 # self.ns['p/pref/real'][:, windowIndex, componentIndex] < 0.05,
-                # self.ns['mi/pref/real'][:, windowIndex, componentIndex] < 0,
-                np.invert(np.isnan(self.ns['mi/pref/fictive'][:, 0, componentIndex]))
+                # self.ns['mi/pref/real'][:, windowIndex, componentIndex] > 0,
+                np.invert(np.isnan(self.ns['mi/pref/fictive'][:, 0, componentIndex])),
+                np.invert(np.isnan(self.ns['mi/pref/real'][:, 5, componentIndex]))
             ]).all(0)
 
             #
             C = list()
             P = list()
+            L = list()
             for iUnit in np.where(mask)[0]:
 
                 # load MI and p-value
                 pReal = self.ns['p/pref/real'][iUnit, windowIndex, componentIndex]
-                # mReal = self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex]
                 pFictive = self.ns['p/pref/fictive'][iUnit, 0, componentIndex]
-                # mFictive = self.ns['mi/pref/fictive'][iUnit, 0, componentIndex]
 
                 # Real and fictive saccadic suppression
                 if pReal < 0.05 and pFictive < 0.05:
-                    C.append(colors[0])
+                    c = list(cmap(1))
+                    c[-1] = 0.5
+                    C.append(c)
                     P.append(pFictive)
+                    L.append(1)
 
                 # Real saccdic suppresssion and fictive saccadic enhancement
                 elif pReal < 0.05 and pFictive >= 0.05:
-                    C.append(colors[1])
+                    c = list(cmap(0))
+                    c[-1] = 0.5
+                    C.append(c)
                     P.append(pFictive)
+                    L.append(0)
 
                 # Real saccadic suppression and no modulation for fictive saccades
                 elif pReal >= 0.05 and pFictive < 0.05:
-                    C.append(colors[2])
+                    c = list(cmap(2))
+                    c[-1] = 0.5
+                    C.append(c)
                     P.append(pFictive)
+                    L.append(2)
 
                 #
                 elif pReal >= 0.05 and pFictive >= 0.05:
-                    C.append(colors[3])
+                    C.append(np.zeros(4))
                     P.append(pFictive)
+                    L.append(3)
 
             #
             C = np.array(C)
-            order = np.argsort(P)[::-1]
+            L = np.array(L)
+            order = np.concatenate([
+                np.where(L == 3)[0],
+                np.where(L == 2)[0],
+                np.where(L == 0)[0],
+                np.where(L == 1)[0],
+            ])
 
             #
             ax.scatter(
                 x[mask][order],
                 y[mask][order],
                 marker='.',
-                s=30,
+                s=40,
                 edgecolor='none',
                 c=C[order],
-                alpha=0.5,
                 clip_on=False,
+                rasterized=True
             )
 
             # Indicate examples
@@ -707,37 +767,12 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                     ax.scatter(
                         x[iUnit],
                         y[iUnit],
-                        color=C[i],
-                        edgecolor='k',
-                        marker='D',
+                        color='k',
+                        edgecolor='none',
+                        marker='.',
                         zorder=3,
+                        s=40
                     )
-
-            #
-            div = make_axes_locatable(ax)
-            tax = div.append_axes('top', size='20%', pad=0.05)
-            samples = list()
-            for c in colors:
-                samples.append(np.clip(x[mask][C == c], -1 * xylim, xylim))
-            tax.hist(
-                samples,
-                color=('0.0', '0.0', 'w', 'w'),
-                # color=(colors[0], colors[1], 'w', 'w'),
-                histtype='barstacked',
-                range=(-1 * xylim, xylim),
-                bins=30,
-            )
-            tax.hist(
-                np.concatenate([sample for sample in samples]),
-                edgecolor='k',
-                histtype='step',
-                range=(-1 * xylim, xylim),
-                bins=30,
-            )
-            for sp in ('top', 'right'):
-                tax.spines[sp].set_visible(False)
-            tax.set_xticks([])
-            tax.set_xlim([-1 * xylim, xylim])
 
         #
         for ax in axs:
@@ -752,6 +787,65 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
+
+        return fig, axs
+    
+    def contourModulationBySaccadeType(
+        self,
+        labels=(1, 2),
+        windowIndex=5,
+        componentIndex=0,
+        xylim=3,
+        nLevels=10,
+        nBins=20,
+        fmax=None,
+        fmin=None,
+        cmap='viridis',
+        ):
+        """
+        """
+
+        #
+        fig, axs = plt.subplots(ncols=len(labels))
+
+        #
+        u, r = self.classifyUnitsByAmplitude()
+        x = np.clip(self.ns['mi/pref/real'][:, windowIndex, componentIndex], -1 * xylim, xylim)
+        y = np.clip(self.ns['mi/pref/fictive'][:, 0, componentIndex], -1 * xylim, xylim)
+
+        #
+        for ax, label in zip(axs, labels):
+            mask = np.vstack([
+                u == label,
+                np.invert(np.isnan(x)),
+                np.invert(np.isnan(y))
+            ]).all(0)
+            Z, X, Y = np.histogram2d(
+                x[mask],
+                y[mask],
+                range=[[-xylim, xylim], [-xylim, xylim]],
+                bins=nBins,
+            )
+            X1 = X[:-1] + ((X[1] - X[0]) / 2)
+            Y1 = Y[:-1] + ((Y[1] - Y[0]) / 2)            
+            zNormed = Z / Z.sum()
+            if fmax is None:
+                levels = np.linspace(fmin, zNormed.max(), nLevels)
+            else:
+                levels = np.linspace(fmin, fmax, nLevels)
+            ax.contourf(
+                X1,
+                Y1,
+                zNormed,
+                levels=levels,
+                cmap=cmap,
+                # colors='k'
+            )
+            ax.vlines(0, -xylim, xylim, color='w', linestyle=':')
+            ax.hlines(0, -xylim, xylim, color='w', linestyle=':')
+            ax.set_aspect('equal')
+            ax.set_xlim([-xylim, xylim])
+            ax.set_ylim([-xylim, xylim])
 
         return fig, axs
 
@@ -791,3 +885,66 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         fig.tight_layout()
 
         return fig, ax
+    
+    def plotUnitTypeByVisualResponseComplexity(
+        self,
+        figsize=(1.5, 3.5)
+        ):
+        """
+        """
+
+        fig, ax = plt.subplots()
+        u, r = self.classifyUnitsByAmplitude()
+        k = list()
+        for iUnit in range(len(self.ukeys)):
+            params = self.ns['params/pref/real/extra'][iUnit]
+            abcd = np.delete(params, np.isnan(params))
+            abc = abcd[:-1]
+            A, B, C = np.split(abc, 3)
+            ki = A.size
+            if A[0] < 0:
+                ki *= -1
+            k.append(ki)
+        k = np.array(k)
+        combos = np.vstack([
+            self.labels,
+            u
+        ]).T
+        combos = np.delete(
+            combos,
+            np.isnan(combos).any(1),
+            axis=0
+        )
+        uniqueCombos, counts = np.unique(combos, axis=0, return_counts=True)
+
+        #
+        data = np.full(uniqueCombos.shape, np.nan)
+        for i, complexity in enumerate(np.unique(self.labels)):
+            for j, utype in enumerate(np.unique(u)):
+                test = np.array([complexity, utype])
+                index = np.where([np.array_equal(row, test) for row in uniqueCombos])[0]
+                count = counts[index]
+                data[i, j] = count
+        data[:, 0] /= np.nansum(data[:, 0])
+        data[:, 1] /= np.nansum(data[:, 1])
+        data = np.around(data, 2)
+
+        #
+        for (complexity, utype), count in zip(uniqueCombos, counts):
+            rowIndices = np.where(uniqueCombos[:, 1] == utype)[0]
+            n = counts[rowIndices].sum()
+            s = count / n * 300
+            ax.scatter(utype, complexity, s=s, color='k', marker='o', edgecolor='none')
+
+        ax.scatter([1, 2], [0, 0], s=1 * 300, marker='o', color='k', alpha=0.1, edgecolor='none')
+
+        #
+        ax.set_yticks(np.arange(-1, 3 + 1, 1))
+        ax.set_xlabel('Type')
+        ax.set_ylabel('Signed complexity (k)')
+        ax.set_xlim([0.5, 2.5])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, (ax,), data, uniqueCombos

@@ -103,125 +103,6 @@ class DataAcqusitionSummaryFigure():
 
         return fig
 
-class PopulationSizesBeforeAndAfterFilteringFigure():
-    """
-    """
-
-    def __init__(self):
-        """
-        """
-
-        self.data = None
-
-        return
-
-    def generate(self, sessions, figsize=(2, 5)):
-        """
-        """
-
-        nSessions = len(sessions)
-        nUnitsBefore = np.full(nSessions, np.nan)
-        nUnitsAfter = np.full(nSessions, np.nan)
-
-        for sessionIndex, session in enumerate(sessions):
-            session.population.unfilter()
-            nUnitsBefore[sessionIndex] = session.population.count()
-            session.population.filter()
-            nUnitsAfter[sessionIndex] = session.population.count()
-
-        #
-        self.data = (
-            nUnitsBefore,
-            nUnitsAfter
-        )
-        
-        #
-        fig, ax = plt.subplots()
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        ax.boxplot(
-            x=[nUnitsBefore, nUnitsAfter],
-            positions=[0, 1],
-            widths=0.5,
-            medianprops={'color': 'k'},
-            showfliers=False
-        )
-        fig.tight_layout()
-
-        return fig, ax
-
-class PopulationHeatmapBeforeAndAfterFilteringFigure():
-    """
-    """
-
-    def __init__(self):
-        """
-        """
-
-        self.data = None
-        self.t = None
-
-        return
-
-    def generate(self, session, figsize=(5, 4), window=(-0.3, 0.5)):
-        """
-        """
-
-        filtered = session.population.filter(
-            returnMask=True,
-            visualResponseAmplitude=None,
-        )
-        session.population.unfilter()
-        R1, R2 = list(), list()
-
-        #
-        for unit, flag in zip(session.population, filtered):
-            t, z = unit.peth(
-                session.probeTimestamps,
-                responseWindow=window,
-                baselineWindow=(-1, -0.5),
-                binsize=0.02,
-                nRuns=30,
-            )
-            if np.isnan(z).all():
-                continue
-            R1.append(z)
-            if flag:
-                R2.append(z)
-
-        #
-        self.t = t
-
-        #
-        R1, R2 = smooth(np.array(R1), 9, axis=1), smooth(np.array(R2), 9, axis=1)
-        self.data = (
-            R1,
-            R2
-        )
-
-        #
-        fig, (ax1, ax2) = plt.subplots(ncols=2, sharex=True, sharey=True)
-        ax1.pcolor(t, np.arange(R1.shape[0]), R1, vmin=-5, vmax=5, cmap='binary_r', rasterized=True)
-        ax2.pcolor(t, np.arange(R2.shape[0]), R2, vmin=-5, vmax=5, cmap='binary_r', rasterized=True)
-
-        #
-        for ax in (ax1, ax2):
-            for sp in ('top', 'right', 'bottom', 'left'):
-                ax.spines[sp].set_visible(False)
-            ax.set_xticks([])
-            ax.set_yticks([])
-
-        #
-        ax1.set_xticks([0, 0.2])
-        ax1.set_yticks([0, 20])
-        ax1.set_xticklabels([])
-        ax1.set_yticklabels([])
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, (ax1, ax2)
-
 class PerisaccadicTrialFrequencyAnalysis(AnalysisBase):
     """
     """
@@ -845,3 +726,100 @@ class EyeVelocityDistribution(AnalysisBase):
         fig.tight_layout()
                 
         return fig, ax
+    
+class UnitFilteringPipelineFigure(AnalysisBase):
+    """
+    """
+
+    def __init__(
+        self,
+        *args,
+        **kwargs
+        ):
+        """
+        """
+
+        super().__init__(*args, **kwargs)
+        self.counts = None
+
+        return
+
+    def measureUnitLoss(
+        self
+        ):
+        """
+        """
+
+        #
+        counts = np.full([len(self.sessions), 4], np.nan)
+
+        #
+        for i, session in enumerate(self.sessions):
+
+            print(f'Working on session {i + 1} out of {len(self.sessions)} ...')
+
+            #
+            amplitudeCutoff = session.load('metrics/ac')
+            presenceRatio = session.load('metrics/pr')
+            isiViolations = session.load('metrics/rpvr')
+            firingRate = session.load('metrics/fr')
+            probabilityValues = np.nanmin(np.vstack([
+                session.load('zeta/probe/left/p'),
+                session.load('zeta/probe/right/p')
+            ]), axis=0)
+            responseLatency = np.nanmin(np.vstack([
+                session.load('zeta/probe/left/latency'),
+                session.load('zeta/probe/right/latency'),
+            ]), axis=0)
+            qualityLabels = session.load('metrics/ql')
+
+            # Unfiltered count
+            counts[i, 0] = len(session.population)
+
+            # ZETA-test
+            f1 = probabilityValues < 0.01
+            counts[i, 1] = f1.sum()
+
+            # Quality  metrics
+            f2 = np.vstack([
+                f1,
+                amplitudeCutoff <= 0.1,
+                presenceRatio >= 0.9,
+                isiViolations <= 0.5,
+                firingRate >= 0.2,
+                responseLatency >= 0.025,
+            ]).all(0)
+            counts[i, 2] = f2.sum()
+
+            # Manual spike-sorting
+            exclude = np.full(qualityLabels.size, False)
+            exclude[np.logical_or(qualityLabels == 0, qualityLabels == 1)] = True
+            include = np.invert(exclude)
+            f3 = np.vstack([
+                f2,
+                include,
+            ]).all(0)
+            counts[i, 3] = f3.sum()
+
+        #
+        self.counts = counts
+
+        return
+    
+    def plotUnitLoss(
+        self,
+        ):
+        """
+        """
+
+        if self.counts is None:
+            return
+        
+        fig, axs = plt.subplots(nrows=2, sharex=True)
+        axs[0].plot(np.arange(4), self.counts.sum(1), color='k')
+        y = self.counts.mean(0)
+        e = np.std(self.counts, axis=0)
+        axs[0].plot(np.arange(4), y, color='k')
+        axs[0].vlines(np.arange(4), y - e, y + e, color='k')
+
+        return fig, axs
