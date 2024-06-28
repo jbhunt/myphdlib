@@ -777,27 +777,30 @@ class UnitFilteringPipelineFigure(AnalysisBase):
             counts[i, 0] = len(session.population)
 
             # ZETA-test
-            f1 = probabilityValues < 0.01
+            f1 = probabilityValues <= 0.01
             counts[i, 1] = f1.sum()
 
-            # Quality  metrics
+            # Manual spike-sorting
+            if qualityLabels is None:
+                include = np.full(len(session.population), True)
+            else:
+                exclude = np.full(len(session.population), False)
+                exclude[np.logical_or(qualityLabels == 0, qualityLabels == 1)] = True
+                include = np.invert(exclude)
             f2 = np.vstack([
                 f1,
+                include,
+            ]).all(0)
+            counts[i, 2] = f2.sum()
+
+            # Quality  metrics
+            f3 = np.vstack([
+                f2,
                 amplitudeCutoff <= 0.1,
                 presenceRatio >= 0.9,
                 isiViolations <= 0.5,
                 firingRate >= 0.2,
                 responseLatency >= 0.025,
-            ]).all(0)
-            counts[i, 2] = f2.sum()
-
-            # Manual spike-sorting
-            exclude = np.full(qualityLabels.size, False)
-            exclude[np.logical_or(qualityLabels == 0, qualityLabels == 1)] = True
-            include = np.invert(exclude)
-            f3 = np.vstack([
-                f2,
-                include,
             ]).all(0)
             counts[i, 3] = f3.sum()
 
@@ -808,6 +811,7 @@ class UnitFilteringPipelineFigure(AnalysisBase):
     
     def plotUnitLoss(
         self,
+        figsize=(6, 3.5)
         ):
         """
         """
@@ -815,11 +819,26 @@ class UnitFilteringPipelineFigure(AnalysisBase):
         if self.counts is None:
             return
         
-        fig, axs = plt.subplots(nrows=2, sharex=True)
-        axs[0].plot(np.arange(4), self.counts.sum(1), color='k')
+        fig, axs = plt.subplots(ncols=2, sharex=True)
+        axs[0].plot(np.arange(4), self.counts.sum(0), color='k', marker='o', markersize=4)
         y = self.counts.mean(0)
         e = np.std(self.counts, axis=0)
-        axs[0].plot(np.arange(4), y, color='k')
-        axs[0].vlines(np.arange(4), y - e, y + e, color='k')
+        axs[1].plot(np.arange(4), y, color='k', marker='o', markersize=4)
+        # axs[1].fill_between(
+        #     np.arange(4),
+        #     y - e,
+        #     y + e,
+        #     color='k',
+        #     alpha=0.15
+        # )
+        axs[1].vlines(np.arange(4), y - e, y + e, color='k')
+        axs[0].set_ylabel('Total number of units')
+        axs[1].set_ylabel('# of units per session')
+        for ax in axs:
+            ax.set_xticks(np.arange(4))
+            ax.set_xticklabels(['Raw', 'ZETA', 'Phy', 'QC'])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
 
         return fig, axs
