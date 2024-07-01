@@ -623,4 +623,116 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         fig.tight_layout()
 
         return fig, ax, r, p
+
+    def plotAveragePerisaccadicVisualResponse(
+        self,
+        sign=-1,
+        windowIndices=(4, 5, 6),
+        responseWindow=(0, 0.45),
+        minimumResponseAmplitude=0,
+        figsize=(6, 3)
+        ):
+        """
+        """
+
+        #
+        if windowIndices is None:
+            windowIndices = np.arange(self.windows.shape[0])
+
+        #
+        fig, axs = plt.subplots(ncols=len(windowIndices))
+        axs = np.atleast_1d(axs)
+
+        #
+        binIndicesForResponse = np.logical_and(
+            self.tProbe >= responseWindow[0],
+            self.tProbe <  responseWindow[1]
+        )
+
+        #
+        for ax, windowIndex in zip(axs, windowIndices):
+            if sign == -1:
+                include = np.vstack([
+                    self.ns['mi/pref/real'][:, windowIndex, 0] < 0,
+                    self.ns['p/pref/real'][:, windowIndex, 0] < 0.05,
+                    self.ns['params/pref/real/extra'][:, 0] >=  minimumResponseAmplitude
+                ]).all(0)
+            elif sign == 1:
+                include = np.vstack([
+                    self.ns['mi/pref/real'][:, windowIndex, 0] > 0,
+                    self.ns['p/pref/real'][:, windowIndex, 0] < 0.05,
+                    self.ns['params/pref/real/extra'][:, 0] >=  minimumResponseAmplitude
+                ]).all(0)
+            else:
+                raise Exception('Sign must be +1 or -1')
+            R = {
+                'peri': list(),
+                'extra': list()
+            }
+            for iUnit, flag in enumerate(include):
+                if flag == False:
+                    continue
+
+                #
+                params = self.ns['params/pref/real/extra'][iUnit]
+                abcd = np.delete(params, np.isnan(params))
+                A, B, C = np.split(abcd[:-1], 3)
+                tCentered = np.linspace(-0.2, 0.2, 100) + B[0]
+                yExtra = np.interp(
+                    tCentered,
+                    self.tProbe,
+                    self.ns['ppths/pref/real/extra'][iUnit]
+                )
+                scalingFactor = np.max(np.abs(yExtra))
+                yExtra = yExtra / scalingFactor
+
+                #
+                params = self.ns['params/pref/real/peri'][iUnit, windowIndex, 0]
+                abcd = np.delete(params, np.isnan(params))
+                A, B, C = np.split(abcd[:-1], 3)
+                tCentered = np.linspace(-0.2, 0.2, 100) + B[0]
+                yPeri = np.interp(
+                    tCentered,
+                    self.tProbe,
+                    self.ns['ppths/pref/real/peri'][iUnit, :, windowIndex] / scalingFactor
+                )
+                R['peri'].append(yPeri)
+                R['extra'].append(yExtra)
+
+            # Cast to numpy array
+            for k in R.keys():
+                R[k] = np.array(R[k])
+
+            #
+            tCentered = np.linspace(-0.2, 0.2, 100)
+            for k, c in zip(['extra', 'peri'], ['k', 'r']):
+                y = np.nanmean(R[k], axis=0)
+                e = 1.96 * np.std(R[k], axis=0) / np.sqrt(R[k].shape[0])
+                ax.plot(tCentered, y, color=c)
+                ax.fill_between(tCentered, y + e, y - e, color=c, alpha=0.15, edgecolor='none')
+
+        #
+        ylim = [np.inf, -np.inf]
+        for ax in axs:
+            y1, y2 = ax.get_ylim()
+            if y1 < ylim[0]:
+                ylim[0] = y1
+            if y2 > ylim[1]:
+                ylim[1] = y2
+        for ax in axs:
+            ax.set_ylim(ylim)
+
+        #
+        axs[0].set_ylabel('FR (normed)')
+        if len(axs) > 1:
+            for ax in axs[1:]:
+                ax.set_yticklabels([])
+
+        #
+        fig.supxlabel('Time from response peak (sec)', fontsize=10)
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, axs
     
