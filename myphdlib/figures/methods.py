@@ -759,6 +759,10 @@ class UnitFilteringPipelineFigure(AnalysisBase):
             print(f'Working on session {i + 1} out of {len(self.sessions)} ...')
 
             #
+            if session.probeTimestamps is None:
+                continue
+
+            #
             amplitudeCutoff = session.load('metrics/ac')
             presenceRatio = session.load('metrics/pr')
             isiViolations = session.load('metrics/rpvr')
