@@ -420,7 +420,10 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
         #
         ax.set_ylim(xyrange)
-        ax.set_xlim([xyrange[0], 0])
+        if modulationSign == -1:
+            ax.set_xlim([xyrange[0], 0])
+        else:
+            ax.set_xlim([0, xyrange[1]])
         ax.set_xlabel(r'$MI_{Pref}$')
         ax.set_ylabel(r'$MI_{Null}$')
         ax.set_aspect('equal')
