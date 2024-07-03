@@ -628,9 +628,9 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         self,
         sign=-1,
         windowIndices=(4, 5, 6),
-        responseWindow=(0, 0.45),
+        responseWindow=(-0.25, 0.25),
         minimumResponseAmplitude=0,
-        figsize=(6, 3)
+        figsize=(5, 3)
         ):
         """
         """
@@ -640,31 +640,33 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
             windowIndices = np.arange(self.windows.shape[0])
 
         #
-        fig, axs = plt.subplots(ncols=len(windowIndices))
+        fig, axs = plt.subplots(ncols=len(windowIndices) + 1)
         axs = np.atleast_1d(axs)
 
         #
-        binIndicesForResponse = np.logical_and(
-            self.tProbe >= responseWindow[0],
-            self.tProbe <  responseWindow[1]
-        )
+        if sign == -1:
+            suppressed = np.dstack([
+                self.ns['mi/pref/real'][:, windowIndices, 0] < 0,
+                self.ns['p/pref/real'][:, windowIndices, 0] < 0.05,
+            ]).all(-1).any(1)
+            include = np.vstack([
+                suppressed,
+                self.ns['params/pref/real/extra'][:, 0] >=  minimumResponseAmplitude
+            ]).all(0)
+        elif sign == 1:
+            enhanced = np.dstack([
+                self.ns['mi/pref/real'][:, windowIndices, 0] > 0,
+                self.ns['p/pref/real'][:, windowIndices, 0] < 0.05,
+            ]).all(-1).any(1)
+            include = np.vstack([
+                enhanced,
+                self.ns['params/pref/real/extra'][:, 0] >=  minimumResponseAmplitude
+            ]).all(0)
+        else:
+            raise Exception('Sign must be +1 or -1')
 
         #
-        for ax, windowIndex in zip(axs, windowIndices):
-            if sign == -1:
-                include = np.vstack([
-                    self.ns['mi/pref/real'][:, windowIndex, 0] < 0,
-                    self.ns['p/pref/real'][:, windowIndex, 0] < 0.05,
-                    self.ns['params/pref/real/extra'][:, 0] >=  minimumResponseAmplitude
-                ]).all(0)
-            elif sign == 1:
-                include = np.vstack([
-                    self.ns['mi/pref/real'][:, windowIndex, 0] > 0,
-                    self.ns['p/pref/real'][:, windowIndex, 0] < 0.05,
-                    self.ns['params/pref/real/extra'][:, 0] >=  minimumResponseAmplitude
-                ]).all(0)
-            else:
-                raise Exception('Sign must be +1 or -1')
+        for i, (ax, windowIndex) in enumerate(zip(axs[1:], windowIndices)):
             R = {
                 'peri': list(),
                 'extra': list()
@@ -677,7 +679,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 params = self.ns['params/pref/real/extra'][iUnit]
                 abcd = np.delete(params, np.isnan(params))
                 A, B, C = np.split(abcd[:-1], 3)
-                tCentered = np.linspace(-0.2, 0.2, 100) + B[0]
+                tCentered = np.linspace(*responseWindow, 100) + B[0]
                 yExtra = np.interp(
                     tCentered,
                     self.tProbe,
@@ -690,7 +692,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 params = self.ns['params/pref/real/peri'][iUnit, windowIndex, 0]
                 abcd = np.delete(params, np.isnan(params))
                 A, B, C = np.split(abcd[:-1], 3)
-                tCentered = np.linspace(-0.2, 0.2, 100) + B[0]
+                tCentered = np.linspace(*responseWindow, 100) + B[0]
                 yPeri = np.interp(
                     tCentered,
                     self.tProbe,
@@ -704,12 +706,20 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 R[k] = np.array(R[k])
 
             #
-            tCentered = np.linspace(-0.2, 0.2, 100)
-            for k, c in zip(['extra', 'peri'], ['k', 'r']):
-                y = np.nanmean(R[k], axis=0)
-                e = 1.96 * np.std(R[k], axis=0) / np.sqrt(R[k].shape[0])
-                ax.plot(tCentered, y, color=c)
-                ax.fill_between(tCentered, y + e, y - e, color=c, alpha=0.15, edgecolor='none')
+            tCentered = np.linspace(*responseWindow, 100)
+            y = np.nanmean(R['peri'], axis=0)
+            e = 2.33 * np.std(R['peri'], axis=0) / np.sqrt(R['peri'].shape[0])
+            # e = np.std(R['peri'], axis=0)
+            ax.plot(tCentered, y, color='r')
+            ax.fill_between(tCentered, y + e, y - e, color='r', alpha=0.15, edgecolor='none')
+
+            #
+            if i == 0:
+                y = np.nanmean(R['extra'], axis=0)
+                e = 2.33 * np.std(R['extra'], axis=0) / np.sqrt(R['extra'].shape[0])
+                # e = np.std(R['extra'], axis=0)
+                axs[0].plot(tCentered, y, color='k')
+                axs[0].fill_between(tCentered, y + e, y - e, color='k', alpha=0.15, edgecolor='none')
 
         #
         ylim = [np.inf, -np.inf]
@@ -721,6 +731,10 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 ylim[1] = y2
         for ax in axs:
             ax.set_ylim(ylim)
+            ax.hlines(1, *responseWindow, color='k', linestyle=':')
+            ax.set_xlim(responseWindow)
+            ax.set_xticks([responseWindow[0], 0, responseWindow[1]])
+            ax.set_xticklabels(ax.get_xticks(), rotation=45)
 
         #
         axs[0].set_ylabel('FR (normed)')

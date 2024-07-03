@@ -345,23 +345,28 @@ class SaccadeClassificationPerformanceAnalysis():
 
         return fig, ax
 
-class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
+class ElectrodeMapFigure(AnalysisBase):
     """
     """
 
     def __init__(
         self,
-        date='2023-07-05'
+        date='2023-07-05',
+        **kwargs
         ):
         """
         """
-        super().__init__()
-        self.x = None
-        self.y = None
-        self.date = date
-        self.contours = None
-        self.heatmaps = None
+        super().__init__(**kwargs)
+        self._example = None
+        for session in self.sessions:
+            if str(session.date) == date:
+                self._example = session
+                break
         return
+
+    @property
+    def example(self):
+        return self._example
 
     def extractContours(
         self,
@@ -375,40 +380,70 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
         """
 
         #
-        self.contours = list()
-        self.heatmaps = list()
-
-        # Set the session by date
-        for ukey in self.ukeys:
-            if ukey[0] == self.date:
-                self.ukey = ukey
-                break
-
-        #
-        heatmaps = self.session.load(f'population/rf/{phase}')
+        heatmaps = self.example.load(f'rf/{phase}')
         if heatmaps is None:
             return
         heatmapsFiltered = list()
-        for ukey in self.ukeys:
-            if ukey[0] != self.date:
-                continue
+        for unit in self.example.population:
+
+            #
+            ukey = (
+                str(self.example.date),
+                self.example.animal,
+                unit.cluster
+            )
+            # if ukey not in self.ukeys:
+            #     heatmapsFiltered.append(None)
+            #    continue
             self.ukey = ukey
+
+            #
             hm = heatmaps[self.unit.index]
             if smoothingKernelWidth is not None:
                 hm = gaussianFilter(hm, smoothingKernelWidth)
-            if hm.max() < threshold:
-                continue
+            # if hm.max() < threshold:
+            #     heatmapsFiltered.append(None)
+            #     continue
             heatmapsFiltered.append(hm)
 
         # Interpolate
         heatmapsInterpolated = list()
         for hm in heatmapsFiltered:
-            z = zoom(hm, interpolationFactor, grid_mode=False)
-            heatmapsInterpolated.append(z)
+            if hm is None:
+                heatmapsInterpolated.append(None)
+            else:
+                z = zoom(hm, interpolationFactor, grid_mode=False)
+                heatmapsInterpolated.append(z)
+
+        # Detect contours
+        contours = list()
+        for hm in heatmapsInterpolated:
+
+            if hm is None:
+                contours.append(None)
+                continue
+
+            #
+            grayscale = cv.threshold(hm, threshold, 255, cv.THRESH_BINARY)[-1].astype(np.uint8)
+            cnts, hierarchy = cv.findContours(
+                grayscale,
+                mode=cv.RETR_TREE,
+                method=cv.CHAIN_APPROX_NONE
+            )
+            if len(cnts) == 0:
+                contours.append(None)
+                continue
+            areas = np.array([cv.contourArea(cnt) for cnt in cnts])
+            index = np.argmax(areas)
+            cnt = cnts[index]
+            if areas[index] < minimumContourArea:
+                contours.append(None)
+                continue
+            contours.append(cnt)
 
         #
         nRows, nCols = heatmaps[0].shape
-        self.xp = {
+        xp = {
             'x': np.linspace(
                 0.5,
                 nCols * interpolationFactor + 0.5,
@@ -421,38 +456,8 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
             ),
         }
 
-        # Detect contours
-        self.contours = list()
-        for hm in heatmapsInterpolated:
-
-            #
-            grayscale = cv.threshold(hm, threshold, 255, cv.THRESH_BINARY)[-1].astype(np.uint8)
-            contours, hierarchy = cv.findContours(
-                grayscale,
-                mode=cv.RETR_TREE,
-                method=cv.CHAIN_APPROX_NONE
-            )
-            if len(contours) == 0:
-                continue
-            areas = np.array([cv.contourArea(contour) for contour in contours])
-            index = np.argmax(areas)
-            contour = contours[index]
-            if areas[index] < minimumContourArea:
-                continue
-            self.contours.append(contour)
-
         #
-        self.heatmaps = np.array(heatmapsInterpolated)
-
-        return
-
-    def extractGrid(
-        self,
-        ):
-        """
-        """
-
-        folder = self.session.home.joinpath('stimuli', 'metadata')
+        folder = self.example.home.joinpath('stimuli', 'metadata')
         metadata = None
         for file in folder.iterdir():
             if 'sparseNoise' in file.name:
@@ -466,12 +471,12 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
 
         #
         fieldCenters = np.unique(metadata['coords'], axis=0)
-        self.fp = {
+        fp = {
             'x': np.unique(fieldCenters[:, 0]),
             'y': np.unique(fieldCenters[:, 1])
         }
 
-        return
+        return contours, xp, fp
 
     def plotReceptiveFields(
         self,
@@ -481,17 +486,21 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
         ):
         """
         """
+
+        contours, xp, fp = self.extractContours()
         
         #
         fig, ax = plt.subplots()
-        nFields = len(self.contours)
+        nFields = len(contours)
         if nFields == 0:
             return fig, ax
         cm = plt.get_cmap(cmap, nFields)
         colors = [cm(i) for i in range(nFields)]
 
         #
-        for i, contour in enumerate(self.contours):
+        for i, contour in enumerate(contours):
+            if contour is None:
+                continue
             vertices = contour.reshape(-1, 2)
             xy = list()
             for iCol, letter in zip(range(2), ('x', 'y')):
@@ -504,8 +513,8 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
                 x3 = gaussianFilter(x2, 0.7)
                 x4 = np.interp(
                     np.concatenate([x3, np.array([x3[0]])]),
-                    self.xp[letter],
-                    self.fp[letter]
+                    xp[letter],
+                    fp[letter]
                 )
                 xy.append(x4)
             xy = np.array(xy).T
@@ -520,6 +529,70 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
             ax.spines[sp].set_visible(False)
         ax.set_xticks([])
         ax.set_yticks([])
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        ax.set_aspect('equal')
+        fig.tight_layout()
+
+        return fig, ax
+
+    def plotElectrodeMap(
+        self,
+        figsize=(15, 1.5)
+        ):
+        """
+        """
+
+        #
+        contours, xp, fp = self.extractContours()
+
+        #
+        filepath = self.example.home.joinpath('ephys', 'sorting', 'manual', 'cluster_info.tsv')
+        with open(filepath, 'r') as stream:
+            lines = stream.readlines()
+
+        depths = np.full(len(self.example.population), np.nan)
+        for unit in self.example.population:
+            for ln in lines[1:]:
+                elements = ln.split('\t')
+                cluster = int(elements[0])
+                if cluster == unit.cluster:
+                    depths[unit.index] = float(elements[6])
+
+        # Plot contours at depth
+        fig, ax = plt.subplots()
+        cmap = lambda x: plt.cm.gist_rainbow(plt.Normalize(depths.min(), depths.max())(x))
+        for contour, depth in zip(contours, depths):
+            if contour is None:
+                continue
+            # ax.scatter(depth, np.random.uniform(low=-1, high=1, size=1), color='k')
+
+            vertices = contour.reshape(-1, 2)
+            xy = list()
+            for iCol, letter in zip(range(2), ('x', 'y')):
+                x1 = np.concatenate([
+                    np.array([vertices[-1, iCol]]),
+                    vertices[:, iCol],
+                    np.array([vertices[0, iCol]])
+                ]).astype(float)
+                x2 = np.concatenate([x1[1:-1], np.array([x1[1]])])
+                x3 = gaussianFilter(x2, 0.7)
+                x4 = np.interp(
+                    np.concatenate([x3, np.array([x3[0]])]),
+                    xp[letter],
+                    fp[letter]
+                )
+                xy.append(x4)
+            xy = np.array(xy).T
+            xy[:, 0] -= xy[:, 0].mean()
+            xy[:, 0] += (0.5 * depth)
+            xy[:, 1] -= xy[:, 1].mean()
+            yoff = np.random.normal(loc=0, scale=30, size=1)
+            xy[:, 1] += yoff
+            ax.plot(xy[:, 0], xy[:, 1], color=cmap(depth), alpha=0.5, lw=1)
+            ax.scatter(depth * 0.5, 0 + yoff, color=cmap(depth), alpha=0.5, s=10, edgecolor='none')
 
         #
         fig.set_figwidth(figsize[0])
@@ -846,3 +919,79 @@ class UnitFilteringPipelineFigure(AnalysisBase):
         fig.tight_layout()
 
         return fig, axs
+
+class ProbeLatencyAnalysis(AnalysisBase):
+    """
+    """
+
+    def histProbeLatency(
+        self,
+        trange=(-3, 3),
+        binsize=0.1,
+        leftEdge=-0.5,
+        rightEdge=0.5,
+        figsize=(2.5, 1.5)
+        ):
+        """
+        """
+
+        n = int(np.diff(trange).item() * 1000 // (binsize * 1000))
+        f = list()
+        for session in self.sessions:
+            if session.probeTimestamps is None:
+                continue
+            counts, edges = np.histogram(
+                session.probeLatencies,
+                range=trange,
+                bins=n
+            )
+            f.append(counts)
+        f = np.array(f)
+        t = np.arange(trange[0], trange[1], binsize) + (binsize / 2)
+
+        fig, ax = plt.subplots()
+
+        y = f.mean(0)
+        e = f.std(0)
+        ax.step(
+            t,
+            y,
+            where='mid',
+            color='0.5',
+        )
+        # ax.plot(
+        #     t,
+        #     y,
+        #     color='k',
+        # )
+        # ax.fill_between(
+        #     t,
+        #     y - e,
+        #     y + e,
+        #     color='k',
+        #     alpha=0.1,
+        #     edgecolor='none'
+        # )
+        ylim = ax.get_ylim()
+        ax.vlines(
+            [leftEdge, rightEdge],
+            *ylim,
+            color='k',
+            linestyle=':'
+        )
+        # ax.fill_between(
+        #     [leftEdge, rightEdge],
+        #     ylim[0],
+        #     ylim[1],
+        #     color='r',
+        #     alpha=0.1,
+        #     edgecolor='none'
+        # )
+        ax.set_ylim(ylim)
+        ax.set_xlim(trange)
+        ax.set_xticks([-3, -1.5, 0, 1.5, 3])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax

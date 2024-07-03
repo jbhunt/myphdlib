@@ -334,9 +334,11 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
     
     def plotModulationByIntegratedLatency(
         self,
-        modulation=-1,
+        sign=-1,
         componentIndex=0,
+        windowIndices=(4, 5, 6),
         perisaccadicWindow=(-0.5, 0.5),
+        minimumResponseAmplitude=0,
         binsize=0.1,
         interpolationWindow=(-0.3, 0.45),
         nPointsForEvaluation=100,
@@ -366,24 +368,34 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         leftEdges = np.arange(perisaccadicWindow[0], perisaccadicWindow[1], binsize)
 
         #
+        responseAmplitudes = self.ns['params/pref/real/extra'][:, 0]
+        cmin, cmax = np.nanmin(responseAmplitudes), np.nanmax(responseAmplitudes)
+        cmap = lambda x: np.interp(x, [cmin, cmax], [0, 0.3]) ** 2 * 10
+
+        #
         nUnits, nBins, nWindows = self.ns['ppths/pref/real/peri'].shape
         windowCenters = np.mean(self.windows, axis=1)
         lines = list()
+        weights = list()
         for iUnit in range(nUnits):
 
+            #
+            if responseAmplitudes[iUnit] < minimumResponseAmplitude:
+                continue
+
             # Exclude enhanced or unmodulated units
-            if modulation == -1:
+            if sign == -1:
                 checks = np.vstack([
-                    self.ns['p/pref/real'][iUnit, 4:7, componentIndex] < 0.05,
-                    self.ns['mi/pref/real'][iUnit, 4:7, componentIndex] < 0
+                    self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
+                    self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] < 0
                 ]).all(0)
-            elif modulation == 1:
+            elif sign == 1:
                 checks = np.vstack([
-                    self.ns['p/pref/real'][iUnit, 4:7, componentIndex] < 0.05,
-                    self.ns['mi/pref/real'][iUnit, 4:7, componentIndex] > 0
+                    self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
+                    self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] > 0
                 ]).all(0)
             else:
-                raise Exception('Not sure what to do here')
+                raise Exception('Sign must be -1 or 1')
             if np.any(checks):
 
                 # Extract peak latency and amplitude for the largest component
@@ -403,7 +415,9 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
                         y.append(np.tanh(mi))
                     else:
                         y.append(mi)
-                # ax.plot(t, np.clip(y, *yrange), color='0.6', alpha=0.05, lw=1)
+                alpha = cmap(responseAmplitudes[iUnit])
+                ax.plot(t, np.clip(y, *yrange), color='b', alpha=alpha, lw=1)
+                
                 # if np.random.choice([True, False], size=1):
                 #    ax.scatter(t, np.clip(y, *yrange), color='k', alpha=0.05, s=5, marker='.', rasterized=True, clip_on=False)
 
@@ -417,24 +431,38 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
                     right=np.nan
                 )
                 lines.append(interpolated)
+                weights.append(responseAmplitudes[iUnit])
+
+        #
+        lines = np.array(lines)
+        weights = np.array(weights)
+        # weightsNormed = np.array([cmap(w) for w in weights])
 
         #
         x1 = np.linspace(*interpolationWindow, nPointsForEvaluation)
-        y1 = np.nanmean(lines, axis=0)
+        y1 = list()
+        for col in np.array(lines).T:
+            indices = np.where(np.invert(np.isnan(col)))[0]
+            yi = np.average(
+                col[indices],
+                weights=weights[indices]
+            )
+            y1.append(yi)
+        # y1 = np.average(lines, axis=0, weights=weights)
         ax.plot(
             x1,
             y1,
             color='k'
         )
         error = 1.96 * (np.nanstd(lines, axis=0) / np.sqrt(np.sum(np.invert(np.isnan(lines)), axis=0)))
-        ax.fill_between(
-            np.linspace(*interpolationWindow, nPointsForEvaluation),
-            np.nanmean(lines, axis=0) - error,
-            np.nanmean(lines, axis=0) + error,
-            color='k',
-            alpha=0.1,
-            edgecolor=None
-        )
+        # ax.fill_between(
+        #     np.linspace(*interpolationWindow, nPointsForEvaluation),
+        #     np.nanmean(lines, axis=0) - error,
+        #     np.nanmean(lines, axis=0) + error,
+        #     color='k',
+        #     alpha=0.1,
+        #     edgecolor=None
+        # )
         xlim = ax.get_xlim()
         ax.vlines(0, *yrange, color='k', alpha=0.7, linestyle=':')
         ax.hlines(0, *xlim, color='k', alpha=0.7, linestyle=':')
