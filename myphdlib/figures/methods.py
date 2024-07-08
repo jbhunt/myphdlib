@@ -11,6 +11,7 @@ import pickle
 from skimage.measure import find_contours
 from scipy.signal import find_peaks
 from myphdlib.figures.analysis import AnalysisBase
+from skimage.measure import EllipseModel
 
 class DataAcqusitionSummaryFigure():
     """
@@ -372,7 +373,7 @@ class ElectrodeMapFigure(AnalysisBase):
         self,
         threshold=2,
         phase='on',
-        smoothingKernelWidth=0.5,
+        smoothingKernelWidth=0.8,
         interpolationFactor=5,
         minimumContourArea=200,
         ):
@@ -540,7 +541,10 @@ class ElectrodeMapFigure(AnalysisBase):
 
     def plotElectrodeMap(
         self,
-        figsize=(15, 1.5)
+        depthScaling=0.8,
+        widthScaling=3,
+        receptiveFieldScaling=2,
+        figsize=(10, 1.5)
         ):
         """
         """
@@ -561,10 +565,21 @@ class ElectrodeMapFigure(AnalysisBase):
                 if cluster == unit.cluster:
                     depths[unit.index] = float(elements[6])
 
+        #
+        filepath = self.example.home.joinpath('ephys', 'sorting', 'manual', 'spike_positions.npy')
+        if filepath.exists() == False:
+            raise Exception('Could not locate spike positions data')
+        spikePositions = np.load(filepath)
+        spikeClusters = self.example.load('spikes/clusters')
+        uniqueClusters, index = np.unique(spikeClusters, return_index=True)
+        unitCoords = spikePositions[index, :]
+        unitCoords[:, 0] -= 40
+
         # Plot contours at depth
         fig, ax = plt.subplots()
-        cmap = lambda x: plt.cm.gist_rainbow(plt.Normalize(depths.min(), depths.max())(x))
-        for contour, depth in zip(contours, depths):
+        mask = np.array([False if cnt is None else True for cnt in contours])
+        cmap = lambda x: plt.cm.gist_rainbow(plt.Normalize(unitCoords[mask, 1].min(), unitCoords[mask, 1].max())(x))
+        for contour, (xc, yc) in zip(contours, unitCoords):
             if contour is None:
                 continue
             # ax.scatter(depth, np.random.uniform(low=-1, high=1, size=1), color='k')
@@ -586,18 +601,36 @@ class ElectrodeMapFigure(AnalysisBase):
                 )
                 xy.append(x4)
             xy = np.array(xy).T
+            # model = EllipseModel()
+            # model.estimate(xy)
+            # xy = model.predict_xy(np.linspace(0, 2 * np.pi, 100))
+
+            #
             xy[:, 0] -= xy[:, 0].mean()
-            xy[:, 0] += (0.5 * depth)
             xy[:, 1] -= xy[:, 1].mean()
-            yoff = np.random.normal(loc=0, scale=30, size=1)
-            xy[:, 1] += yoff
-            ax.plot(xy[:, 0], xy[:, 1], color=cmap(depth), alpha=0.5, lw=1)
-            ax.scatter(depth * 0.5, 0 + yoff, color=cmap(depth), alpha=0.5, s=10, edgecolor='none')
+            xy *= receptiveFieldScaling
+            xy[:, 0] += (yc * depthScaling)
+            xy[:, 1] += (xc * widthScaling)
+
+            #
+            # ax.plot(xy[:, 0], xy[:, 1], color=cmap(yc), alpha=0.6, lw=1)
+            ax.scatter(yc * depthScaling, xc * widthScaling, color=cmap(yc), alpha=0.6, s=7, edgecolor='none')
 
         #
+        ax.vlines([0, 3800 * depthScaling], -40 * widthScaling, 40 * widthScaling, color='k', linestyle=':', lw=0.8)
+        ax.hlines([-40 * widthScaling, 40 * widthScaling], 0, 3800 * depthScaling, color='k', linestyle=':', lw=0.8)
+        ax.hlines(0, 0, 20 * receptiveFieldScaling, color='k')
+        ax.vlines(0 - (20 * depthScaling), -40 * widthScaling,  (-40 * widthScaling) + (20 * widthScaling), color='k')
+        ax.hlines(-40 * widthScaling - (5 * widthScaling), 0, 100 * depthScaling, color='k')
+
+        #
+        ax.set_xticks([0, 3800 * depthScaling])
+        ax.set_xticklabels([0, 3800])
+        ax.set_yticks([-40 * widthScaling, 0, 40 * widthScaling])
+        ax.set_yticklabels([-40, 0, 40])
+        ax.set_aspect('equal')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
-        ax.set_aspect('equal')
         fig.tight_layout()
 
         return fig, ax

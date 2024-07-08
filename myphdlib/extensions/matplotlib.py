@@ -911,3 +911,20 @@ def getParulaColormap(N=256):
     cmap = LinearSegmentedColormap.from_list('parula', parulaColorspace, N=N)
 
     return cmap
+
+isoluminantRainbowColorspace = [
+    (0.847, 0.057, 0.057),
+    (0.527, 0.527, 0),
+    (0, 0.592, 0),
+    (0, 0.559, 0.559),
+    (0.316, 0.316, 0.991),
+    (0.718, 0, 0.718)
+]
+
+def getIsoluminantRainbowColormap(N=256):
+    """
+    """
+
+    cmap = LinearSegmentedColormap.from_list('isoluminant_rainbow', isoluminantRainbowColorspace, N=N)
+
+    return cmap

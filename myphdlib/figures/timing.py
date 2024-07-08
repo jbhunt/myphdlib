@@ -9,6 +9,7 @@ from matplotlib import pyplot as plt
 from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
 from myphdlib.general.toolkit import psth2
+from myphdlib.extensions.matplotlib import getIsoluminantRainbowColormap
 from matplotlib.gridspec import GridSpec
 
 class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
@@ -250,8 +251,10 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         windowCenters = self.windows.mean(1)
         tLeft = (windowCenters[-1] + responseWindow[1]) - (windowCenters[0] - responseWindow[0])
         tRight = self.tProbe[-1] - self.tProbe[0]
-        fig, grid = plt.subplots(nrows=2, ncols=2, gridspec_kw={'width_ratios': [tLeft, tRight]})
-        cmap = plt.get_cmap('gist_rainbow', len(self.windows))
+        fig, grid = plt.subplots(nrows=len(self.examples), ncols=2, gridspec_kw={'width_ratios': [tLeft, tRight]})
+        grid = np.atleast_2d(grid)
+        # cmap = plt.get_cmap('gist_rainbow', len(self.windows))
+        cmap = getIsoluminantRainbowColormap(len(self.windows))
         for i, ukey in enumerate(self.examples):
             iUnit = self._indexUnitKey(ukey)
             for windowIndex in range(len(self.windows)):
@@ -306,25 +309,29 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             for sp in ('top', 'right'):
                 ax.spines[sp].set_visible(False)
         for i in range(len(self.examples)):
-            ylim = [np.inf, -np.inf]
             for ax in grid[i, :]:
+                ax.relim()
+                ax.autoscale()
+            ylim = [np.inf, -np.inf]
+            for ax in grid[i, :].flatten():
                 y1, y2 = ax.get_ylim()
                 if y1 < ylim[0]:
                     ylim[0] = y1
                 if y2 > ylim[1]:
                     ylim[1] = y2
-            for ax in grid[i, :]:
+            for ax in grid[i, :].flatten():
                 ax.set_ylim(ylim)
         for ax in grid[:, 1].flatten():
             ax.set_yticklabels([])
-        for ax in grid[0, :].flatten():
-            ax.set_xticklabels([])
+        if grid.shape[0] > 1:
+            for ax in grid[0, :].flatten():
+                ax.set_xticklabels([])
         for ax in grid[:, 0]:
             ax.set_xlim(windowCenters[0] - responseWindow[0] - tMargin, windowCenters[-1] + responseWindow[1] + tMargin)
         for ax in grid[:, 1]:
             ax.set_xlim(self.tProbe.min() - tMargin, self.tProbe.max() + tMargin)
-        grid[1, 0].set_xlabel('Latency from saccade to probe (sec)')
-        grid[1, 0].set_ylabel('Firing rate (z-scored)')
+        grid[-1, 0].set_xlabel('Latency from saccade to probe (sec)')
+        grid[-1, 0].set_ylabel('Firing rate (SD)')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
@@ -479,3 +486,90 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         fig.tight_layout()
 
         return fig, ax
+
+    def plotPerisaccadicResponsesForEnhancedUnits(
+        self,
+        sign=-1,
+        windowIndices=(4, 5, 6),
+        componentIndex=0,
+        minimumResponseAmplitude=0,
+        figsize=(12, 3),
+        destinationFolder=None
+        ):
+        """
+        """
+
+        nUnits = len(self.ukeys)
+        responseAmplitudes = self.ns['params/pref/real/extra'][:, 0]
+        t = np.linspace(0, 0.3, 100)
+        cmap = plt.get_cmap('gist_rainbow', 10)
+        for iUnit in range(nUnits):
+
+            #
+            if responseAmplitudes[iUnit] < minimumResponseAmplitude:
+                continue
+
+            # Exclude enhanced or unmodulated units
+            if sign == -1:
+                checks = np.vstack([
+                    self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
+                    self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] < 0
+                ]).all(0)
+            elif sign == 1:
+                checks = np.vstack([
+                    self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
+                    self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] > 0
+                ]).all(0)
+            else:
+                raise Exception('Sign must be -1 or 1')
+
+            #
+            if any(checks):
+
+                #
+                fig, ax = plt.subplots()
+                y1 = self.ns['ppths/pref/real/extra'][iUnit]
+                plt.plot(
+                    self.tProbe + 1.0,
+                    y1,
+                    color='k',
+                    alpha=0.5,
+                )
+                params = self.ns['params/pref/real/extra'][iUnit]
+                abcd = np.delete(params, np.isnan(params))
+                A, B, C = np.split(abcd[:-1], 3)
+                peakLatency = B[0]
+                
+                #
+                for windowIndex in np.arange(10):
+                    lag = self.windows[windowIndex].mean() + peakLatency
+                    y2 = np.interp(
+                        t,
+                        self.tProbe,
+                        self.ns['ppths/pref/real/peri'][iUnit, :, windowIndex]
+                    )
+                    plt.plot(
+                        t + lag,
+                        y2,
+                        color=cmap(windowIndex),
+                        alpha=0.5,
+                    )
+
+                #
+                ax.set_xlabel('Time from saccade (sec)')
+                ax.set_ylabel('Firing rate (SD)')
+                fig.set_figwidth(figsize[0])
+                fig.set_figheight(figsize[1])
+                fig.tight_layout()
+
+                #
+                date, animal, cluster = self.ukeys[iUnit]
+                filename = f'{date}_{animal}_{cluster}.png'
+                if destinationFolder is None:
+                    plt.close(fig)
+                    continue
+                filepath = pl.Path(destinationFolder).joinpath(filename)
+                fig.savefig(filepath, dpi=300)
+                plt.close(fig)
+
+        return
