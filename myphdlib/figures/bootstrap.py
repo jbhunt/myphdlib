@@ -352,114 +352,197 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
     
     def histModulationIndices(
         self,
-        windowIndex=5,
+        targetIndex=5,
         componentIndex=0,
         minimumProbeResponseAmplitude=0,
-        transform=False,
+        alpha=0.01,
         nbins=30,
         cmap='coolwarm',
         xrange=(-3, 3),
-        xticks=None,
-        figsize=(5, 2),
+        xticks=(-3, 0, 3),
+        figsize=(7, 1.5),
         ):
         """
         """
 
-        # Collect the subsets of unit
-        samples = list()
-        include = self.ns['params/pref/real/extra'][:, 0] >= minimumProbeResponseAmplitude
-        for sign in (-1, 1, 0):
-            sample = list()
-            for iUnit in range(len(self.ukeys)):
-                if include[iUnit] == False:
-                    continue
-                mi = self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex]
-                if transform:
-                    mi = np.tanh(mi)
-                    xrange = (-1, 1)
-                else:
-                    mi = np.clip(mi, *xrange)
-                p = self.ns['p/pref/real'][iUnit, windowIndex, componentIndex]
-                if sign == -1:
-                    if mi < 0 and p < 0.05:
-                        sample.append(mi)
-                elif sign == 0:
-                    if p >= 0.05:
-                        sample.append(mi)
-                elif sign == 1:
-                    if mi > 0 and p < 0.05:
-                        sample.append(mi)
-            samples.append(sample)
+        #
+        fig, axs = plt.subplots(ncols=len(self.windows), sharex=True)
 
         #
-        fig, ax = plt.subplots()
-        cf = plt.get_cmap(cmap, 3)
-        binCounts_, binEdges, patchList = ax.hist(
-            samples,
-            bins=nbins,
-            histtype='barstacked',
-            color=[cf(i) for i in (0, 2, 1)],
-            range=xrange
-        )
-        ax.hist(
-            samples[0],
-            bins=nbins,
-            color=None,
-            range=xrange,
-            histtype='step',
-            edgecolor='k'
-        )
-        ax.hist(
-            samples[1],
-            bins=nbins,
-            color=None,
-            range=xrange,
-            histtype='step',
-            edgecolor='k'
-        )
-        ax.hist(
-            np.concatenate(samples),
-            bins=nbins,
-            color=None,
-            range=xrange,
-            histtype='step',
-            edgecolor='k'
-        )
+        for windowIndex, ax in zip(np.arange(len(self.windows)), axs):
+            
+            # Collect the subsets of unit
+            samples = list()
+            include = self.ns['params/pref/real/extra'][:, 0] >= minimumProbeResponseAmplitude
+            for sign in (-1, 1, 0):
+                sample = list()
+                for iUnit in range(len(self.ukeys)):
+                    if include[iUnit] == False:
+                        continue
+                    mi = np.clip(self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex], *xrange)
+                    p = self.ns['p/pref/real'][iUnit, windowIndex, componentIndex]
+                    if sign == -1:
+                        if mi < 0 and p < alpha:
+                            sample.append(mi)
+                    elif sign == 0:
+                        if p >= 0.05:
+                            sample.append(mi)
+                    elif sign == 1:
+                        if mi > 0 and p < alpha:
+                            sample.append(mi)
+                samples.append(sample)
 
-        binCounts = binCounts_.max(0)
-        binCenters = binEdges[:-1] + ((binEdges[1] - binEdges[0]) / 2)
-        leftEdges = binEdges[:-1]
-        rightEdges = binEdges[1:]
-
-        #
-        for ukey in self.examples:
-            iUnit = self._indexUnitKey(ukey)
-            if iUnit is None:
-                continue
-            mi = np.tanh(self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex])
-            if np.isnan(mi).item():
-                continue
-            binIndex = np.where(np.logical_and(
-                mi >= leftEdges,
-                mi <  rightEdges
-            ))[0].item()
-            ax.scatter(
-                binCenters[binIndex],
-                binCounts[binIndex] + 10,
-                marker='v',
-                color='k',
-                s=20
+            #
+            f = plt.get_cmap(cmap, 3)
+            # binCounts_, binEdges, patchList = ax.hist(
+            #     samples,
+            #     bins=nbins,
+            #     histtype='barstacked',
+            #     color=[f(i) for i in (0, 2, 1)],
+            #     range=xrange
+            # )
+            binCounts_, binEdges = np.histogram(
+                np.concatenate(samples),
+                bins=nbins,
+                range=xrange
             )
 
-        #
-        for sp in ('top', 'right'):
-            ax.spines[sp].set_visible(False)
+            ax.hist(
+                np.concatenate(samples),
+                bins=nbins,
+                color='0.8',
+                range=xrange,
+                histtype='stepfilled',
+                edgecolor='none'
+            )
+            ax.hist(
+                samples[0],
+                bins=nbins,
+                color=f(0),
+                range=xrange,
+                histtype='stepfilled',
+                edgecolor='none'
+            )
+            ax.hist(
+                samples[1],
+                bins=nbins,
+                color=f(2),
+                range=xrange,
+                histtype='stepfilled',
+                edgecolor='none'
+            )
+
+            #
+            if windowIndex != 0:
+                ax.set_yticks([])
+                ax.set_xticklabels([])
+                ax.spines['left'].set_visible(False)
+            else:
+                ax.set_yticks([0, 200])
+            for sp in ('top', 'right'):
+                ax.spines[sp].set_visible(False)
+            if xticks is not None:
+                ax.set_xticks(xticks)
+            ax.set_xlim(*xrange)
+
+            #
+            if windowIndex != targetIndex:
+                continue
+
+            #
+            binCenters = binEdges[:-1] + ((binEdges[1] - binEdges[0]) / 2)
+            leftEdges = binEdges[:-1]
+            rightEdges = binEdges[1:]
+
+            #
+            for ukey in self.examples:
+                iUnit = self._indexUnitKey(ukey)
+                if iUnit is None:
+                    continue
+                mi = np.clip(self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex], *xrange)
+                if np.isnan(mi):
+                    continue
+                binIndex = int(np.where(np.logical_and(
+                    mi >= leftEdges,
+                    mi <  rightEdges
+                ))[0].item())
+                ax.scatter(
+                    binCenters[binIndex],
+                    binCounts_[binIndex] + 10,
+                    marker='v',
+                    color='k',
+                    s=20
+                )
 
         #
-        if xticks is not None:
-            ax.set_xticks(xticks)
-        ax.set_ylabel('# of units')
-        ax.set_xlabel(f'Modulation index (MI)')
+        ylim = [np.inf, -np.inf]
+        for ax in axs:
+            y1, y2 = ax.get_ylim()
+            if y1 < ylim[0]:
+                ylim[0] = y1
+            if y2 > ylim[1]:
+                ylim[1] = y2
+        for ax in axs:
+            ax.set_ylim(ylim)
+
+        # axs[0].set_ylabel('# of units')
+        # axs[0].set_xlabel(f'Modulation index (MI)')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+        fig.subplots_adjust(wspace=0.1)
+
+        return fig, ax
+
+    def plotFractionModulatedByProbeLatency(
+        self,
+        alpha=0.01,
+        componentIndex=0,
+        minimumProbeResponseAmplitude=0,
+        xrange=(-3, 3),
+        yrange=(0, 1),
+        cmap='coolwarm',
+        figsize=(3, 2),
+        ):
+        """
+        """
+
+        #
+        y = np.full([3, len(self.windows)], np.nan)
+        f = plt.get_cmap(cmap, 3)
+
+        #
+        for windowIndex in np.arange(len(self.windows)):
+            samples = list()
+            include = self.ns['params/pref/real/extra'][:, 0] >= minimumProbeResponseAmplitude
+            nUnits = include.sum()
+            for sign in (-1, 0, 1):
+                sample = list()
+                for iUnit in range(len(self.ukeys)):
+                    if include[iUnit] == False:
+                        continue
+                    mi = np.clip(self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex], *xrange)
+                    p = self.ns['p/pref/real'][iUnit, windowIndex, componentIndex]
+                    if sign == -1:
+                        if mi < 0 and p < alpha:
+                            sample.append(mi)
+                    elif sign == 0:
+                        if p >= 0.05:
+                            sample.append(mi)
+                    elif sign == 1:
+                        if mi > 0 and p < alpha:
+                            sample.append(mi)
+                samples.append(sample)
+            for i, sample in zip(range(3), samples):
+                freq = len(sample) / nUnits
+                y[i, windowIndex] = freq
+        
+        #
+        fig, ax = plt.subplots()
+        t = self.windows.mean(1)
+        for i in range(3):
+            ax.plot(t, y[i, :], color=f(i))
+        ax.set_ylim(yrange)
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
