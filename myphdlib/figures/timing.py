@@ -3,7 +3,7 @@ import numpy as np
 import pathlib as pl
 from scipy import stats
 from scipy.interpolate import interp1d
-from scipy.optimize import fmin, minimize_scalar
+from scipy.optimize import fmin, minimize_scalar, minimize, curve_fit
 from scipy.ndimage import gaussian_filter
 from matplotlib import pyplot as plt
 from myphdlib.figures.analysis import AnalysisBase, GaussianMixturesModel, g
@@ -11,6 +11,22 @@ from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
 from myphdlib.general.toolkit import psth2
 from myphdlib.extensions.matplotlib import getIsoluminantRainbowColormap
 from matplotlib.gridspec import GridSpec
+from scipy.ndimage import gaussian_filter1d
+from matplotlib_venn import venn2
+
+def weighted_quantiles(values, weights, quantiles=0.5, interpolate=False):
+
+    i = values.argsort()
+    sorted_weights = weights[i]
+    sorted_values = values[i]
+    Sn = sorted_weights.cumsum()
+
+    if interpolate:
+        Pn = (Sn - sorted_weights/2 ) / Sn[-1]
+        return np.interp(quantiles, Pn, sorted_values)
+    else:
+        return sorted_values[np.searchsorted(Sn, quantiles * Sn[-1])]
+
 
 class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
     """
@@ -25,43 +41,11 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
 
         super().__init__(**kwargs)
 
-        self.peths = { # Standardized PSTHs
-            'extra': None,
-            'peri': None
-        }
-        self.terms = {
-            'rpp': None,
-            'rps': None,
-            'rs':  None,
-        }
-        self.features = {
-            'm': None,
-            's': None,
-            'd': None
-        }
-        self.model = {
-            'k': None,
-            'fits': None,
-            'peaks': None,
-            'labels': None,
-            'params1': None,
-            'params2': None
-        }
-        self.templates = {
-            'nasal': None,
-            'temporal': None
-        }
-        self.tProbe = None
-        self.tSaccade = None
-        self.windows = None
-        self.mi = None # Modulation index
-        self.filter = None
-        self.speed = None
-
         # Example neurons
         self.examples = (
             ('2023-05-24', 'mlati7', 337),
             ('2023-05-17', 'mlati7', 237),
+            ('2023-05-15', 'mlati7', 408),
         )
 
         return
@@ -153,8 +137,13 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
                     include,
                     peakLatencies >= leftEdge,
                     peakLatencies <  rightEdge,
+                    np.invert(np.isnan(self.ns['mi/pref/real'][:, iWin, 0]))
                 ]).all(0)
-                Z[iWin, j] = np.nanmean(self.ns['mi/pref/real'][mask, iWin, 0])
+                W = self.ns['params/pref/real/extra'][mask, 0] # weight by amplitude
+                Z[iWin, j] = np.average(
+                    self.ns['mi/pref/real'][mask, iWin, 0],
+                    weights=W
+                )
 
         # Plot the heatmap
         x = np.concatenate([leftEdges, [rightEdges[-1]]])
@@ -192,21 +181,17 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         #     yFit.append(t)
         # yFit = np.array(yFit)
         
-        #
-        xFit = tf(np.mean(binEdges, axis=1))
         if modulation == -1:
-            yFit = np.array([self.windows.mean(1)[np.argmin(z)] for z in Z.T])
+            th = -0.4
         elif modulation == 1:
-            yFit = np.array([self.windows.mean(1)[np.argmax(z)] for z in Z.T])
-        else:
-            yFit = np.full(self.windows.shape[0], np.nan)
-        ax.plot(
-            xFit,
-            yFit,
-            color='w',
-            linestyle='-',
-            marker='o',
-            markersize=5,
+            th = 0.4
+        ax.contour(
+            xTrans[:-1] + ((xTrans[1] - xTrans[0]) / 2),
+            np.mean(self.windows, axis=1),
+            Z,
+            levels=(th,),
+            colors='w',
+            linestyles='-'
         )
 
         #
@@ -236,7 +221,8 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         self,
         responseWindow=(0, 0.3),
         tMargin=0.05,
-        figsize=(5, 3),
+        cmap=None,
+        figsize=(3, 3.5),
         ):
         """
         """
@@ -254,7 +240,8 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         fig, grid = plt.subplots(nrows=len(self.examples), ncols=2, gridspec_kw={'width_ratios': [tLeft, tRight]})
         grid = np.atleast_2d(grid)
         # cmap = plt.get_cmap('gist_rainbow', len(self.windows))
-        cmap = getIsoluminantRainbowColormap(len(self.windows))
+        if cmap is None:
+            cmap = getIsoluminantRainbowColormap(len(self.windows))
         for i, ukey in enumerate(self.examples):
             iUnit = self._indexUnitKey(ukey)
             for windowIndex in range(len(self.windows)):
@@ -344,14 +331,13 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         sign=-1,
         componentIndex=0,
         windowIndices=(4, 5, 6),
-        perisaccadicWindow=(-0.5, 0.5),
         minimumResponseAmplitude=0,
-        binsize=0.1,
+        backgroundColor='k',
         interpolationWindow=(-0.3, 0.45),
-        nPointsForEvaluation=100,
+        nPointsForEvaluation=30,
         transform=False,
         yrange=(-3, 3),
-        figsize=(3, 3),
+        figsize=(2.5, 3),
         **kwargs_
         ):
         """
@@ -372,9 +358,6 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         fig, ax = plt.subplots()
 
         #
-        leftEdges = np.arange(perisaccadicWindow[0], perisaccadicWindow[1], binsize)
-
-        #
         responseAmplitudes = self.ns['params/pref/real/extra'][:, 0]
         cmin, cmax = np.nanmin(responseAmplitudes), np.nanmax(responseAmplitudes)
         cmap = lambda x: np.interp(x, [cmin, cmax], [0, 0.3]) ** 2 * 10
@@ -384,92 +367,141 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         windowCenters = np.mean(self.windows, axis=1)
         lines = list()
         weights = list()
+        subsets = [0, 0, 0]
         for iUnit in range(nUnits):
 
             #
-            if responseAmplitudes[iUnit] < minimumResponseAmplitude:
+            if abs(responseAmplitudes[iUnit]) < minimumResponseAmplitude:
                 continue
 
-            # Exclude enhanced or unmodulated units
-            if sign == -1:
-                checks = np.vstack([
-                    self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
-                    self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] < 0
-                ]).all(0)
-            elif sign == 1:
-                checks = np.vstack([
-                    self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
-                    self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] > 0
-                ]).all(0)
-            else:
-                raise Exception('Sign must be -1 or 1')
-            if np.any(checks):
+            # Extract peak latency and amplitude for the largest component
+            params = self.ns['params/pref/real/extra'][iUnit]
+            abcd = np.delete(params, np.isnan(params))
+            abc, d = abcd[:-1], abcd[-1]
+            A, B, C = np.split(abc, 3)
+            peakLatency = B[0]
 
-                # Extract peak latency and amplitude for the largest component
-                params = self.ns['params/pref/real/extra'][iUnit]
-                abcd = np.delete(params, np.isnan(params))
-                abc, d = abcd[:-1], abcd[-1]
-                A, B, C = np.split(abc, 3)
-                peakLatency = B[0]
+            # Plot shifted curves
+            y = list()
+            t = list()
+            for iWindow in range(nWindows):
+                t.append(windowCenters[iWindow] + peakLatency)
+                mi = self.ns['mi/pref/real'][iUnit, iWindow, 0]
+                if transform:
+                    y.append(np.tanh(mi))
+                else:
+                    y.append(mi)
+            y = np.array(y)
 
-                # Plot shifted curves
-                y = list()
-                t = list()
-                for iWindow in range(nWindows):
-                    t.append(windowCenters[iWindow] + peakLatency)
-                    mi = self.ns['mi/pref/real'][iUnit, iWindow, 0]
-                    if transform:
-                        y.append(np.tanh(mi))
-                    else:
-                        y.append(mi)
-                alpha = cmap(responseAmplitudes[iUnit])
-                ax.plot(t, np.clip(y, *yrange), color='b', alpha=alpha, lw=1)
-                
-                # if np.random.choice([True, False], size=1):
-                #    ax.scatter(t, np.clip(y, *yrange), color='k', alpha=0.05, s=5, marker='.', rasterized=True, clip_on=False)
+            # Exclude noise units
+            if np.all(y > 0.2) or np.all(y < -0.2):
+                continue
+
+            #
+            isSuppressed = np.vstack([
+                self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
+                self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] < 0
+            ]).all(0).any()
+            isEnhanced = np.vstack([
+                self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
+                self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] > 0
+            ]).all(0).any()
+
+            #
+            if isSuppressed and isEnhanced:
+                subsets[1] += 1
+            elif isSuppressed:
+                subsets[0] += 1
+            elif isEnhanced:
+                subsets[2] += 1
+
+            #
+            if sign == -1 and isSuppressed == False:
+                continue
+            if sign == 1 and isEnhanced == False:
+                continue
+
+            # Suppressed units
+            # if sign == -1:
+            #     checks = np.vstack([
+            #         self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
+            #         self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] < 0
+            #     ]).all(0)
+
+            # Enhanced units
+            # elif sign == 1:
+            #     checks = np.vstack([
+            #         self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
+            #         self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] > 0
+            #    ]).all(0)
+
+            #
+            # else:
+            #    raise Exception('Sign must be -1 or 1')
+
+            #
+            # if np.any(checks):
+
+            # alpha = cmap(responseAmplitudes[iUnit]) * 0.7
+            # ax.plot(t, np.clip(y, *yrange), color=backgroundColor, alpha=alpha, lw=1)
+            
+            # if np.random.choice([True, False], size=1):
+            #    ax.scatter(t, np.clip(y, *yrange), color='k', alpha=0.05, s=5, marker='.', rasterized=True, clip_on=False)
 
 
-                # Interpolate
-                interpolated = np.interp(
-                    np.linspace(*interpolationWindow, nPointsForEvaluation),
-                    t,
-                    y,
-                    left=np.nan,
-                    right=np.nan
-                )
-                lines.append(interpolated)
-                weights.append(responseAmplitudes[iUnit])
+            # Interpolate
+            interpolated = np.interp(
+                np.linspace(*interpolationWindow, nPointsForEvaluation),
+                t,
+                y,
+                left=np.nan,
+                right=np.nan
+            )
+            lines.append(interpolated)
+            weights.append(responseAmplitudes[iUnit])
 
         #
         lines = np.array(lines)
         weights = np.array(weights)
-        # weightsNormed = np.array([cmap(w) for w in weights])
 
         #
         x1 = np.linspace(*interpolationWindow, nPointsForEvaluation)
         y1 = list()
+        iqr = list()
         for col in np.array(lines).T:
             indices = np.where(np.invert(np.isnan(col)))[0]
-            yi = np.average(
+            yi = weighted_quantiles(
                 col[indices],
-                weights=weights[indices]
+                weights[indices],
+                quantiles=0.5
+            )
+            e1 = weighted_quantiles(
+                col[indices],
+                weights=weights[indices],
+                quantiles=0.25
+            )
+            e2 = weighted_quantiles(
+                col[indices],
+                weights=weights[indices],
+                quantiles=0.75
             )
             y1.append(yi)
-        # y1 = np.average(lines, axis=0, weights=weights)
+            iqr.append([e1, e2])
+        iqr = np.array(iqr)
+        y1 = np.array(y1)
         ax.plot(
             x1,
             y1,
             color='k'
         )
-        error = 1.96 * (np.nanstd(lines, axis=0) / np.sqrt(np.sum(np.invert(np.isnan(lines)), axis=0)))
-        # ax.fill_between(
-        #     np.linspace(*interpolationWindow, nPointsForEvaluation),
-        #     np.nanmean(lines, axis=0) - error,
-        #     np.nanmean(lines, axis=0) + error,
-        #     color='k',
-        #     alpha=0.1,
-        #     edgecolor=None
-        # )
+        ax.fill_between(
+            x1,
+            iqr[:, 0],
+            iqr[:, 1],
+            color=backgroundColor,
+            alpha=0.15,
+            edgecolor='none',
+        )
         xlim = ax.get_xlim()
         ax.vlines(0, *yrange, color='k', alpha=0.7, linestyle=':')
         ax.hlines(0, *xlim, color='k', alpha=0.7, linestyle=':')
@@ -485,91 +517,105 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, ax
+        return fig, ax, subsets
 
-    def plotPerisaccadicResponsesForEnhancedUnits(
+    def plotModulationOverlapBySign(
         self,
-        sign=-1,
+        minimumResponseAmplitude=0,
         windowIndices=(4, 5, 6),
         componentIndex=0,
-        minimumResponseAmplitude=0,
-        figsize=(12, 3),
-        destinationFolder=None
+        cmap='coolwarm',
+        subsets=None,
+        figsize=(3, 1.5)
         ):
         """
         """
 
-        nUnits = len(self.ukeys)
+        #
+        nUnits, nBins, nWindows = self.ns['ppths/pref/real/peri'].shape
         responseAmplitudes = self.ns['params/pref/real/extra'][:, 0]
-        t = np.linspace(0, 0.3, 100)
-        cmap = plt.get_cmap('gist_rainbow', 10)
+        if subsets is None:
+            subsets = [0, 0, 0]
         for iUnit in range(nUnits):
 
             #
-            if responseAmplitudes[iUnit] < minimumResponseAmplitude:
+            if abs(responseAmplitudes[iUnit]) < minimumResponseAmplitude:
+                continue
+
+            #
+            y = list()
+            for iWindow in range(nWindows):
+                mi = self.ns['mi/pref/real'][iUnit, iWindow, 0]
+                y.append(mi)
+            y = np.array(y)
+            if np.all(y > 0.2) or np.all(y < -0.2):
                 continue
 
             # Exclude enhanced or unmodulated units
-            if sign == -1:
-                checks = np.vstack([
-                    self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
-                    self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] < 0
-                ]).all(0)
-            elif sign == 1:
-                checks = np.vstack([
-                    self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
-                    self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] > 0
-                ]).all(0)
-            else:
-                raise Exception('Sign must be -1 or 1')
+            isSuppressed = np.vstack([
+                self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
+                self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] < 0
+            ]).all(0).any()
+            isEnhanced = np.vstack([
+                self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
+                self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] > 0
+            ]).all(0).any()
 
             #
-            if any(checks):
+            if subsets is None:
+                if isSuppressed and isEnhanced:
+                    subsets[1] += 1
+                elif isSuppressed:
+                    subsets[0] += 1
+                elif isEnhanced:
+                    subsets[2] += 1
 
-                #
-                fig, ax = plt.subplots()
-                y1 = self.ns['ppths/pref/real/extra'][iUnit]
-                plt.plot(
-                    self.tProbe + 1.0,
-                    y1,
-                    color='k',
-                    alpha=0.5,
-                )
-                params = self.ns['params/pref/real/extra'][iUnit]
-                abcd = np.delete(params, np.isnan(params))
-                A, B, C = np.split(abcd[:-1], 3)
-                peakLatency = B[0]
-                
-                #
-                for windowIndex in np.arange(10):
-                    lag = self.windows[windowIndex].mean() + peakLatency
-                    y2 = np.interp(
-                        t,
-                        self.tProbe,
-                        self.ns['ppths/pref/real/peri'][iUnit, :, windowIndex]
-                    )
-                    plt.plot(
-                        t + lag,
-                        y2,
-                        color=cmap(windowIndex),
-                        alpha=0.5,
-                    )
+        #
+        f = plt.get_cmap(cmap, 3)
+        fig, ax = plt.subplots()
+        venn = venn2(
+            subsets,
+            set_labels=('', ''),
+            set_colors=[f(0), f(2)],
+            alpha=0.5,
+            ax=ax,
+        )
 
-                #
-                ax.set_xlabel('Time from saccade (sec)')
-                ax.set_ylabel('Firing rate (SD)')
-                fig.set_figwidth(figsize[0])
-                fig.set_figheight(figsize[1])
-                fig.tight_layout()
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
 
-                #
-                date, animal, cluster = self.ukeys[iUnit]
-                filename = f'{date}_{animal}_{cluster}.png'
-                if destinationFolder is None:
-                    plt.close(fig)
-                    continue
-                filepath = pl.Path(destinationFolder).joinpath(filename)
-                fig.savefig(filepath, dpi=300)
-                plt.close(fig)
+        return fig, ax
 
-        return
+    def histProbeResponsePeakLatency(
+        self,
+        xrange=(0, 0.5),
+        nbins=30,
+        figsize=(1.5, 1)
+        ):
+        """
+        """
+
+        fig, ax = plt.subplots()
+        sample = list()
+        for iUnit in range(len(self.ukeys)):
+            params = self.ns['params/pref/real/extra'][iUnit, :]
+            abcd = np.delete(params, np.isnan(params))
+            A, B, C = np.split(abcd[:-1], 3)
+            sample.append(B[0])
+        ax.hist(
+            sample,
+            range=xrange,
+            bins=nbins,
+            histtype='stepfilled',
+            edgecolor='none',
+            color='k'
+        )
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax

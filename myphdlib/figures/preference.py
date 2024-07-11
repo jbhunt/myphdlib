@@ -97,7 +97,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
         return
 
-    def measureDirectionSelectivityForSaccades(
+    def measureDirectionSelectivityForRealSaccades(
         self,
         method='ratio',
         responseWindow=(-0.2, 0.5),
@@ -157,6 +157,14 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
             #
             self.ns['dsi/saccade'][iUnit] = dsi
             
+        return
+
+    def measureDirectionSelectivityForFictiveSaccades(
+        self,
+        ):
+        """
+        """
+
         return
 
     # TODO: Project vector sum onto the horizontal axis (so that I can compare

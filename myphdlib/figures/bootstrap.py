@@ -496,13 +496,14 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
     def plotFractionModulatedByProbeLatency(
         self,
-        alpha=0.01,
+        alpha=0.05,
         componentIndex=0,
         minimumProbeResponseAmplitude=0,
         xrange=(-3, 3),
         yrange=(0, 1),
+        xlim=(-0.5, 0.5),
         cmap='coolwarm',
-        figsize=(3, 2),
+        figsize=(2, 3),
         ):
         """
         """
@@ -510,24 +511,22 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         #
         y = np.full([3, len(self.windows)], np.nan)
         f = plt.get_cmap(cmap, 3)
+        include = self.ns['params/pref/real/extra'][:, 0] >= minimumProbeResponseAmplitude
+        nUnits = include.sum()
 
         #
         for windowIndex in np.arange(len(self.windows)):
             samples = list()
-            include = self.ns['params/pref/real/extra'][:, 0] >= minimumProbeResponseAmplitude
-            nUnits = include.sum()
             for sign in (-1, 0, 1):
                 sample = list()
-                for iUnit in range(len(self.ukeys)):
-                    if include[iUnit] == False:
-                        continue
+                for iUnit in np.where(include)[0]:
                     mi = np.clip(self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex], *xrange)
                     p = self.ns['p/pref/real'][iUnit, windowIndex, componentIndex]
                     if sign == -1:
                         if mi < 0 and p < alpha:
                             sample.append(mi)
                     elif sign == 0:
-                        if p >= 0.05:
+                        if p >= alpha:
                             sample.append(mi)
                     elif sign == 1:
                         if mi > 0 and p < alpha:
@@ -541,7 +540,13 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         fig, ax = plt.subplots()
         t = self.windows.mean(1)
         for i in range(3):
-            ax.plot(t, y[i, :], color=f(i))
+            # ax.plot(t, y[i, :], color=f(i))
+            if i == 0:
+                bottoms = np.zeros(t.size)
+            else:
+                bottoms = y[:i, :].sum(0)
+            ax.bar(t, y[i, :], bottom=bottoms, color=f(i), width=0.1)
+        ax.set_xlim(xlim)
         ax.set_ylim(yrange)
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
