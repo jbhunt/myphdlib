@@ -223,7 +223,9 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
         for iUnit in range(nUnits):
 
             #
-            print(f'Working on {iUnit + 1} out of {nUnits} ...')
+            print(f'Working on {iUnit + 1} out of {nUnits} ... ')
+            if target is not None:
+                print(f'target=({target.date}, {target.animal}), session=({session.date}, {session.animal})')
 
             #
             date, animal, cluster = self.ukeys[iUnit]
