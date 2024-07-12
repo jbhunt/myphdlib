@@ -155,8 +155,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
                         saccadeLatencies > perisaccadicWindow[0] * -1,
                     ),
                     saccadeLabels == saccadeLabel,
-                    gratingMotion == self.preference[self.iUnit]
-                    # gratingMotion == self.features['d'][self.iUnit]
+                    # gratingMotion == self.preference[self.iUnit] # TODO: Figure out why I was doing this for real saccades
                 ]).all(0))[0]
                 if trialIndices.size == 0:
                     continue
