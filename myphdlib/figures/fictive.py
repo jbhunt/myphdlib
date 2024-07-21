@@ -707,10 +707,8 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
             #
             mask = np.vstack([
                 u == label,
-                # self.ns['p/pref/real'][:, windowIndex, componentIndex] < 0.05,
-                # self.ns['mi/pref/real'][:, windowIndex, componentIndex] > 0,
                 np.invert(np.isnan(self.ns['mi/pref/fictive'][:, 0, componentIndex])),
-                np.invert(np.isnan(self.ns['mi/pref/real'][:, 5, componentIndex]))
+                np.invert(np.isnan(self.ns['mi/pref/real'][:, windowIndex, componentIndex]))
             ]).all(0)
 
             #
@@ -961,4 +959,66 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, (ax,), data, uniqueCombos
+        return fig, (ax,), data, uniqueCombos, counts.reshape(4, -1)
+
+    def computeModulationFrequency(
+        self,
+        windowIndex=5,
+        componentIndex=0,
+        label=1,
+        ):
+        """
+        """
+
+        #
+        u, r = self.classifyUnitsByAmplitude()
+        table = np.full([3, 3], 0)
+        for iUnit in np.where(u == label)[0]:
+
+            #
+            miReal = self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex]
+            miFictive = self.ns['mi/pref/fictive'][iUnit, 0, componentIndex]
+            pReal = self.ns['p/pref/real'][iUnit, windowIndex, componentIndex]
+            pFictive = self.ns['p/pref/fictive'][iUnit, 0, componentIndex]
+
+            #
+            if np.isnan([miReal, miFictive, pReal, pFictive]).any():
+                continue
+
+            # Suppressed (real) x suppressed (fictive)
+            if np.all([miReal < 0, pReal < 0.05, miFictive < 0, pFictive < 0.05]):
+                table[0, 0] += 1
+
+            # Enhanced (real) x suppressed (fictive)
+            elif np.all([miReal > 0, pReal < 0.05, miFictive < 0, pFictive < 0.05]):
+                table[0, 1] += 1
+
+            # Unmodulated (real) x suppressed (fictive)
+            elif np.all([pReal >= 0.05, miFictive < 0, pFictive < 0.05]):
+                table[0, 2] += 1
+
+            # Suppressed (real) x enhanced (fictive)
+            elif np.all([miReal < 0, pReal < 0.05, miFictive > 0, pFictive < 0.05]):
+                table[1, 0] += 1
+
+            # Enhanced (real) x enhanced (fictive)
+            elif np.all([miReal > 0, pReal < 0.05, miFictive > 0, pFictive < 0.05]):
+                table[1, 1] += 1
+
+            # Unodulated (real) x enhanced (fictive)
+            elif np.all([pReal >= 0.05, miFictive > 0, pFictive < 0.05]):
+                table[1, 2] += 1
+
+            # Suppressed (real) x unmodulated (fictive)
+            elif np.all([miReal < 0, pReal < 0.05, pFictive >= 0.05]):
+                table[2, 0] += 1
+
+            # Enhanced (real) x unmodulated (fictive)
+            elif np.all([miReal > 0, pReal < 0.05, pFictive >= 0.05]):
+                table[2, 1] += 1
+
+            # Unmodulated (real) x unmodulated (fictive)
+            elif np.all([True, pReal >= 0.05, pFictive >= 0.05]):
+                table[2, 2] += 1
+
+        return table

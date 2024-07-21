@@ -7,6 +7,7 @@ from myphdlib.figures.analysis import AnalysisBase, g
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
 from myphdlib.figures.analysis import convertSaccadeDirectionToGratingMotion, convertGratingMotionToSaccadeDirection
 from matplotlib.colors import LinearSegmentedColormap
+from itertools import combinations
 
 def computeApparentMotion(
     session,
@@ -51,49 +52,109 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
     def measureDirectionSelectivityForProbes(
         self,
         method='ratio',
-        minimumResponseAmplitude=3,
+        minimumResponseAmplitude=5,
+        denovo=True,
+        responseWindow=(0, 0.5),
+        baselineWindow=(-0.2, 0),
         ):
         """
         """
 
         #
+        window = (
+            np.min([responseWindow, baselineWindow]),
+            np.max([responseWindow, baselineWindow])
+        )
+        tProbe, _ = psth2(
+            np.array([0]),
+            np.array([0]),
+            window=window,
+            binsize=0.01,
+        )
+        binIndicesForResponse = np.where(np.logical_and(
+            tProbe >= responseWindow[0],
+            tProbe <  responseWindow[1]
+        ))[0]
+        binIndicesForBaseline = np.where(np.logical_and(
+            tProbe >= baselineWindow[0],
+            tProbe <  baselineWindow[1]
+        ))[0]
+
+        #
         self.ns['dsi/probe'] = np.full(len(self.ukeys), np.nan)
+        nUnits = len(self.ukeys)
 
         #
         for iUnit in range(len(self.ukeys)):
 
-            # Get amplitude of largest component of preferred PPTH
-            paramsPref = self.ns['params/pref/real/extra'][iUnit]
-            paramsPref = np.delete(paramsPref, np.isnan(paramsPref))
-            A, B, C = np.split(paramsPref[:-1], 3)
-            aPref = A[0]
-            lPref = B[0]
-
-            # Get amplitude of corresponding component from the null PPTH
-            paramsNull = self.ns['params/null/real/extra'][iUnit]
-            paramsNull = np.delete(paramsNull, np.isnan(paramsNull))
-            A, B, C = np.split(paramsNull[:-1], 3)
-            iComp = np.argmin(np.abs(B - lPref))
-            aNull = A[iComp]
-
-            # Clip null direction if sign reverses
-            if aPref > 0:
-                if aNull < 0:
-                    aNull = 0
-            else:
-                if aNull > 0:
-                    aNull = 0
+            #
+            end = '\r' if iUnit + 1 != nUnits else '\n'
+            print(f'Working on unit {iUnit + 1} out of {nUnits} ...', end=end)
 
             #
-            if self.preference[iUnit] == -1:
-                aLeft = abs(aPref)
-                aRight = abs(aNull)
-            else:
-                aLeft = abs(aNull)
-                aRight = abs(aPref)
+            session = self._getSessionFromUnitKey(self.ukeys[iUnit])
+            date, animal, cluster = self.ukeys[iUnit]
+            unit = session.population.indexByCluster(cluster)
 
             #
-            if np.any([aLeft < minimumResponseAmplitude, aRight < minimumResponseAmplitude]):
+            if denovo:
+
+                #
+                t, fr = unit.kde(
+                    session.probeTimestamps[session.gratingMotionDuringProbes == -1],
+                    responseWindow=window,
+                    binsize=0.01,
+                    sigma=0.01,
+                )
+                fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
+                aLeft = np.max(np.abs(fr))
+
+                #
+                t, fr = unit.kde(
+                    session.probeTimestamps[session.gratingMotionDuringProbes == 1],
+                    responseWindow=window,
+                    binsize=0.01,
+                    sigma=0.01,
+                )
+                fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
+                aRight = np.max(np.abs(fr))
+
+                #
+                if aLeft > aRight:
+                    aPref = aLeft
+                    aNull = aRight
+                else:
+                    aPref = aRight
+                    aNull = aLeft
+
+            else:
+                # Get amplitude of largest component of preferred PPTH
+                paramsPref = self.ns['params/pref/real/extra'][iUnit]
+                paramsPref = np.delete(paramsPref, np.isnan(paramsPref))
+                A, B, C = np.split(paramsPref[:-1], 3)
+                aPref = A[0]
+                lPref = B[0]
+
+                # Get amplitude of corresponding component from the null PPTH
+                paramsNull = self.ns['params/null/real/extra'][iUnit]
+                paramsNull = np.delete(paramsNull, np.isnan(paramsNull))
+                A, B, C = np.split(paramsNull[:-1], 3)
+                iComp = np.argmin(np.abs(B - lPref))
+                aNull = A[iComp]
+
+                #
+                if self.preference[iUnit] == -1:
+                    aLeft = aPref
+                    aRight = aNull
+                else:
+                    aLeft = aNull
+                    aRight = aPref
+
+            #
+            aNull = np.clip(aNull, 0, np.inf)
+
+            #
+            if abs(aPref) < minimumResponseAmplitude:
                 continue
 
             # Ratio of difference and sum
@@ -125,32 +186,84 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
         return
 
-    def measureDirectionSelectivityForSaccades(
+    def measureDirectionSelectivityForRealSaccades1(
         self,
         method='ratio',
-        saccadeType='real',
         responseWindow=(-0.2, 0.5),
-        minimumResponseAmplitude=3,
+        baselineWindow=(-1, -0.5),
+        minimumResponseAmplitude=5,
+        denovo=True,
         ):
         """
         """
 
         #
-        binIndices = np.where(np.logical_and(
-            self.tSaccade >= responseWindow[0],
-            self.tSaccade <= responseWindow[1]
+        window = (
+            np.min([responseWindow, baselineWindow]),
+            np.max([responseWindow, baselineWindow])
+        )
+        tSaccade, _ = psth2(
+            np.array([0]),
+            np.array([0]),
+            window=window,
+            binsize=0.01,
+        )
+        binIndicesForResponse = np.where(np.logical_and(
+            tSaccade >= responseWindow[0],
+            tSaccade <  responseWindow[1]
         ))[0]
-        self.ns['dsi/saccade'] = np.full(len(self.ukeys), np.nan)
+        binIndicesForBaseline = np.where(np.logical_and(
+            tSaccade >= baselineWindow[0],
+            tSaccade <  baselineWindow[1]
+        ))[0]
+        self.ns[f'dsi/saccade/real1'] = np.full(len(self.ukeys), np.nan)
 
         #
-        for iUnit in range(len(self.ukeys)):
+        nUnits = len(self.ukeys)
+        for iUnit in range(nUnits):
+
+            #
+            end = '\r' if iUnit + 1 != nUnits else '\n'
+            print(f'Working on unit {iUnit + 1} out of {nUnits} ...', end=end)
 
             #
             session = self._getSessionFromUnitKey(self.ukeys[iUnit])
+            date, animal, cluster = self.ukeys[iUnit]
+            unit = session.population.indexByCluster(cluster)
 
             # Determine which saccade is preferred
-            aNasal = np.max(np.abs(self.ns[f'psths/nasal/{saccadeType}'][iUnit, binIndices]))
-            aTemporal = np.max(np.abs(self.ns[f'psths/temporal/{saccadeType}'][iUnit, binIndices]))
+
+            # Nasal saccade response
+            if denovo:
+                t, fr = unit.kde(
+                    session.saccadeTimestamps[session.saccadeLabels == 1, 0],
+                    responseWindow=window,
+                    binsize=0.01,
+                    sigma=0.01,
+                )
+                fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
+            else:
+                fr = self.ns[f'psths/nasal/real'][iUnit, binIndicesForResponse]
+                fr -= self.ns[f'psths/nasal/real'][iUnit, binIndicesForBaseline].mean()
+                fr /= self.factor[iUnit]
+            aNasal = np.max(np.abs(fr))
+
+            # Temporal saccade response
+            if denovo:
+                t, fr = unit.kde(
+                    session.saccadeTimestamps[session.saccadeLabels == -1, 0],
+                    responseWindow=window,
+                    binsize=0.01,
+                    sigma=0.01,
+                )
+                fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
+            else:
+                fr = self.ns[f'psths/temporal/real'][iUnit, binIndicesForResponse]
+                fr -= self.ns[f'psths/temporal/real'][iUnit, binIndicesForBaseline].mean()
+                fr /= self.factor[iUnit]
+            aTemporal = np.max(np.abs(fr))
+
+            #
             if aNasal > aTemporal:
                 aPref = aNasal
                 aNull = aTemporal
@@ -159,18 +272,13 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                 aPref = aTemporal
                 aNull = aNasal
                 saccadeDirection = 'temporal'
-            
+
             #
-            if np.any([aPref < minimumResponseAmplitude, aNull < minimumResponseAmplitude]):
+            if abs(aPref) < minimumResponseAmplitude:
                 continue
 
             # Clip null direction if sign reverses
-            if aPref > 0:
-                if aNull < 0:
-                    aNull = 0
-            else:
-                if aNull > 0:
-                    aNull = 0
+            aNull = np.clip(aNull, 0, np.inf)
 
             # Convert saccade direction to probe direction
             apparentMotion = convertSaccadeDirectionToGratingMotion(
@@ -189,24 +297,27 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                 dsi = (aRight - aLeft) / (aRight + aLeft)
             
             #
-            self.ns['dsi/saccade'][iUnit] = dsi
+            self.ns[f'dsi/saccade/real1'][iUnit] = dsi
             
         return
 
-    def measureDirectionSelectivityForSaccades2(
+    def measureDirectionSelectivityForRealSaccades2(
         self,
         responseWindow=(-0.2, 0.5),
-        baselineWindow=(-0.2, 0),
-        minimumResposneAmplitude=3, 
+        baselineWindow=(-1, -0.5),
+        minimumResponseAmplitude=5, 
         ):
         """
         """
 
-        #
+        window = (
+            np.min([baselineWindow[0], responseWindow[0]]),
+            np.max([baselineWindow[0], responseWindow[1]])
+        )
         t, _ = psth2(
             np.array([0]),
             np.array([0]),
-            window=responseWindow,
+            window=window,
             binsize=0.01,
         )
         binIndicesForResponse = np.where(np.logical_and(
@@ -217,15 +328,14 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
             t >= baselineWindow[0],
             t <= baselineWindow[1]
         ))[0]
-        self.ns['dsi/saccade'] = np.full(len(self.ukeys), np.nan)
+        self.ns['dsi/saccade/real'] = np.full(len(self.ukeys), np.nan)
         nUnits = len(self.ukeys)
         target = None
         for iUnit in range(nUnits):
 
             #
-            print(f'Working on {iUnit + 1} out of {nUnits} ... ')
-            if target is not None:
-                print(f'target=({target.date}, {target.animal}), session=({session.date}, {session.animal})')
+            end = '\r' if iUnit + 1 != nUnits else '\n'
+            print(f'Working on {iUnit + 1} out of {nUnits} ... ', end=end)
 
             #
             date, animal, cluster = self.ukeys[iUnit]
@@ -237,33 +347,137 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                 apparentMotion = computeApparentMotion(session)
                 target = session
 
-            #
+            # Response to leftward motion
             t, fr = unit.kde(
                 target.saccadeTimestamps[apparentMotion == -1, 0],
-                responseWindow=responseWindow,
+                responseWindow=window,
                 binsize=0.01,
                 sigma=0.01
             )
-            rLeft = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
-            aLeft = np.max(np.abs(rLeft))
+            fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
+            aLeft = np.max(np.abs(fr))
 
-            #
+            # Response to rightward motion
             t, fr = unit.kde(
                 target.saccadeTimestamps[apparentMotion == 1, 0],
-                responseWindow=responseWindow,
+                responseWindow=window,
                 binsize=0.01,
                 sigma=0.01
             )
-            rRight = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
-            aRight = np.max(np.abs(rRight))
+            fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
+            aRight = np.max(np.abs(fr))
+
+            # Clip at 0 if the null response is negative
+            if aLeft > aRight:
+                aPref = aLeft
+                aRight = np.clip(aRight, 0, np.inf)
+            else:
+                aPref = aRight
+                aLeft = np.clip(aLeft, 0, np.inf)
+
+            #
+            if abs(aPref) < minimumResponseAmplitude:
+                continue
+
+            #
+            dsi = (aRight - aLeft) / (aRight + aLeft)
+            self.ns['dsi/saccade/real'][iUnit] = dsi
+
+        return
+
+    def measureDirectionSelectivityForFictiveSaccades(
+        self,
+        responseWindow=(-0.2, 0.5),
+        baselineWindow=(-1, -0.5),
+        minimumResposneAmplitude=3, 
+        ):
+        """
+        """
+
+        window = (
+            np.min([baselineWindow[0], responseWindow[0]]),
+            np.max([baselineWindow[0], responseWindow[1]])
+        )
+        t, _ = psth2(
+            np.array([0]),
+            np.array([0]),
+            window=window,
+            binsize=0.01,
+        )
+        binIndicesForResponse = np.where(np.logical_and(
+            t >= responseWindow[0],
+            t <= responseWindow[1]
+        ))[0]
+        binIndicesForBaseline = np.where(np.logical_and(
+            t >= baselineWindow[0],
+            t <= baselineWindow[1]
+        ))[0]
+        self.ns['dsi/saccade/fictive'] = np.full(len(self.ukeys), np.nan)
+
+        #
+        nUnits = len(self.ukeys)
+        target = None
+        for iUnit in range(nUnits):
+
+            #
+            end = '\r' if iUnit + 1 != nUnits else '\n'
+            print(f'Working on {iUnit + 1} out of {nUnits} ... ', end=end)
+
+            #
+            date, animal, cluster = self.ukeys[iUnit]
+            session = self._getSessionFromUnitKey(self.ukeys[iUnit])
+            unit = session.population.indexByCluster(cluster)
+
+            #
+            if target != session:
+                gratingMotion = session.load('stimuli/fs/saccade/motion')
+                saccadeTimestamps = session.load('stimuli/fs/saccade/timestamps')
+                target = session
+
+            #
+            if saccadeTimestamps is None or len(saccadeTimestamps) == 0:
+                continue
+
+            #
+            try:
+
+                # Response to leftward motion
+                t, fr = unit.kde(
+                    saccadeTimestamps[gratingMotion == -1],
+                    responseWindow=window,
+                    binsize=0.01,
+                    sigma=0.01
+                )
+                fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
+                aLeft = np.max(np.abs(fr))
+
+                # Response to rightward motion
+                t, fr = unit.kde(
+                    saccadeTimestamps[gratingMotion == 1],
+                    responseWindow=window,
+                    binsize=0.01,
+                    sigma=0.01
+                )
+                fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
+                aRight = np.max(np.abs(fr))
+
+            #
+            except:
+                continue
 
             #
             if np.any([aLeft < minimumResposneAmplitude, aRight < minimumResposneAmplitude]):
                 continue
 
+            # Clip at 0 if the null response is negative
+            if aLeft > aRight:
+                aRight = np.clip(aRight, 0, np.inf)
+            else:
+                aLeft = np.clip(aLeft, 0, np.inf)
+
             #
             dsi = (aRight - aLeft) / (aRight + aLeft)
-            self.ns['dsi/saccade'][iUnit] = dsi
+            self.ns['dsi/saccade/fictive'][iUnit] = dsi
 
         return
 
@@ -272,6 +486,8 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
     def measureDirectionSelectivityForMovingBars(
         self,
         method='ratio',
+        minimumResponseAmplitude=5,
+        baselineWindow=(-0.5, 0),
         ):
         """
         Compute DSI for the moving bars stimulus
@@ -293,14 +509,18 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
             ])
             uniqueOrientations = np.unique(movingBarOrientations)
             uniqueOrientations.sort()
-
+            
             #
             for ukey in self.ukeys:
+
+                #
+
 
                 #
                 if ukey[0] != str(session.date):
                     continue
                 self.ukey = ukey
+                # unit = session.population.indexByCluster(ukey[-1])
 
                 #
                 vectors = np.full([uniqueOrientations.size, 2], np.nan)
@@ -309,7 +529,10 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                     #
                     trialIndices = np.where(movingBarOrientations == orientation)[0]
                     amplitudes = list()
+                    baselines = list()
                     for trialIndex in trialIndices:
+
+                        # Response
                         t1, t2 = movingBarTimestamps[trialIndex, :]
                         dt = t2 - t1
                         t, M = psth2(
@@ -319,10 +542,30 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                             binsize=None
                         )
                         fr = M.item() / dt
-                        amplitudes.append(fr)
+
+                        # Baseline
+                        t, M = psth2(
+                            np.array([t1]),
+                            self.unit.timestamps,
+                            window=baselineWindow,
+                            binsize=None,
+                        )
+                        bl = M.item() / np.diff(baselineWindow)
+
+                        #
+                        amplitudes.append(fr - bl)
+
+                    # t, M = psth2(
+                    #     movingBarTimestamps[trialIndices, 0],
+                    #     unit.timestamps,
+                    #     window=window,
+                    #     binsize=0.01,
+                    # )
+                    # fr = M.mean(0) / 0.01
+                    # fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[self.iUnit]
 
                     #
-                    vectors[rowIndex, 0] = np.mean(amplitudes)
+                    vectors[rowIndex, 0] = np.mean(amplitudes) / self.factor[self.iUnit]
                     vectors[rowIndex, 1] = np.deg2rad(orientation)
 
                 #
@@ -336,20 +579,96 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
                     # Compute direction selectivity index
                     a, b = vertices.sum(0) / vectors[:, 0].sum()
-                    dsi = np.sqrt(np.power(a, 2) + np.power(b, 2))
-                    # preferredDirection = np.arctan2(b, a) % (2 * np.pi)
+                    self.ns['dsi/bar'][self.iUnit] = np.sqrt(np.power(a, 2) + np.power(b, 2))
                 
                 #
                 elif method == 'ratio':
                     
-                    # TODO: Project vectors onto the horizontal axis
-                    # I think the formula is cos(theta) * (a.b / |b|)
-                    dsi = np.nan
+                    #
+                    aLeft = vectors[uniqueOrientations == 180, 0]
+                    aRight = vectors[uniqueOrientations == 0, 0]
 
-                #
-                self.nm['dsi/bar'][self.iUnit] = dsi
+                    #
+                    if aLeft < 0 and aRight > 0 or aLeft > 0 and aRight < 0:
+                        continue
+
+                    #
+                    if aLeft > aRight:
+                        aPref = aLeft
+                    else:
+                        aPref = aRight
+                    if aPref < minimumResponseAmplitude:
+                        continue
+
+                    #
+                    self.ns['dsi/bar'][self.iUnit] = (aRight - aLeft) / (aRight + aLeft)
 
         return
+
+    def scatterDirectionSelectivityByEvent(
+        self,
+        figsize=(6, 6),
+        ):
+        """
+        """
+
+        fig, axs = plt.subplots(ncols=4, nrows=4, sharex=True, sharey=True)
+        paths = (
+            'dsi/probe',
+            'dsi/saccade/real',
+            'dsi/saccade/fictive',
+            'dsi/bar'
+        )
+        
+        for i, p1 in enumerate(paths):
+            for j, p2 in enumerate(paths):
+                if i == j:
+                    continue
+                if i < j:
+                    continue
+                x = self.ns[p1]
+                y = self.ns[p2]
+                axs[i, j].scatter(
+                    x,
+                    y,
+                    color='k',
+                    s=3,
+                    edgecolor='none',
+                    alpha=0.3
+                )
+                m = np.logical_and(np.logical_not(np.isnan(x)), np.logical_not(np.isnan(y)))
+                f = np.poly1d(np.polyfit(x[m], y[m], deg=1))
+                x1, x2 = np.nanmin(x), np.nanmax(x)
+                axs[i, j].plot(
+                    [x1, x2],
+                    f([x1, x2]),
+                    color='r'
+                )
+        xlabels = (
+            r'$DSI_{Probe}$',
+            r'$DSI_{Saccade (Real)}$',
+            r'$DSI_{Saccade (Fictive)}$',
+            r'$DSI_{Bars}$'
+        )
+        ylabels = (
+            r'$DSI_{Probe}$',
+            r'$DSI_{Saccade (Real)}$',
+            r'$DSI_{Saccade (Fictive)}$',
+            r'$DSI_{Bars}$'
+        )
+        for j, ax in enumerate(axs[-1, :]):
+            ax.set_xlabel(xlabels[j])
+        for i, ax in enumerate(axs[:, 0]):
+            ax.set_ylabel(ylabels[i])
+        for ax in axs.flatten():
+            ax.set_xlim([-1, 1])
+            ax.set_ylim([-1, 1])
+            ax.set_aspect('equal')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, axs
 
     def plotModulationFrequencyByDirectionSelectivity(
         self,

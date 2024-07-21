@@ -729,7 +729,7 @@ class EyeVelocityDistribution(AnalysisBase):
                     samples['control'].append(v)
 
         #
-        for i, k in enumerate(['left', 'right']):
+        for i, k in enumerate(['left', 'control', 'right']):
             counts, edges = np.histogram(samples[k], range=vrange, bins=nBins)
             y = counts / counts.sum()
             x = edges[:-1] + ((edges[1] - edges[0]) / 2)
@@ -749,11 +749,11 @@ class EyeVelocityDistribution(AnalysisBase):
         y1, y2 = ax.get_ylim()
         # ax.fill_between([x - e, x + e], y1, y2, color='k', alpha=0.1, label='Non-saccadic')
         ax.set_ylim([0, y2])
-        ax.scatter(x, y2 / 2, color='k', marker='o', edgecolor='none')
-        ax.hlines(y2 / 2, x - e, x + e, color='k')
+        # ax.scatter(x, y2 / 2, color='k', marker='o', edgecolor='none')
+        # ax.hlines(y2 / 2, x - e, x + e, color='k')
 
         #
-        ax.legend()
+        # ax.legend()
         ax.set_xlabel('Velocity (pix/sec)')
         ax.set_ylabel('Probability')
         fig.set_figwidth(figsize[0])

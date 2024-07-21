@@ -13,6 +13,8 @@ from myphdlib.extensions.matplotlib import getIsoluminantRainbowColormap
 from matplotlib.gridspec import GridSpec
 from scipy.ndimage import gaussian_filter1d
 from matplotlib_venn import venn2
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from myphdlib.general.toolkit import ttest_1samp_with_weights
 
 def weighted_quantiles(values, weights, quantiles=0.5, interpolate=False):
 
@@ -336,7 +338,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         interpolationWindow=(-0.3, 0.45),
         nPointsForEvaluation=30,
         transform=False,
-        yrange=(-3, 3),
+        yrange=(-1, 1),
         figsize=(2.5, 3),
         **kwargs_
         ):
@@ -359,8 +361,6 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
 
         #
         responseAmplitudes = self.ns['params/pref/real/extra'][:, 0]
-        cmin, cmax = np.nanmin(responseAmplitudes), np.nanmax(responseAmplitudes)
-        cmap = lambda x: np.interp(x, [cmin, cmax], [0, 0.3]) ** 2 * 10
 
         #
         nUnits, nBins, nWindows = self.ns['ppths/pref/real/peri'].shape
@@ -421,34 +421,6 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             if sign == 1 and isEnhanced == False:
                 continue
 
-            # Suppressed units
-            # if sign == -1:
-            #     checks = np.vstack([
-            #         self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
-            #         self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] < 0
-            #     ]).all(0)
-
-            # Enhanced units
-            # elif sign == 1:
-            #     checks = np.vstack([
-            #         self.ns['p/pref/real'][iUnit, windowIndices, componentIndex] < 0.05,
-            #         self.ns['mi/pref/real'][iUnit, windowIndices, componentIndex] > 0
-            #    ]).all(0)
-
-            #
-            # else:
-            #    raise Exception('Sign must be -1 or 1')
-
-            #
-            # if np.any(checks):
-
-            # alpha = cmap(responseAmplitudes[iUnit]) * 0.7
-            # ax.plot(t, np.clip(y, *yrange), color=backgroundColor, alpha=alpha, lw=1)
-            
-            # if np.random.choice([True, False], size=1):
-            #    ax.scatter(t, np.clip(y, *yrange), color='k', alpha=0.05, s=5, marker='.', rasterized=True, clip_on=False)
-
-
             # Interpolate
             interpolated = np.interp(
                 np.linspace(*interpolationWindow, nPointsForEvaluation),
@@ -458,7 +430,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
                 right=np.nan
             )
             lines.append(interpolated)
-            weights.append(responseAmplitudes[iUnit])
+            weights.append(abs(responseAmplitudes[iUnit]))
 
         #
         lines = np.array(lines)
@@ -502,14 +474,29 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             alpha=0.15,
             edgecolor='none',
         )
-        xlim = ax.get_xlim()
         ax.vlines(0, *yrange, color='k', alpha=0.7, linestyle=':')
-        ax.hlines(0, *xlim, color='k', alpha=0.7, linestyle=':')
-        ax.set_xlim(xlim)
+        ax.hlines(0, *interpolationWindow, color='k', alpha=0.7, linestyle=':')
+        ax.set_xlim(interpolationWindow)
         ax.set_ylim(yrange)
 
         #
-        ax.set_xlabel('Time from saccade (sec)')
+        divider = make_axes_locatable(ax)
+        margin = divider.append_axes("bottom", size="5%", pad=0.05)
+        p = list()
+        for sample in lines.T:
+            mask = np.invert(np.isnan(sample))
+            t, p_ = ttest_1samp_with_weights(sample[mask], 0, weights=weights[mask])
+            p.append(p_)
+        p = np.array(p).reshape(1, -1)
+        X = np.linspace(*interpolationWindow, nPointsForEvaluation + 1)
+        Y = np.array([0, 1])
+        margin.pcolor(X, Y, p, cmap='binary_r', vmin=0, vmax=0.05)
+
+        #
+        ax.set_xticks([])
+        margin.set_xticks([interpolationWindow[0], 0, interpolationWindow[1]])
+        margin.set_xlim(interpolationWindow)
+        margin.set_xlabel('Time from saccade (sec)')
         ax.set_ylabel('Modulation index (MI)')
 
         #
@@ -517,7 +504,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, ax, subsets
+        return fig, ax, subsets, np.array(lines)
 
     def plotModulationOverlapBySign(
         self,

@@ -211,7 +211,8 @@ class Namespace():
 
             # Direction selectivity index
             'dsi/probe': None,
-            'dsi/saccade': None,
+            'dsi/saccade/real': None,
+            'dsi/saccade/fictive/': None,
             'dsi/bar': None,
 
             # Global variables
@@ -369,12 +370,15 @@ class AnalysisBase():
                     filled[mask] = data
 
                     #
-                    ds = stream.create_dataset(
-                        path,
-                        filled.shape,
-                        filled.dtype,
-                        data=filled,
-                    )
+                    try:
+                        ds = stream.create_dataset(
+                            path,
+                            filled.shape,
+                            filled.dtype,
+                            data=filled,
+                        )
+                    except:
+                        import pdb; pdb.set_trace()
 
                     #
                     metadata = None
