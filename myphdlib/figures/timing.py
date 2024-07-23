@@ -425,8 +425,8 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             #
             if all([sign == -1, allowOverlap == False, isEnhanced]):
                 continue
-            if all([sign ==  1, allowOverlap == False, isSuppressed]):
-                continue
+            # if all([sign ==  1, allowOverlap == False, isSuppressed]):
+            #     continue
 
             # Interpolate
             interpolated = np.interp(
