@@ -334,6 +334,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         componentIndex=0,
         windowIndices=(4, 5, 6),
         minimumResponseAmplitude=0,
+        allowOverlap=True,
         backgroundColor='k',
         interpolationWindow=(-0.3, 0.45),
         nPointsForEvaluation=30,
@@ -419,6 +420,12 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             if sign == -1 and isSuppressed == False:
                 continue
             if sign == 1 and isEnhanced == False:
+                continue
+
+            #
+            if all([sign == -1, allowOverlap == False, isEnhanced]):
+                continue
+            if all([sign ==  1, allowOverlap == False, isSuppressed]):
                 continue
 
             # Interpolate
