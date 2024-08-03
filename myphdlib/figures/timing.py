@@ -80,10 +80,12 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
     def plotHeatmap(
         self,
         modulation=-1,
-        nBins=7,
+        nBins=10,
+        windowIndices=(4, 5, 6),
+        contourThreshold=0.4,
         transform=True,
         intercepts=np.arange(-1, 1, 0.1),
-        figsize=(3, 3),
+        figsize=(3.2, 3),
         cmap='coolwarm',
         vrange=(-0.5, 0.5),
         xticks=np.array([0.05, 0.1, 0.2]),
@@ -98,17 +100,17 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         #
         if modulation == -1:
             include = np.dstack([
-                self.ns['mi/pref/real'][:, 4:7, 0] < 0,
-                self.ns['p/pref/real'][:, 4:7, 0] < 0.05
+                self.ns['mi/pref/real'][:, windowIndices, 0] < 0,
+                self.ns['p/pref/real'][:, windowIndices, 0] < 0.05
             ]).all(-1).any(1)
         elif modulation == 1:
             include = np.dstack([
-                self.ns['mi/pref/real'][:, 4:7, 0] > 0,
-                self.ns['p/pref/real'][:, 4:7, 0] < 0.05,
+                self.ns['mi/pref/real'][:, windowIndices, 0] > 0,
+                self.ns['p/pref/real'][:, windowIndices, 0] < 0.05,
             ]).all(-1).any(1)
         else:
             include = np.dstack([
-                self.ns['p/pref/real'][:, 4:7, 0] >= 0.05,
+                self.ns['p/pref/real'][:, windowIndices, 0] >= 0.05,
             ]).all(-1).any(1)
 
         # Extract peak latencies
@@ -184,14 +186,12 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         # yFit = np.array(yFit)
         
         if modulation == -1:
-            th = -0.4
-        elif modulation == 1:
-            th = 0.4
+            contourThreshold *= -1
         ax.contour(
             xTrans[:-1] + ((xTrans[1] - xTrans[0]) / 2),
             np.mean(self.windows, axis=1),
             Z,
-            levels=(th,),
+            levels=(contourThreshold,),
             colors='w',
             linestyles='-'
         )
@@ -217,7 +217,17 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, ax
+        #
+        xyz = list()
+        for iUnit in np.where(include)[0]:
+            x = peakLatencies[iUnit]
+            for iWindow in range(len(self.windows)):
+                y = self.windows[iWindow].mean()
+                z = self.ns['mi/pref/real'][iUnit, iWindow, 0]
+                xyz.append([x, y, z])
+        xyz = np.array(xyz)
+
+        return fig, ax, xyz
     
     def plotPerisaccadicResponsesForExamples(
         self,
@@ -492,12 +502,16 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         p = list()
         for sample in lines.T:
             mask = np.invert(np.isnan(sample))
-            t, p_ = ttest_1samp_with_weights(sample[mask], 0, weights=weights[mask])
+            # t, p_ = ttest_1samp_with_weights(sample[mask], 0, weights=weights[mask])
+            # t, p_ = stats.ttest_1samp(sample[mask], 0)
+            u, p_ = stats.wilcoxon(sample[mask])
             p.append(p_)
-        p = np.array(p).reshape(1, -1)
+        p = np.array(p)
         X = np.linspace(*interpolationWindow, nPointsForEvaluation + 1)
         Y = np.array([0, 1])
-        margin.pcolor(X, Y, p, cmap='binary_r', vmin=0, vmax=0.05)
+        p[p < 0.001] = 0
+        p[p >= 0.001] = 1
+        margin.pcolor(X, Y, p.reshape(1, -1), cmap='binary_r')
 
         #
         ax.set_xticks([])
