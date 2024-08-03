@@ -399,6 +399,18 @@ class ElectrodeMapFigure(AnalysisBase):
         contours, xp, fp = self.extractContours()
 
         #
+        centroids = list()
+        for contour in contours:
+            if contour is None:
+                centroids.append([np.nan, np.nan])
+                continue
+            centroidRaw = contour.mean(0).flatten()
+            cx = np.interp(centroidRaw[0], xp['x'], fp['x'])
+            cy = np.interp(centroidRaw[1], xp['y'], fp['y'])
+            centroids.append([cx, cy])
+        centroids = np.array(centroids)
+
+        #
         filepath = self.example.home.joinpath('ephys', 'sorting', 'manual', 'cluster_info.tsv')
         with open(filepath, 'r') as stream:
             lines = stream.readlines()
@@ -429,12 +441,12 @@ class ElectrodeMapFigure(AnalysisBase):
         def f(x):
             i = np.interp(
                 x,
-                [unitCoords[mask, 1].min(), unitCoords[mask, 1].max()],
+                [-90, 90],
                 [0, 256]
             )
             return cmap(int(round(i)))
 
-        for contour, (xc, yc) in zip(contours, unitCoords):
+        for iUnit, (contour, (xc, yc)) in enumerate(zip(contours, unitCoords)):
             if contour is None:
                 continue
             # ax.scatter(depth, np.random.uniform(low=-1, high=1, size=1), color='k')
@@ -468,8 +480,8 @@ class ElectrodeMapFigure(AnalysisBase):
             xy[:, 1] += (xc * widthScaling)
 
             #
-            ax.plot(xy[:, 0], xy[:, 1], color=f(yc), alpha=0.6, lw=1)
-            ax.scatter(yc * depthScaling, xc * widthScaling, color=f(yc), alpha=0.6, s=7, edgecolor='none')
+            ax.plot(xy[:, 0], xy[:, 1], color=f(centroids[iUnit, 0]), alpha=0.6, lw=1)
+            ax.scatter(yc * depthScaling, xc * widthScaling, color=f(centroids[iUnit, 0]), alpha=0.6, s=7, edgecolor='none')
 
         #
         ax.vlines([0, 3800 * depthScaling], -40 * widthScaling, 40 * widthScaling, color='k', linestyle=':', lw=0.8)
@@ -508,6 +520,18 @@ class ExperimentSummaryFigure(ElectrodeMapFigure):
         contours, xp, fp = self.extractContours()
 
         #
+        centroids = list()
+        for contour in contours:
+            if contour is None:
+                centroids.append([np.nan, np.nan])
+                continue
+            centroidRaw = contour.mean(0).flatten()
+            cx = np.interp(centroidRaw[0], xp['x'], fp['x'])
+            cy = np.interp(centroidRaw[1], xp['y'], fp['y'])
+            centroids.append([cx, cy])
+        centroids = np.array(centroids)
+
+        #
         filepath = self.example.home.joinpath('ephys', 'sorting', 'manual', 'cluster_info.tsv')
         with open(filepath, 'r') as stream:
             lines = stream.readlines()
@@ -537,7 +561,7 @@ class ExperimentSummaryFigure(ElectrodeMapFigure):
         def f(x):
             i = np.interp(
                 x,
-                [unitCoords[mask, 1].min(), unitCoords[mask, 1].max()],
+                [-90, 90],
                 [0, 256]
             )
             return cmap(int(round(i)))
@@ -560,7 +584,7 @@ class ExperimentSummaryFigure(ElectrodeMapFigure):
                 spikeTimestamps,
                 unitCounter - 0.45,
                 unitCounter + 0.45,
-                color=f(unitCoords[iUnit, 1]),
+                color=f(centroids[iUnit, 0]),
                 linewidth=0.7,
                 alpha=0.9,
                 rasterized=True
@@ -571,7 +595,7 @@ class ExperimentSummaryFigure(ElectrodeMapFigure):
 
     def plot(
         self,
-        blockIndex=0,
+        blockIndex=24,
         window=(-1, 15),
         figsize=(4.5, 3.5),
         cmap=None
