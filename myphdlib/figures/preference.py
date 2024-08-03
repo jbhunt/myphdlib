@@ -48,16 +48,182 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
         )
 
         return
-
-    def measureDirectionSelectivityForProbes(
+    
+    def measureDirectionSelectivityForPerisaccadicProbes(
         self,
         method='ratio',
         minimumResponseAmplitude=5,
+        perisaccadicWindow=(-0.5, 0.5),
         denovo=True,
         responseWindow=(0, 0.5),
         baselineWindow=(-0.2, 0),
         ):
         """
+        """
+
+#
+        window = (
+            np.min([responseWindow, baselineWindow]),
+            np.max([responseWindow, baselineWindow])
+        )
+        tProbe, _ = psth2(
+            np.array([0]),
+            np.array([0]),
+            window=window,
+            binsize=0.01,
+        )
+        binIndicesForResponse = np.where(np.logical_and(
+            tProbe >= responseWindow[0],
+            tProbe <  responseWindow[1]
+        ))[0]
+        binIndicesForBaseline = np.where(np.logical_and(
+            tProbe >= baselineWindow[0],
+            tProbe <  baselineWindow[1]
+        ))[0]
+
+        #
+        dsi = np.full([len(self.ukeys), len(self.windows)], np.nan)
+        nUnits = len(self.ukeys)
+
+        #
+        for iUnit in range(len(self.ukeys)):
+
+            #
+            end = '\r' if iUnit + 1 != nUnits else '\n'
+            print(f'Working on unit {iUnit + 1} out of {nUnits} ...', end=end)
+
+            #
+            session = self._getSessionFromUnitKey(self.ukeys[iUnit])
+            date, animal, cluster = self.ukeys[iUnit]
+            unit = session.population.indexByCluster(cluster)
+
+            #
+            for windowIndex in range(len(self.windows)):
+
+                #
+                perisaccadicWindow = self.windows[windowIndex]
+
+                #
+                if denovo:
+
+                    #
+                    trialIndices = np.where(np.logical_and(
+                        session.gratingMotionDuringProbes == -1,
+                        np.logical_and(
+                            session.probeLatencies >= perisaccadicWindow[0],
+                            session.probeLatencies <= perisaccadicWindow[1]
+                        )
+                    ))[0]
+
+                    #
+                    t, fr = unit.kde(
+                        session.probeTimestamps[trialIndices],
+                        responseWindow=window,
+                        binsize=0.01,
+                        sigma=0.01,
+                    )
+                    fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
+                    aLeft = np.max(np.abs(fr))
+
+                    #
+                    trialIndices = np.where(np.logical_and(
+                        session.gratingMotionDuringProbes == 1,
+                        np.logical_or(
+                            session.probeLatencies >= perisaccadicWindow[0],
+                            session.probeLatencies <= perisaccadicWindow[1]
+                        )
+                    ))[0]
+
+                    #
+                    t, fr = unit.kde(
+                        session.probeTimestamps[trialIndices],
+                        responseWindow=window,
+                        binsize=0.01,
+                        sigma=0.01,
+                    )
+                    fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
+                    aRight = np.max(np.abs(fr))
+
+                    #
+                    if aLeft > aRight:
+                        aPref = aLeft
+                        aNull = aRight
+                    else:
+                        aPref = aRight
+                        aNull = aLeft
+
+                else:
+                    # Get amplitude of largest component of preferred PPTH
+                    paramsPref = self.ns['params/pref/real/peri'][iUnit, windowIndex]
+                    paramsPref = np.delete(paramsPref, np.isnan(paramsPref))
+                    A, B, C = np.split(paramsPref[:-1], 3)
+                    aPref = A[0]
+                    lPref = B[0]
+
+                    # Get amplitude of corresponding component from the null PPTH
+                    paramsNull = self.ns['params/null/real/peri'][iUnit, windowIndex]
+                    paramsNull = np.delete(paramsNull, np.isnan(paramsNull))
+                    A, B, C = np.split(paramsNull[:-1], 3)
+                    iComp = np.argmin(np.abs(B - lPref))
+                    aNull = A[iComp]
+
+                    #
+                    if self.preference[iUnit] == -1:
+                        aLeft = aPref
+                        aRight = aNull
+                    else:
+                        aLeft = aNull
+                        aRight = aPref
+
+                #
+                aNull = np.clip(aNull, 0, np.inf)
+
+                #
+                if abs(aPref) < minimumResponseAmplitude:
+                    continue
+
+                # Ratio of difference and sum
+                if method == 'ratio':
+                    dsi = (aRight - aLeft) / (aRight + aLeft)
+
+
+                # Normalized vector sum
+                elif method == 'vector-sum':
+                    vectors = np.full([2, 2], np.nan)
+                    vectors[:, 0] = np.array([aPref, aNull]).T
+                    vectors[:, 1] = np.array([
+                        np.pi if self.preference[iUnit] == -1 else 0,
+                        0 if self.preference[iUnit] == -1 else np.pi
+                    ]).T
+
+                    # Compute the coordinates of the polar plot vertices
+                    vertices = np.vstack([
+                        vectors[:, 0] * np.cos(vectors[:, 1]),
+                        vectors[:, 0] * np.sin(vectors[:, 1])
+                    ]).T
+
+                    # Compute direction selectivity index
+                    a, b = vertices.sum(0) / vectors[:, 0].sum()
+                    dsi_ = np.sqrt(np.power(a, 2) + np.power(b, 2))
+
+                    #
+                    dsi[iUnit, windowIndex] = dsi_
+
+        return dsi
+
+    def measureDirectionSelectivityForExtrasaccadicProbes(
+        self,
+        method='ratio',
+        minimumResponseAmplitude=5,
+        perisaccadicWindow=(-0.5, 0.5),
+        denovo=True,
+        responseWindow=(0, 0.5),
+        baselineWindow=(-0.2, 0),
+        ):
+        """
+        Notes
+        -----
+        Extrasaccadic responses can be selected by setting the windowIndex to None 
         """
 
         #
@@ -100,8 +266,17 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
             if denovo:
 
                 #
+                trialIndices = np.where(np.logical_and(
+                    session.gratingMotionDuringProbes == -1,
+                    np.logical_or(
+                        session.probeLatencies < perisaccadicWindow[0],
+                        session.probeLatencies > perisaccadicWindow[1]
+                    )
+                ))[0]
+
+                #
                 t, fr = unit.kde(
-                    session.probeTimestamps[session.gratingMotionDuringProbes == -1],
+                    session.probeTimestamps[trialIndices],
                     responseWindow=window,
                     binsize=0.01,
                     sigma=0.01,
@@ -110,8 +285,17 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                 aLeft = np.max(np.abs(fr))
 
                 #
+                trialIndices = np.where(np.logical_and(
+                    session.gratingMotionDuringProbes == 1,
+                    np.logical_or(
+                        session.probeLatencies < perisaccadicWindow[0],
+                        session.probeLatencies > perisaccadicWindow[1]
+                    )
+                ))[0]
+
+                #
                 t, fr = unit.kde(
-                    session.probeTimestamps[session.gratingMotionDuringProbes == 1],
+                    session.probeTimestamps[trialIndices],
                     responseWindow=window,
                     binsize=0.01,
                     sigma=0.01,
