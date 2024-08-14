@@ -392,9 +392,9 @@ class Dreadds2Session(
         """
         """
 
-        if self.cohort in [1, 11]:
+        if self.cohort in [1, 11, 3]:
             file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.ProbeA-AP', 'TTL', 'sample_numbers.npy')
-        elif self.cohort == 2:
+        elif self.cohort in [2, 31]:
             file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.0', 'TTL_1', 'timestamps.npy')
         if file.exists() == False: 
             raise Exception('Could not locate ephys event timestamps file')
