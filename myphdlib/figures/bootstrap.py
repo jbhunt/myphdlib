@@ -5,9 +5,7 @@ from scipy.signal import find_peaks as findPeaks
 from matplotlib.colors import LinearSegmentedColormap
 from myphdlib.general.toolkit import psth2
 from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
-from myphdlib.figures.analysis import GaussianMixturesModel
-import seaborn as sns
-import pandas as pd
+from myphdlib.figures.analysis import GaussianMixturesModel, convertGratingMotionToSaccadeDirection
 from itertools import product
 from scipy.stats import spearmanr
 from multiprocessing import Pool, cpu_count
@@ -39,7 +37,7 @@ def _generateNullSampleForSingleUnit(
 
     #
     if np.isnan(params1).all():
-        return sample
+        return iUnit, sample
 
     #
     abcd = np.delete(params1, np.isnan(params1))
@@ -111,11 +109,11 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
         super().__init__(**kwargs)
 
-        # Example neurons
+        #
         self.examples = (
-            ('2023-07-12', 'mlati9', 710),
-            ('2023-07-20', 'mlati9', 337),
-            ('2023-05-26', 'mlati7', 336)
+            ('2023-07-05', 'mlati9', 288), # Enhanced
+            ('2023-07-20', 'mlati9', 337), # No modulation
+            ('2023-07-07', 'mlati9', 206), # Suppressed
         )
 
         return
@@ -241,7 +239,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         nRuns=None,
         maximumAmplitudeShift=200,
         saccadeType='real',
-        parallelize=False,
+        parallelize=True,
         nProcesses=30,
         chunksize=1,
         maxfevs=100,
@@ -351,172 +349,494 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                         self.ns[f'p/{probeDirection}/{saccadeType}'][self.iUnit, iWindow, iComp] = p
 
         return
-
-    def plotModulationDistributionsWithHistogram(
+    
+    def histModulationIndices(
         self,
-        alpha=0.05,
-        windowIndex=5,
+        targetIndex=5,
         componentIndex=0,
-        figsize=(3, 2),
-        colorspace=('k', 'k', 'w'),
-        minimumResponseAmplitude=0,
-        nBins=20,
-        labels=(1, 2, 3, -1),
+        minimumProbeResponseAmplitude=0,
+        alpha=0.01,
+        nbins=30,
+        cmap='coolwarm',
         xrange=(-3, 3),
+        xticks=(-3, 0, 3),
+        figsize=(7, 1.5),
         ):
         """
         """
 
         #
-        if minimumResponseAmplitude is None:
-            minimumResponseAmplitude = 0
+        fig, axs = plt.subplots(ncols=len(self.windows), sharex=True)
 
         #
-        cmap = LinearSegmentedColormap.from_list('mycmap', colorspace, N=3)
-        fig, ax = plt.subplots()
+        for windowIndex, ax in zip(np.arange(len(self.windows)), axs):
+            
+            # Collect the subsets of unit
+            samples = list()
+            include = self.ns['params/pref/real/extra'][:, 0] >= minimumProbeResponseAmplitude
+            for sign in (-1, 1, 0):
+                sample = list()
+                for iUnit in range(len(self.ukeys)):
+                    if include[iUnit] == False:
+                        continue
+                    mi = np.clip(self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex], *xrange)
+                    p = self.ns['p/pref/real'][iUnit, windowIndex, componentIndex]
+                    if sign == -1:
+                        if mi < 0 and p < alpha:
+                            sample.append(mi)
+                    elif sign == 0:
+                        if p >= 0.05:
+                            sample.append(mi)
+                    elif sign == 1:
+                        if mi > 0 and p < alpha:
+                            sample.append(mi)
+                samples.append(sample)
 
-        #
-        mi = self.ns[f'mi/pref/real']
-        paramsExtra = self.ns[f'params/pref/real/extra']
-        pvalues = self.ns[f'p/pref/real']
-        polarity = np.array([
-            -1 if mi[i, windowIndex, componentIndex] < 0 else 1
-                for i in range(len(self.ukeys))
-        ])
-        polarity[np.isnan(mi[:, windowIndex, componentIndex])]
-        samples = ([], [], [])
-        for i, l in enumerate(labels):
-            for sign in [-1, 1]:
-                mask = np.vstack([
-                    polarity == sign,
-                    self.labels == l,
-                    np.abs(paramsExtra[:, 0]) >= minimumResponseAmplitude,
-                ]).all(0)
-                for dr, p, iUnit in zip(mi[mask, windowIndex, componentIndex], pvalues[mask, windowIndex, componentIndex], np.arange(len(self.ukeys))[mask]):
-                    if l == -1:
-                        dr *= -1
-                    if p < alpha:
-                        if sign == -1:
-                            samples[0].append(dr)
-                        else:
-                            samples[1].append(dr)
-                    else:
-                        samples[2].append(dr)
-
-        #
-        xmin, xmax = xrange
-        ax.hist(
-            [np.clip(sample, xmin, xmax) for sample in samples],
-            range=(xmin, xmax),
-            bins=nBins,
-            histtype='barstacked',
-            color=cmap(np.arange(3)),
-        )
-        binCounts_, binEdges, patches = ax.hist(
-            [np.clip(sample, xmin, xmax) for sample in samples],
-            range=(xmin, xmax),
-            bins=nBins,
-            histtype='barstacked',
-            facecolor='none',
-            edgecolor='k',
-        )
-        binCounts = binCounts_.max(0)
-        binCenters = binEdges[:-1] + ((binEdges[1] - binEdges[0]) / 2)
-        leftEdges = binEdges[:-1]
-        rightEdges = binEdges[1:]
-
-        #
-        for ukey in self.examples:
-            iUnit = self._indexUnitKey(ukey)
-            if iUnit is None:
-                continue
-            dr = mi[iUnit, windowIndex, componentIndex]
-            if np.isnan(dr).item():
-                continue
-            binIndex = np.where(np.logical_and(
-                dr >= leftEdges,
-                dr <  rightEdges
-            ))[0].item()
-            ax.scatter(
-                binCenters[binIndex],
-                binCounts[binIndex] + 10,
-                marker='v',
-                color='k',
-                s=20
+            #
+            f = plt.get_cmap(cmap, 3)
+            # binCounts_, binEdges, patchList = ax.hist(
+            #     samples,
+            #     bins=nbins,
+            #     histtype='barstacked',
+            #     color=[f(i) for i in (0, 2, 1)],
+            #     range=xrange
+            # )
+            binCounts_, binEdges = np.histogram(
+                np.concatenate(samples),
+                bins=nbins,
+                range=xrange
             )
 
+            ax.hist(
+                np.concatenate(samples),
+                bins=nbins,
+                color='0.8',
+                range=xrange,
+                histtype='stepfilled',
+                edgecolor='none'
+            )
+            ax.hist(
+                samples[0],
+                bins=nbins,
+                color=f(0),
+                range=xrange,
+                histtype='stepfilled',
+                edgecolor='none'
+            )
+            ax.hist(
+                samples[1],
+                bins=nbins,
+                color=f(2),
+                range=xrange,
+                histtype='stepfilled',
+                edgecolor='none'
+            )
+
+            #
+            if windowIndex != 0:
+                ax.set_yticks([])
+                ax.set_xticklabels([])
+                ax.spines['left'].set_visible(False)
+            else:
+                ax.set_yticks([0, 200])
+            for sp in ('top', 'right'):
+                ax.spines[sp].set_visible(False)
+            if xticks is not None:
+                ax.set_xticks(xticks)
+            ax.set_xlim(*xrange)
+
+            #
+            if windowIndex != targetIndex:
+                continue
+
+            #
+            binCenters = binEdges[:-1] + ((binEdges[1] - binEdges[0]) / 2)
+            leftEdges = binEdges[:-1]
+            rightEdges = binEdges[1:]
+
+            #
+            for ukey in self.examples:
+                iUnit = self._indexUnitKey(ukey)
+                if iUnit is None:
+                    continue
+                mi = np.clip(self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex], *xrange)
+                if np.isnan(mi):
+                    continue
+                binIndex = int(np.where(np.logical_and(
+                    mi >= leftEdges,
+                    mi <  rightEdges
+                ))[0].item())
+                ax.scatter(
+                    binCenters[binIndex],
+                    binCounts_[binIndex] + 10,
+                    marker='v',
+                    color='k',
+                    s=20
+                )
+
         #
-        ax.set_xlabel(f'Modulation index (MI)')
+        ylim = [np.inf, -np.inf]
+        for ax in axs:
+            y1, y2 = ax.get_ylim()
+            if y1 < ylim[0]:
+                ylim[0] = y1
+            if y2 > ylim[1]:
+                ylim[1] = y2
+        for ax in axs:
+            ax.set_ylim(ylim)
+
+        # axs[0].set_ylabel('# of units')
+        # axs[0].set_xlabel(f'Modulation index (MI)')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+        fig.subplots_adjust(wspace=0.1)
+
+        return fig, ax
+
+    def plotFractionModulatedByProbeLatency(
+        self,
+        alpha=0.05,
+        componentIndex=0,
+        minimumProbeResponseAmplitude=0,
+        xrange=(-3, 3),
+        yrange=(0, 1),
+        xlim=(-0.5, 0.5),
+        cmap='coolwarm',
+        figsize=(2, 3),
+        ):
+        """
+        """
+
+        #
+        y = np.full([3, len(self.windows)], np.nan)
+        table = np.full([3, len(self.windows)], np.nan)
+        f = plt.get_cmap(cmap, 3)
+        include = self.ns['params/pref/real/extra'][:, 0] >= minimumProbeResponseAmplitude
+        nUnits = include.sum()
+
+        #
+        for windowIndex in np.arange(len(self.windows)):
+            samples = list()
+            for sign in (-1, 0, 1):
+                sample = list()
+                for iUnit in np.where(include)[0]:
+                    mi = np.clip(self.ns['mi/pref/real'][iUnit, windowIndex, componentIndex], *xrange)
+                    p = self.ns['p/pref/real'][iUnit, windowIndex, componentIndex]
+                    if sign == -1:
+                        if mi < 0 and p < alpha:
+                            sample.append(mi)
+                    elif sign == 0:
+                        if p >= alpha:
+                            sample.append(mi)
+                    elif sign == 1:
+                        if mi > 0 and p < alpha:
+                            sample.append(mi)
+                samples.append(sample)
+            for i, sample in zip(range(3), samples):
+                freq = len(sample) / nUnits
+                y[i, windowIndex] = freq
+                table[i, windowIndex] = len(sample)
+        
+        #
+        fig, ax = plt.subplots()
+        t = self.windows.mean(1)
+        for i in range(3):
+            # ax.plot(t, y[i, :], color=f(i))
+            if i == 0:
+                bottoms = np.zeros(t.size)
+            else:
+                bottoms = y[:i, :].sum(0)
+            ax.bar(t, y[i, :], bottom=bottoms, color=f(i), width=0.1)
+        ax.set_xlim(xlim)
+        ax.set_ylim(yrange)
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, ax
+        return fig, ax, table
+    
+    def histModulationIndexByUnitType(
+        self,
+        responseWindow=(-0.2, 0.5),
+        baselineWindow=(-1, -0.5),
+        windowIndex=5,
+        componentIndex=0,
+        minmumResponseAmplitude=3,
+        figsize=(3, 5)
+        ):
+        """
+        """
+
+        #
+        fig, ax = plt.subplots()
+        cmap = plt.get_cmap('coolwarm', 3)
+
+        # Type units based on the saccade response, 0 = negative, 1 = no response, 2 = positive
+        nUnits = len(self.ukeys)
+        saccadeResponseTypes = np.full(nUnits, np.nan)
+        binIndicesForResponse = np.logical_and(
+            self.tSaccade >= responseWindow[0],
+            self.tSaccade <= responseWindow[1]
+        )
+        binIndicesForBaseline = np.logical_and(
+            self.tSaccade >= baselineWindow[0],
+            self.tSaccade <= baselineWindow[1]
+        )
+        for iUnit in range(nUnits):
+            session = self._getSessionFromUnitKey(self.ukeys[iUnit])
+            saccadeDirection = convertGratingMotionToSaccadeDirection(
+                self.preference[iUnit],
+                session.eye,
+            )
+            fr = self.ns[f'psths/{saccadeDirection}/real'][iUnit, binIndicesForResponse]
+            bl = self.ns[f'psths/{saccadeDirection}/real'][iUnit, binIndicesForBaseline].mean()
+            y = fr - bl
+            tv = y[np.argmax(np.abs(y))]
+            if tv <= -minmumResponseAmplitude:
+                label = -1
+            elif tv >= minmumResponseAmplitude:
+                label = 1
+            else:
+                label = 0
+            saccadeResponseTypes[iUnit] = label        
+
+        # Type units based on the response to the probe, 0 = negative, 1 = positive
+        probeResponseTypes = np.full(nUnits, -1)
+        probeResponseTypes[self.labels != -1] = 1
+
+        # Type units based on unique combinations of probe and saccade responses
+        uniqueResponseCombos = np.unique(np.vstack([
+            probeResponseTypes,
+            saccadeResponseTypes
+        ]).T, axis=0)
+        mi = self.ns['mi/pref/real'][:, windowIndex, componentIndex]
+        p = self.ns['p/pref/real'][:, windowIndex, componentIndex]
+        for x, (l1, l2) in enumerate(uniqueResponseCombos):
+            unitIndices = np.where(np.logical_and(
+                probeResponseTypes == l1,
+                saccadeResponseTypes == l2
+            ))[0]
+            N = np.full(3, np.nan)
+            N[0] = np.sum(np.logical_and(
+                mi[unitIndices] < 0,
+                p[unitIndices] < 0.05
+            ))
+            N[1] = np.sum(p[unitIndices] >= 0.05)
+            N[2] = np.sum(np.logical_and(
+                mi[unitIndices] > 0,
+                mi[unitIndices] < 0.05
+            ))
+            N /= N.sum()
+            ax.bar(
+                x,
+                N,
+                width=0.8,
+                color=[cmap(i) for i in range(3)],
+                bottom=np.concatenate([[0], np.cumsum(N)[:-1]])
+            )
+
+        #
+        ax.set_xticks(np.arange(uniqueResponseCombos.shape[0]))
+        ax.set_xticklabels(uniqueResponseCombos, rotation=45)
+        ax.set_ylim([0, 1.02])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, (ax,)
 
     def plotComplexityByModulation(
         self,
         iComp=0,
-        iWindow=5,
-        minimumResponseAmplitude=2,
-        binsize=None,
-        xrange=(-2, 2),
-        a=0.05,
-        figsize=(4, 2.5),
+        windowIndices=(5, 3),
+        minimumResponseAmplitude=0,
+        yrange=3,
+        alpha=0.05,
+        cmap='coolwarm',
+        figsize=(4, 2),
         ):
         """
         """
 
-        fig, ax = plt.subplots()
-        m = np.logical_and(
-            self.params[:, 0] >=  minimumResponseAmplitude,
-            self.pvalues[:, iWindow, iComp] < a
-        )
-        if binsize is None:
-            x = self.k.flatten()[m]
-            y = self.modulation[m, iComp, iWindow] / self.params[m, iComp]
-            ax.scatter(y, x)
-        else:
-            leftEdges = np.around(np.arange(xrange[0], xrange[1], binsize), 2)
-            rightEdges = np.around(leftEdges + binsize, 2)
-            binCenters = np.mean(np.vstack([leftEdges, rightEdges]).T, axis=1)
-            y = list()
-            x = list()
-            iterable = zip(
-                self.modulation[m, iComp, iWindow] / self.params[m, iComp],
-                self.k.flatten()[m]
+        fig, axs = plt.subplots(ncols=2, sharex=True)
+        f = plt.get_cmap(cmap, 2)
+        k = list()
+        for iUnit in range(len(self.ukeys)):
+            params = self.ns['params/pref/real/extra'][iUnit]
+            abcd = np.delete(params, np.isnan(params))
+            A, B, C = np.split(abcd[:-1], 3)
+            k.append(A.size)
+        k = np.array(k)
+        for i, (sign, color, iWin) in enumerate(zip([-1, 1], [f(0), f(1)], windowIndices)):
+            if sign == -1:
+                mask = np.vstack([
+                    self.ns['params/pref/real/extra'][:, 0] >=  minimumResponseAmplitude,
+                    self.ns['mi/pref/real'][:, iWin, iComp] < 0,
+                    self.ns['p/pref/real'][:, iWin, iComp] < alpha
+                ]).all(0)
+                ylim = (0, -yrange)
+            else:
+                mask = np.vstack([
+                    self.ns['params/pref/real/extra'][:, 0] >=  minimumResponseAmplitude,
+                    self.ns['mi/pref/real'][:, iWin, iComp] > 0,
+                    self.ns['p/pref/real'][:, iWin, iComp] < alpha
+                ]).all(0)
+                ylim = (0, yrange)
+            x = k[mask] + \
+                np.random.normal(loc=0, scale=0.1, size=mask.sum())
+            y = np.clip(self.ns['mi/pref/real'][mask, iWin, iComp], -yrange, yrange)
+            axs[i].scatter(x, y, s=6, color=color, alpha=0.5, edgecolor='none', clip_on=False, rasterized=True)
+            axs[i].set_ylim(ylim)
+
+            #
+            g = np.poly1d(np.polyfit(x, y, deg=1))
+            axs[i].plot(
+                np.linspace(x.min(), x.max(), 2),
+                g(np.linspace(x.min(), x.max(), 2)),
+                color='k'
             )
-            for i, (dr, k) in enumerate(iterable):
-                if np.isnan(dr):
-                    y.append(np.nan)
-                    x.append(np.nan)
-                    continue
-                if np.clip(dr, *xrange) == -1:
-                    y.append(binCenters[0])
-                else:
-                    binIndex = np.where(np.logical_and(
-                        np.clip(dr, *xrange) > leftEdges,
-                        np.clip(dr, *xrange) <= rightEdges
-                    ))[0].item()
-                    y.append(binCenters[binIndex])
-                x.append(k)
-            
-            x = np.array(x)
-            y = np.array(y)
-            for k, dr in product(np.unique(x), np.unique(y)):
-                n = np.sum(np.logical_and(x == k, y == dr))
-                ax.scatter(dr, k, s=4 * n, color='k')
+
+            #
             r, p = spearmanr(y, x)
+            print(r, p)
 
         #
-        for sp in ('top', 'right'):
-            ax.spines[sp].set_visible(False)
-        ax.set_yticks(np.arange(5) + 1)
-        ax.set_xticks([-1, 0, 1])
-        ax.set_ylim([0.5, 5.5])
-        ax.set_ylabel('# of components')
-        ax.set_xlabel(r'$\Delta R$')
+        for ax in axs:
+            for sp in ('top', 'right'):
+                ax.spines[sp].set_visible(False)
+            ax.set_xticks(np.arange(5) + 1)
+            ax.set_xlabel('# of components')
+        axs[0].set_ylabel(r'$\Delta R$')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, ax, r, p
+        return fig, axs
+
+    def plotAveragePerisaccadicVisualResponse(
+        self,
+        sign=-1,
+        windowIndices=(4, 5, 6),
+        responseWindow=(-0.25, 0.25),
+        minimumResponseAmplitude=0,
+        figsize=(5, 3)
+        ):
+        """
+        """
+
+        #
+        if windowIndices is None:
+            windowIndices = np.arange(self.windows.shape[0])
+
+        #
+        fig, axs = plt.subplots(ncols=len(windowIndices) + 1)
+        axs = np.atleast_1d(axs)
+
+        #
+        if sign == -1:
+            suppressed = np.dstack([
+                self.ns['mi/pref/real'][:, windowIndices, 0] < 0,
+                self.ns['p/pref/real'][:, windowIndices, 0] < 0.05,
+            ]).all(-1).any(1)
+            include = np.vstack([
+                suppressed,
+                self.ns['params/pref/real/extra'][:, 0] >=  minimumResponseAmplitude
+            ]).all(0)
+        elif sign == 1:
+            enhanced = np.dstack([
+                self.ns['mi/pref/real'][:, windowIndices, 0] > 0,
+                self.ns['p/pref/real'][:, windowIndices, 0] < 0.05,
+            ]).all(-1).any(1)
+            include = np.vstack([
+                enhanced,
+                self.ns['params/pref/real/extra'][:, 0] >=  minimumResponseAmplitude
+            ]).all(0)
+        else:
+            raise Exception('Sign must be +1 or -1')
+
+        #
+        for i, (ax, windowIndex) in enumerate(zip(axs[1:], windowIndices)):
+            R = {
+                'peri': list(),
+                'extra': list()
+            }
+            for iUnit, flag in enumerate(include):
+                if flag == False:
+                    continue
+
+                #
+                params = self.ns['params/pref/real/extra'][iUnit]
+                abcd = np.delete(params, np.isnan(params))
+                A, B, C = np.split(abcd[:-1], 3)
+                tCentered = np.linspace(*responseWindow, 100) + B[0]
+                yExtra = np.interp(
+                    tCentered,
+                    self.tProbe,
+                    self.ns['ppths/pref/real/extra'][iUnit]
+                )
+                scalingFactor = np.max(np.abs(yExtra))
+                yExtra = yExtra / scalingFactor
+
+                #
+                params = self.ns['params/pref/real/peri'][iUnit, windowIndex, 0]
+                abcd = np.delete(params, np.isnan(params))
+                A, B, C = np.split(abcd[:-1], 3)
+                tCentered = np.linspace(*responseWindow, 100) + B[0]
+                yPeri = np.interp(
+                    tCentered,
+                    self.tProbe,
+                    self.ns['ppths/pref/real/peri'][iUnit, :, windowIndex] / scalingFactor
+                )
+                R['peri'].append(yPeri)
+                R['extra'].append(yExtra)
+
+            # Cast to numpy array
+            for k in R.keys():
+                R[k] = np.array(R[k])
+
+            #
+            tCentered = np.linspace(*responseWindow, 100)
+            y = np.nanmean(R['peri'], axis=0)
+            e = 2.33 * np.std(R['peri'], axis=0) / np.sqrt(R['peri'].shape[0])
+            # e = np.std(R['peri'], axis=0)
+            ax.plot(tCentered, y, color='r')
+            ax.fill_between(tCentered, y + e, y - e, color='r', alpha=0.15, edgecolor='none')
+
+            #
+            if i == 0:
+                y = np.nanmean(R['extra'], axis=0)
+                e = 2.33 * np.std(R['extra'], axis=0) / np.sqrt(R['extra'].shape[0])
+                # e = np.std(R['extra'], axis=0)
+                axs[0].plot(tCentered, y, color='k')
+                axs[0].fill_between(tCentered, y + e, y - e, color='k', alpha=0.15, edgecolor='none')
+
+        #
+        ylim = [np.inf, -np.inf]
+        for ax in axs:
+            y1, y2 = ax.get_ylim()
+            if y1 < ylim[0]:
+                ylim[0] = y1
+            if y2 > ylim[1]:
+                ylim[1] = y2
+        for ax in axs:
+            ax.set_ylim(ylim)
+            ax.hlines(1, *responseWindow, color='k', linestyle=':')
+            ax.set_xlim(responseWindow)
+            ax.set_xticks([responseWindow[0], 0, responseWindow[1]])
+            ax.set_xticklabels(ax.get_xticks(), rotation=45)
+
+        #
+        axs[0].set_ylabel('FR (normed)')
+        if len(axs) > 1:
+            for ax in axs[1:]:
+                ax.set_yticklabels([])
+
+        #
+        fig.supxlabel('Time from response peak (sec)', fontsize=10)
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, axs
+    

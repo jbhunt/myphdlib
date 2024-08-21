@@ -4,6 +4,48 @@ from myphdlib.interface.factory import SessionFactory
 from scipy.optimize import curve_fit as fitCurve
 import h5py
 
+def convertGratingMotionToSaccadeDirection(
+    gratingMotion=-1,
+    referenceEye='left'
+    ):
+    """
+    """
+
+    saccadeDirection = None
+    if referenceEye == 'left':
+        if gratingMotion == -1:
+            saccadeDirection = 'nasal'
+        else:
+            saccadeDirection = 'temporal'
+    elif referenceEye == 'right':
+        if gratingMotion == -1:
+            saccadeDirection = 'temporal'
+        else:
+            saccadeDirection = 'nasal'
+
+    return saccadeDirection
+
+def convertSaccadeDirectionToGratingMotion(
+    saccadeDirection,
+    referenceEye='left'
+    ):
+    """
+    """
+
+    gratingMotion = None
+    if referenceEye == 'left':
+        if saccadeDirection == 'nasal':
+            gratingMotion = -1
+        else:
+            gratingMotion = +1
+    else:
+        if saccadeDirection == 'nasal':
+            gratingMotion = +1
+        else:
+            gratingMotion = -1
+
+    return gratingMotion
+
 def g(x, a, mu, sigma, d):
     """
     """
@@ -167,6 +209,12 @@ class Namespace():
             'p/null/real': None,
             'p/null/fictive': None,
 
+            # Direction selectivity index
+            'dsi/probe': None,
+            'dsi/saccade/real': None,
+            'dsi/saccade/fictive/': None,
+            'dsi/bar': None,
+
             # Global variables
             'globals/factor': None, # Scaling factor (standard deviation of baseline firing rate for preferred direction)
             'globals/preference': None, # Preferred direction of motion
@@ -322,12 +370,15 @@ class AnalysisBase():
                     filled[mask] = data
 
                     #
-                    ds = stream.create_dataset(
-                        path,
-                        filled.shape,
-                        filled.dtype,
-                        data=filled,
-                    )
+                    try:
+                        ds = stream.create_dataset(
+                            path,
+                            filled.shape,
+                            filled.dtype,
+                            data=filled,
+                        )
+                    except:
+                        import pdb; pdb.set_trace()
 
                     #
                     metadata = None
@@ -366,6 +417,8 @@ class AnalysisBase():
                 if str(session.date) == date and session.animal == animal:
                     self._session = session
                     break
+            if self.session is None:
+                raise Exception(f'Could not determine session from unit key: {value}')
         self._unit = self.session.population.indexByCluster(cluster)
         self._ukey = value
         return
@@ -495,7 +548,7 @@ class AnalysisBase():
 
                 # Exclude units Anna identified as noise or multi-unit
                 # NOTE: 0 codes noise units and 1 codes multi-units
-                if qualityLabels[iUnit] in (0, 1):
+                if qualityLabels is not None and qualityLabels[iUnit] in (0, 1):
                     continue
                 
                 #
@@ -545,6 +598,42 @@ class AnalysisBase():
                 mask[i] = True
 
         return mask
+
+    def _getSessionFromUnitKey(
+        self,
+        ukey
+        ):
+        """
+        """
+
+        date, animal, cluster = ukey
+        session = None
+        for session_ in self.sessions:
+            if str(session_.date) == date and session_.animal == animal:
+                session = session_
+                break
+
+        if session is None:
+            raise Exception('Could not get session')
+
+        return session
+
+    def _matchUnitKey(self, test, unitkeys):
+        """
+        """
+
+        result = False
+        for ukey in unitkeys:
+            matched = np.all([
+                str(ukey[0]) == str(test[0]),
+                ukey[1] == test[1],
+                ukey[2] == test[2]
+            ])
+            if matched:
+                result = True
+                break
+
+        return result
 
     def _saveLargeDataset(
         self,

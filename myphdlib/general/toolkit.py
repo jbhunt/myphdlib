@@ -5,6 +5,7 @@ import pathlib as pl
 import subprocess as sp
 from decimal import Decimal
 from scipy.stats import pearsonr
+from scipy import stats
 from scipy.interpolate import Akima1DInterpolator
 
 def smooth(a, window_size=5, window_type='hanning', axis=1):
@@ -359,3 +360,17 @@ def stretch(a, b=None, c=(0, 1)):
     d = np.full(a.size, np.nan)
     d[mask] =  ((a[mask] - bmin) / (bmax - bmin)) * (np.max(c) - np.min(c)) + np.min(c)
     return d    
+
+def ttest_1samp_with_weights(samp, populationMean=0, weights=None):
+    """
+    """
+
+    if weights is None:
+        weights = np.full(len(samp), 1.0)
+    xbar = np.average(samp, weights=weights)
+    s = np.sqrt(np.average((samp - xbar) ** 2, weights=weights))
+    t = (populationMean - xbar) / (s / np.sqrt(len(samp)))
+    df = len(samp) - 1
+    p = stats.t.sf(abs(t), df) * 2
+
+    return t, p

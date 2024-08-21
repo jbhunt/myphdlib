@@ -1,7 +1,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
-from myphdlib.general.toolkit import smooth
+from myphdlib.general.toolkit import smooth, psth2
 from sklearn.decomposition import PCA
 from scipy.ndimage import gaussian_filter as gaussianFilter
 from scipy.ndimage import zoom
@@ -11,6 +11,8 @@ import pickle
 from skimage.measure import find_contours
 from scipy.signal import find_peaks
 from myphdlib.figures.analysis import AnalysisBase
+from skimage.measure import EllipseModel
+from myphdlib.extensions.matplotlib import getIsoluminantRainbowColormap, getCetI1Colormap
 
 class DataAcqusitionSummaryFigure():
     """
@@ -102,125 +104,6 @@ class DataAcqusitionSummaryFigure():
         fig.subplots_adjust(hspace=0.2)          
 
         return fig
-
-class PopulationSizesBeforeAndAfterFilteringFigure():
-    """
-    """
-
-    def __init__(self):
-        """
-        """
-
-        self.data = None
-
-        return
-
-    def generate(self, sessions, figsize=(2, 5)):
-        """
-        """
-
-        nSessions = len(sessions)
-        nUnitsBefore = np.full(nSessions, np.nan)
-        nUnitsAfter = np.full(nSessions, np.nan)
-
-        for sessionIndex, session in enumerate(sessions):
-            session.population.unfilter()
-            nUnitsBefore[sessionIndex] = session.population.count()
-            session.population.filter()
-            nUnitsAfter[sessionIndex] = session.population.count()
-
-        #
-        self.data = (
-            nUnitsBefore,
-            nUnitsAfter
-        )
-        
-        #
-        fig, ax = plt.subplots()
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        ax.boxplot(
-            x=[nUnitsBefore, nUnitsAfter],
-            positions=[0, 1],
-            widths=0.5,
-            medianprops={'color': 'k'},
-            showfliers=False
-        )
-        fig.tight_layout()
-
-        return fig, ax
-
-class PopulationHeatmapBeforeAndAfterFilteringFigure():
-    """
-    """
-
-    def __init__(self):
-        """
-        """
-
-        self.data = None
-        self.t = None
-
-        return
-
-    def generate(self, session, figsize=(5, 4), window=(-0.3, 0.5)):
-        """
-        """
-
-        filtered = session.population.filter(
-            returnMask=True,
-            visualResponseAmplitude=None,
-        )
-        session.population.unfilter()
-        R1, R2 = list(), list()
-
-        #
-        for unit, flag in zip(session.population, filtered):
-            t, z = unit.peth(
-                session.probeTimestamps,
-                responseWindow=window,
-                baselineWindow=(-1, -0.5),
-                binsize=0.02,
-                nRuns=30,
-            )
-            if np.isnan(z).all():
-                continue
-            R1.append(z)
-            if flag:
-                R2.append(z)
-
-        #
-        self.t = t
-
-        #
-        R1, R2 = smooth(np.array(R1), 9, axis=1), smooth(np.array(R2), 9, axis=1)
-        self.data = (
-            R1,
-            R2
-        )
-
-        #
-        fig, (ax1, ax2) = plt.subplots(ncols=2, sharex=True, sharey=True)
-        ax1.pcolor(t, np.arange(R1.shape[0]), R1, vmin=-5, vmax=5, cmap='binary_r', rasterized=True)
-        ax2.pcolor(t, np.arange(R2.shape[0]), R2, vmin=-5, vmax=5, cmap='binary_r', rasterized=True)
-
-        #
-        for ax in (ax1, ax2):
-            for sp in ('top', 'right', 'bottom', 'left'):
-                ax.spines[sp].set_visible(False)
-            ax.set_xticks([])
-            ax.set_yticks([])
-
-        #
-        ax1.set_xticks([0, 0.2])
-        ax1.set_yticks([0, 20])
-        ax1.set_xticklabels([])
-        ax1.set_yticklabels([])
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, (ax1, ax2)
 
 class PerisaccadicTrialFrequencyAnalysis(AnalysisBase):
     """
@@ -368,125 +251,34 @@ class PerisaccadicTrialFrequencyAnalysis(AnalysisBase):
 
         return fig, ax
 
-class SaccadeClassificationPerformanceAnalysis():
-    
-    def __init__(self):
-        """
-        """
-
-        self.data = None
-
-        return
-
-    def measureClassificationPerformance(self, sessions):
-        """
-        """
-
-        X = list()
-        labels = list()
-        for session in sessions:
-
-            #
-            saccadeLabels = session.load(f'saccades/predicted/{session.eye}/labels')
-            saccadeWaveformsPredicted = session.load(f'saccades/predicted/{session.eye}/waveforms')
-            saccadeWaveformsUnlabeled = session.load(f'saccades/putative/{session.eye}/waveforms')
-
-            #
-            for wf, l in zip(saccadeWaveformsPredicted, saccadeLabels):
-                X.append(wf)
-                labels.append(l)
-
-            #
-            # for wf in saccadeWaveformsUnlabeled:
-            #     result = np.any(np.all(np.isin(saccadeWaveformsPredicted, wf), axis=1))
-            #     if result:
-            #         continue
-            #     X.append(wf)
-            #     labels.append(0)
-
-        self.data = {
-            'X': np.array(X),
-            'y': np.array(labels),
-            'xy': PCA(n_components=2).fit_transform(X)
-        }
-
-        return
-
-    def plotClusteringPerformance(
-        self,
-        figsize=(4, 4),
-        factor=0.9,
-        colors=('k', 'k'),
-        examples=(18571, 30060)
-        ):
-        """
-        """
-
-        fig, ax = plt.subplots()
-        markers = ('D', 'D')
-        for l, c, m in zip(np.unique(self.data['y']), colors, markers):
-            mask = self.data['y'] == l
-            ax.scatter(
-                self.data['xy'][mask, 0],
-                self.data['xy'][mask, 1],
-                color=c,
-                s=3,
-                alpha=0.05,
-                marker='.',
-                rasterized=True
-            )
-            xc = self.data['xy'][mask, 0].mean()
-            yc = self.data['xy'][mask, 1].mean()
-            # ax.scatter(xc, yc, marker='+', color='w', s=100)
-
-        #
-        if examples is not None:
-            for i, c in zip(examples, colors):
-                ax.scatter(
-                    self.data['xy'][i, 0],
-                    self.data['xy'][i, 1],
-                    marker='D',
-                    edgecolor='w',
-                    facecolor=c
-                )
-        
-        #
-        xmax = np.max(np.abs(self.data['xy'][:, 0]))
-        ymax = np.max(np.abs(self.data['xy'][:, 1]))
-        ax.set_xlim([-xmax * factor, xmax * factor])
-        ax.set_ylim([-ymax * factor, ymax * factor])
-        ax.set_xlabel('PC1')
-        ax.set_ylabel('PC2')
-        ax.set_aspect('equal')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, ax
-
-class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
+class ElectrodeMapFigure(AnalysisBase):
     """
     """
 
     def __init__(
         self,
-        date='2023-07-05'
+        date='2023-07-05',
+        **kwargs
         ):
         """
         """
-        super().__init__()
-        self.x = None
-        self.y = None
-        self.date = date
-        self.contours = None
-        self.heatmaps = None
+        super().__init__(**kwargs)
+        self._example = None
+        for session in self.sessions:
+            if str(session.date) == date:
+                self._example = session
+                break
         return
+
+    @property
+    def example(self):
+        return self._example
 
     def extractContours(
         self,
         threshold=2,
         phase='on',
-        smoothingKernelWidth=0.5,
+        smoothingKernelWidth=0.8,
         interpolationFactor=5,
         minimumContourArea=200,
         ):
@@ -494,40 +286,70 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
         """
 
         #
-        self.contours = list()
-        self.heatmaps = list()
-
-        # Set the session by date
-        for ukey in self.ukeys:
-            if ukey[0] == self.date:
-                self.ukey = ukey
-                break
-
-        #
-        heatmaps = self.session.load(f'population/rf/{phase}')
+        heatmaps = self.example.load(f'rf/{phase}')
         if heatmaps is None:
             return
         heatmapsFiltered = list()
-        for ukey in self.ukeys:
-            if ukey[0] != self.date:
-                continue
+        for unit in self.example.population:
+
+            #
+            ukey = (
+                str(self.example.date),
+                self.example.animal,
+                unit.cluster
+            )
+            # if ukey not in self.ukeys:
+            #     heatmapsFiltered.append(None)
+            #    continue
             self.ukey = ukey
+
+            #
             hm = heatmaps[self.unit.index]
             if smoothingKernelWidth is not None:
                 hm = gaussianFilter(hm, smoothingKernelWidth)
-            if hm.max() < threshold:
-                continue
+            # if hm.max() < threshold:
+            #     heatmapsFiltered.append(None)
+            #     continue
             heatmapsFiltered.append(hm)
 
         # Interpolate
         heatmapsInterpolated = list()
         for hm in heatmapsFiltered:
-            z = zoom(hm, interpolationFactor, grid_mode=False)
-            heatmapsInterpolated.append(z)
+            if hm is None:
+                heatmapsInterpolated.append(None)
+            else:
+                z = zoom(hm, interpolationFactor, grid_mode=False)
+                heatmapsInterpolated.append(z)
+
+        # Detect contours
+        contours = list()
+        for hm in heatmapsInterpolated:
+
+            if hm is None:
+                contours.append(None)
+                continue
+
+            #
+            grayscale = cv.threshold(hm, threshold, 255, cv.THRESH_BINARY)[-1].astype(np.uint8)
+            cnts, hierarchy = cv.findContours(
+                grayscale,
+                mode=cv.RETR_TREE,
+                method=cv.CHAIN_APPROX_NONE
+            )
+            if len(cnts) == 0:
+                contours.append(None)
+                continue
+            areas = np.array([cv.contourArea(cnt) for cnt in cnts])
+            index = np.argmax(areas)
+            cnt = cnts[index]
+            if areas[index] < minimumContourArea:
+                contours.append(None)
+                continue
+            contours.append(cnt)
 
         #
         nRows, nCols = heatmaps[0].shape
-        self.xp = {
+        xp = {
             'x': np.linspace(
                 0.5,
                 nCols * interpolationFactor + 0.5,
@@ -540,38 +362,8 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
             ),
         }
 
-        # Detect contours
-        self.contours = list()
-        for hm in heatmapsInterpolated:
-
-            #
-            grayscale = cv.threshold(hm, threshold, 255, cv.THRESH_BINARY)[-1].astype(np.uint8)
-            contours, hierarchy = cv.findContours(
-                grayscale,
-                mode=cv.RETR_TREE,
-                method=cv.CHAIN_APPROX_NONE
-            )
-            if len(contours) == 0:
-                continue
-            areas = np.array([cv.contourArea(contour) for contour in contours])
-            index = np.argmax(areas)
-            contour = contours[index]
-            if areas[index] < minimumContourArea:
-                continue
-            self.contours.append(contour)
-
         #
-        self.heatmaps = np.array(heatmapsInterpolated)
-
-        return
-
-    def extractGrid(
-        self,
-        ):
-        """
-        """
-
-        folder = self.session.home.joinpath('stimuli', 'metadata')
+        folder = self.example.home.joinpath('stimuli', 'metadata')
         metadata = None
         for file in folder.iterdir():
             if 'sparseNoise' in file.name:
@@ -585,32 +377,80 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
 
         #
         fieldCenters = np.unique(metadata['coords'], axis=0)
-        self.fp = {
+        fp = {
             'x': np.unique(fieldCenters[:, 0]),
             'y': np.unique(fieldCenters[:, 1])
         }
 
-        return
+        return contours, xp, fp
 
-    def plotReceptiveFields(
+    def plotElectrodeMap(
         self,
-        figsize=(4, 3),
-        cmap='gist_rainbow',
-        fillContours=False
+        depthScaling=0.8,
+        widthScaling=3,
+        receptiveFieldScaling=2,
+        figsize=(10, 1.5),
+        cmap=None,
         ):
         """
         """
-        
-        #
-        fig, ax = plt.subplots()
-        nFields = len(self.contours)
-        if nFields == 0:
-            return fig, ax
-        cm = plt.get_cmap(cmap, nFields)
-        colors = [cm(i) for i in range(nFields)]
 
         #
-        for i, contour in enumerate(self.contours):
+        contours, xp, fp = self.extractContours()
+
+        #
+        centroids = list()
+        for contour in contours:
+            if contour is None:
+                centroids.append([np.nan, np.nan])
+                continue
+            centroidRaw = contour.mean(0).flatten()
+            cx = np.interp(centroidRaw[0], xp['x'], fp['x'])
+            cy = np.interp(centroidRaw[1], xp['y'], fp['y'])
+            centroids.append([cx, cy])
+        centroids = np.array(centroids)
+
+        #
+        filepath = self.example.home.joinpath('ephys', 'sorting', 'manual', 'cluster_info.tsv')
+        with open(filepath, 'r') as stream:
+            lines = stream.readlines()
+
+        depths = np.full(len(self.example.population), np.nan)
+        for unit in self.example.population:
+            for ln in lines[1:]:
+                elements = ln.split('\t')
+                cluster = int(elements[0])
+                if cluster == unit.cluster:
+                    depths[unit.index] = float(elements[6])
+
+        #
+        filepath = self.example.home.joinpath('ephys', 'sorting', 'manual', 'spike_positions.npy')
+        if filepath.exists() == False:
+            raise Exception('Could not locate spike positions data')
+        spikePositions = np.load(filepath)
+        spikeClusters = self.example.load('spikes/clusters')
+        uniqueClusters, index = np.unique(spikeClusters, return_index=True)
+        unitCoords = spikePositions[index, :]
+        unitCoords[:, 0] -= 40
+
+        # Plot contours at depth
+        fig, ax = plt.subplots()
+        mask = np.array([False if cnt is None else True for cnt in contours])
+        if cmap is None:
+            cmap = plt.cm.gist_rainbow
+        def f(x):
+            i = np.interp(
+                x,
+                [-90, 90],
+                [0, 256]
+            )
+            return cmap(int(round(i)))
+
+        for iUnit, (contour, (xc, yc)) in enumerate(zip(contours, unitCoords)):
+            if contour is None:
+                continue
+            # ax.scatter(depth, np.random.uniform(low=-1, high=1, size=1), color='k')
+
             vertices = contour.reshape(-1, 2)
             xy = list()
             for iCol, letter in zip(range(2), ('x', 'y')):
@@ -623,151 +463,217 @@ class ReceptiveFieldMappingDemonstrationFigure(AnalysisBase):
                 x3 = gaussianFilter(x2, 0.7)
                 x4 = np.interp(
                     np.concatenate([x3, np.array([x3[0]])]),
-                    self.xp[letter],
-                    self.fp[letter]
+                    xp[letter],
+                    fp[letter]
                 )
                 xy.append(x4)
             xy = np.array(xy).T
-            ax.plot(xy[:, 0], xy[:, 1], color=colors[i], alpha=0.3, lw=2.5)
-            if fillContours:
-                ax.fill(xy[:, 0], xy[:, 1], color=colors[i], alpha=0.05)
+            # model = EllipseModel()
+            # model.estimate(xy)
+            # xy = model.predict_xy(np.linspace(0, 2 * np.pi, 100))
+
+            #
+            xy[:, 0] -= xy[:, 0].mean()
+            xy[:, 1] -= xy[:, 1].mean()
+            xy *= receptiveFieldScaling
+            xy[:, 0] += (yc * depthScaling)
+            xy[:, 1] += (xc * widthScaling)
+
+            #
+            ax.plot(xy[:, 0], xy[:, 1], color=f(centroids[iUnit, 0]), alpha=0.6, lw=1)
+            ax.scatter(yc * depthScaling, xc * widthScaling, color=f(centroids[iUnit, 0]), alpha=0.6, s=7, edgecolor='none')
 
         #
-        ax.vlines(0, -10, 10, color='k')
-        ax.hlines(0, -10, 10, color='k')
-        for sp in ('top', 'bottom', 'left', 'right'):
-            ax.spines[sp].set_visible(False)
-        ax.set_xticks([])
-        ax.set_yticks([])
+        ax.vlines([0, 3800 * depthScaling], -40 * widthScaling, 40 * widthScaling, color='k', linestyle=':', lw=0.8)
+        ax.hlines([-40 * widthScaling, 40 * widthScaling], 0, 3800 * depthScaling, color='k', linestyle=':', lw=0.8)
+        ax.hlines(0, 0, 20 * receptiveFieldScaling, color='k')
+        ax.vlines(0 - (20 * depthScaling), -40 * widthScaling,  (-40 * widthScaling) + (20 * widthScaling), color='k')
+        ax.hlines(-40 * widthScaling - (5 * widthScaling), 0, 100 * depthScaling, color='k')
 
         #
+        ax.set_xticks([0, 3800 * depthScaling])
+        ax.set_xticklabels([0, 3800])
+        ax.set_yticks([-40 * widthScaling, 0, 40 * widthScaling])
+        ax.set_yticklabels([-40, 0, 40])
+        ax.set_aspect('equal')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
-        ax.set_aspect('equal')
         fig.tight_layout()
 
         return fig, ax
 
-class SaccadeDetectionDemonstrationFigure(AnalysisBase):
+class ExperimentSummaryFigure(ElectrodeMapFigure):
     """
     """
 
-    def __init__(self, date='2023-07-05'):
-        """
-        """
-
-        super().__init__()
-        self.date = date
-        self.y = None
-        self.t = None
-        self.wfs = None
-        self.threshold = None
-        self.peakIndices = None
-
-        return
-
-    def extractSaccadeWaveforms(
+    def _plotSpikeRasters(
         self,
-        height=0.5,
-        distance=5,
-        n=40,
+        ax,
+        t0,
+        window=(0, 15),
+        cmap=None,
         ):
         """
         """
 
         #
-        self.peakIndices, peakProperties = find_peaks(np.diff(self.y), height=height, distance=distance)
-        self.wfs = list()
-        for peakIndex in self.peakIndices:
-            wf = self.y[peakIndex - n: peakIndex + n + 1]
-            self.wfs.append(wf)
-        self.wfs = np.array(self.wfs)
-        self.threshold = height
-
-        return
-
-    def extractEyePosition(
-        self,
-        blockIndex=32,
-        buffer=3,
-        window=None,
-        ):
-        """
-        """
-
-        # Set the session by date
-        for ukey in self.ukeys:
-            if ukey[0] == self.date:
-                self.ukey = ukey
-                break
+        contours, xp, fp = self.extractContours()
 
         #
-        gratingTimestamps = self.session.load('stimuli/dg/grating/timestamps')
-        motionTimestamps = self.session.load('stimuli/dg/motion/timestamps')
-        itiTimestamps = self.session.load('stimuli/dg/iti/timestamps')
-        eyePosition = self.session.load('pose/filtered')
-        t1 = motionTimestamps[blockIndex] - buffer
-        if window is None:
-            t2 = itiTimestamps[blockIndex] + buffer
-        else:
-            t2 = gratingTimestamps[blockIndex] + window
+        centroids = list()
+        for contour in contours:
+            if contour is None:
+                centroids.append([np.nan, np.nan])
+                continue
+            centroidRaw = contour.mean(0).flatten()
+            cx = np.interp(centroidRaw[0], xp['x'], fp['x'])
+            cy = np.interp(centroidRaw[1], xp['y'], fp['y'])
+            centroids.append([cx, cy])
+        centroids = np.array(centroids)
 
         #
-        frameTimestamps = self.session.load(f'frames/{self.session.eye}/timestamps')
-        frameIndices = np.where(
-            np.logical_and(
-                frameTimestamps >= t1,
-                frameTimestamps <= t2
+        filepath = self.example.home.joinpath('ephys', 'sorting', 'manual', 'cluster_info.tsv')
+        with open(filepath, 'r') as stream:
+            lines = stream.readlines()
+
+        depths = np.full(len(self.example.population), np.nan)
+        for unit in self.example.population:
+            for ln in lines[1:]:
+                elements = ln.split('\t')
+                cluster = int(elements[0])
+                if cluster == unit.cluster:
+                    depths[unit.index] = float(elements[6])
+
+        #
+        filepath = self.example.home.joinpath('ephys', 'sorting', 'manual', 'spike_positions.npy')
+        if filepath.exists() == False:
+            raise Exception('Could not locate spike positions data')
+        spikePositions = np.load(filepath)
+        spikeClusters = self.example.load('spikes/clusters')
+        uniqueClusters, index = np.unique(spikeClusters, return_index=True)
+        unitCoords = spikePositions[index, :]
+        unitCoords[:, 0] -= 40
+
+        #
+        mask = np.array([False if cnt is None else True for cnt in contours])
+        if cmap is None:
+            cmap = plt.cm.gist_rainbow
+        def f(x):
+            i = np.interp(
+                x,
+                [-90, 90],
+                [0, 256]
             )
-        )[0]
-        self.y = smooth(eyePosition[frameIndices, 0], 15)
-        self.t = frameTimestamps[frameIndices]
-        self.t -= motionTimestamps[blockIndex] # Zero the timestamps
+            return cmap(int(round(i)))
+
+        #
+        unitCounter = 0
+        unitIndices = np.argsort(unitCoords[:, 1])
+        for iUnit in unitIndices:
+            iUnit = int(iUnit) # NOTE: indexing the population won't work with numpy data types
+            if contours[iUnit] is None:
+                continue
+            t, M, spikeTimestamps = psth2(
+                np.array([t0,]),
+                self.example.population[iUnit].timestamps,
+                window=window,
+                binsize=None,
+                returnTimestamps=True
+            )
+            ax.vlines(
+                spikeTimestamps,
+                unitCounter - 0.45,
+                unitCounter + 0.45,
+                color=f(centroids[iUnit, 0]),
+                linewidth=0.7,
+                alpha=0.9,
+                rasterized=True
+            )
+            unitCounter += 1
 
         return
 
     def plot(
         self,
-        figsize=(3, 4),
+        blockIndex=24,
+        window=(-1, 15),
+        figsize=(4.5, 3.5),
+        cmap=None
         ):
         """
         """
 
         #
-        fig, axs = plt.subplots(nrows=3)
-        axs[0].plot(self.t, self.y, color='k')
-        dt = self.t[1] - self.t[0]
-        axs[1].plot(self.t[:-1] + (0.5 * dt), np.diff(self.y), color='k')
-        xlim = axs[0].get_xlim()
-        tlim = self.t.min(), self.t.max()
-        axs[1].scatter(self.t[self.peaksIndices], np.diff(self.y)[self.peakIndices], marker='x', color='r')
-        axs[1].hlines(self.threshold, *tlim, color='r')
-        axs[1].set_xlim(xlim)
+        gratingTimestamps = self.example.load('stimuli/dg/grating/timestamps')
+        motionTimestamps = self.example.load('stimuli/dg/motion/timestamps')
+        eyePosition = self.example.load('pose/filtered')
+        t0 = gratingTimestamps[blockIndex]
+        t1 = motionTimestamps[blockIndex]
+        t2 = gratingTimestamps[blockIndex] + window[1]
 
         #
-        dt = self.t[1] - self.t[0]
-        hw = int((self.wfs.shape[1] - 1) / 2)
-        t = (np.arange(self.wfs.shape[1]) - hw) * dt
-        bl = self.wfs[:, :25].mean()
-        for wf in self.wfs:
-            axs[2].plot(t, wf - bl, color='0.8')
-        axs[2].plot(t, self.wfs.mean(0) - bl, color='k')
-
-        #
-        axs[0].set_xticks([])
-        for ax in axs:
-            for sp in ('top', 'right'):
-                ax.spines[sp].set_visible(False)
-        axs[0].set_ylabel('Position (pix)')
-        axs[1].set_ylabel('Velocity (pix/s)')
-        axs[1].set_xlabel('Time from motion onset (sec)')
-        axs[2].set_ylabel('Position (pix)')
-        axs[2].set_xlabel('Time from peak velocity (sec)')
-
-        #
+        fig = plt.figure()
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
+        gs = GridSpec(12, 1)
+        axs = list()
+        for i in range(5):
+            ax = fig.add_subplot(gs[i])
+            axs.append(ax)
+        ax = fig.add_subplot(gs[5:], rasterized=False)
+        axs.append(ax)
+
+        #
+        axs[0].vlines(t1 - t0, 0, 1, color='k')
+        axs[0].vlines(t0 - t0, 0, 1, color='k')
+
+        #
+        for columneIndex, eye, coefficient, ax in zip([0, 2], ['left', 'right'], [-1, 1], axs[1:3]):
+            frameTimestamps = self.example.load(f'frames/{eye}/timestamps')
+            frameIndices = np.where(
+                np.logical_and(
+                    frameTimestamps >= t0 + window[0],
+                    frameTimestamps <= t2
+                )
+            )[0]
+            y = smooth(eyePosition[frameIndices, columneIndex] * coefficient, 15)
+            t = frameTimestamps[frameIndices]
+            ax.plot(t - t0, y, color='k')
+
+        #
+        for ax, ev in zip(axs[3:], [self.example.saccadeTimestamps[:, 0], self.example.probeTimestamps]):
+            eventIndices = np.where(np.logical_and(
+                ev >= t0,
+                ev <= t2
+            ))[0]
+            ax.vlines(ev[eventIndices] - t0, 0, 1, color='k')
+
+        #
+        self._plotSpikeRasters(
+            axs[-1],
+            t0,
+            window,
+            cmap
+        )
+
+        #
+        for ax in axs[:5]:
+            ax.set_xticks([])
+        for ax in axs:
+            xlim = (
+                window[0] - 0.5,
+                window[1] + 0.5
+            )
+            ax.set_xlim(xlim)
+        y1 = np.min([*axs[1].get_ylim(), *axs[2].get_ylim()])
+        y2 = np.max([*axs[1].get_ylim(), *axs[2].get_ylim()])
+        for ax in axs[1:3]:
+            ax.set_ylim([y1, y2])
+        for ax in axs:
+            for sp in ('left', 'right', 'top', 'bottom'):
+                ax.spines[sp].set_visible(False)
         fig.tight_layout()
+        fig.subplots_adjust(hspace=0.2)   
 
         return fig, axs
     
@@ -788,60 +694,290 @@ class EyeVelocityDistribution(AnalysisBase):
     
     def plotVelocityHistogram(
         self,
-        animal='mlati6',
-        date='2023-04-11',
+        saccadeDirection='temporal',
         vrange=(-10, 10),
         nBins=200,
-        figsize=(5, 3),
-        colors=('r', 'b', '0.5'),
-        labels=('Nasal', 'Temporal', 'Control')
+        figsize=(5, 2),
+        colors=('r', 'b'),
+        labels=('Left', 'Right')
         ):
         """
         """
 
         fig, ax = plt.subplots()
-        sessionLocated = False
-        for session in self.sessions:
-            if str(session.date) == date and session.animal == animal:
-                self._session = session
-                sessionLocated = True
-                break
-        if sessionLocated == False:
-            raise Exception(f'Could not locate session for {animal} on {date}')
-        
-        #
-        saccadeLabels = self.session.load(f'saccades/predicted/{self.session.eye}/labels')
-        saccadeWaveforms = {
-            'nasal': self.session.load(f'saccades/predicted/{self.session.eye}/waveforms')[saccadeLabels == 1],
-            'temporal': self.session.load(f'saccades/predicted/{self.session.eye}/waveforms')[saccadeLabels == -1]
-        }
-        horizontalEyePosition = self.session.load('pose/filtered')[:, 0 if self.session.eye == 'left' else 2]
-        velocity = {
-            'nasal': list(),
-            'temporal': list(),
-            'control': np.diff(horizontalEyePosition)
-        }
-        for k in saccadeWaveforms.keys():
-            for wf in saccadeWaveforms[k]:
-                dx = np.diff(wf)
-                i = np.argmax(np.abs(dx))
-                v = dx[i]
-                velocity[k].append(v)
 
         #
-        for i, k in enumerate(velocity.keys()):
-            counts, edges = np.histogram(velocity[k], range=vrange, bins=nBins)
+        samples = {
+            'left': list(),
+            'right': list(),
+            'control': list()
+        }
+        if saccadeDirection == 'temporal':
+            iterable = (
+                ['left', 'temporal', 'left'],
+                ['right', 'temporal', 'right']
+            )
+            flipDirection = 'right'
+        elif saccadeDirection == 'nasal':
+            iterable = (
+                ['right', 'nasal', 'left'],
+                ['left', 'nasal', 'right']
+            )
+            flipDirection = 'left'
+
+        #
+        for session in self.sessions:
+        
+            #
+            for eye, d1, d2 in iterable:
+                saccadeLabels = session.load(f'saccades/predicted/{eye}/labels')
+                saccadeWaveforms = {
+                    'nasal': session.load(f'saccades/predicted/{eye}/waveforms')[saccadeLabels == 1],
+                    'temporal': session.load(f'saccades/predicted/{eye}/waveforms')[saccadeLabels == -1]
+                }
+                for wf in saccadeWaveforms[d1]:
+                    dx = np.diff(wf)
+                    i = np.argmax(np.abs(dx))
+                    v = dx[i]
+                    if d2 == flipDirection:
+                        v *= -1
+                    samples[d2].append(v)
+                nSaccades = int(round(np.mean([
+                    saccadeWaveforms['nasal'].shape[0],
+                    saccadeWaveforms['temporal'].shape[0]
+                ]), 0))
+                velocity = np.diff(session.load('pose/filtered')[:, 0 if eye == 'left' else 2])
+                for v in np.random.choice(velocity, size=nSaccades, replace=False):
+                    if d2 == flipDirection:
+                        v *= -1
+                    samples['control'].append(v)
+
+        #
+        for i, k in enumerate(['left', 'control', 'right']):
+            counts, edges = np.histogram(samples[k], range=vrange, bins=nBins)
             y = counts / counts.sum()
             x = edges[:-1] + ((edges[1] - edges[0]) / 2)
+            ax.step(
+                x,
+                y,
+                where='mid',
+                color='k'
+            )
+            continue
             ax.plot(x, y, color=colors[i], label=labels[i])
             ax.fill_between(x, 0, y, color=colors[i], alpha=0.2)
 
         #
-        ax.legend()
+        x = np.nanmean(samples['control'])
+        e = np.nanstd(samples['control']) * 1.96
+        y1, y2 = ax.get_ylim()
+        # ax.fill_between([x - e, x + e], y1, y2, color='k', alpha=0.1, label='Non-saccadic')
+        ax.set_ylim([0, y2])
+        # ax.scatter(x, y2 / 2, color='k', marker='o', edgecolor='none')
+        # ax.hlines(y2 / 2, x - e, x + e, color='k')
+
+        #
+        # ax.legend()
         ax.set_xlabel('Velocity (pix/sec)')
         ax.set_ylabel('Probability')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
                 
+        return fig, ax
+    
+class UnitFilteringPipelineFigure(AnalysisBase):
+    """
+    """
+
+    def __init__(
+        self,
+        *args,
+        **kwargs
+        ):
+        """
+        """
+
+        super().__init__(*args, **kwargs)
+        self.counts = None
+
+        return
+
+    def measureUnitLoss(
+        self
+        ):
+        """
+        """
+
+        #
+        counts = np.full([len(self.sessions), 4], np.nan)
+
+        #
+        for i, session in enumerate(self.sessions):
+
+            print(f'Working on session {i + 1} out of {len(self.sessions)} ...')
+
+            #
+            if session.probeTimestamps is None:
+                continue
+
+            #
+            amplitudeCutoff = session.load('metrics/ac')
+            presenceRatio = session.load('metrics/pr')
+            isiViolations = session.load('metrics/rpvr')
+            firingRate = session.load('metrics/fr')
+            probabilityValues = np.nanmin(np.vstack([
+                session.load('zeta/probe/left/p'),
+                session.load('zeta/probe/right/p')
+            ]), axis=0)
+            responseLatency = np.nanmin(np.vstack([
+                session.load('zeta/probe/left/latency'),
+                session.load('zeta/probe/right/latency'),
+            ]), axis=0)
+            qualityLabels = session.load('metrics/ql')
+
+            # Unfiltered count
+            counts[i, 0] = len(session.population)
+
+            # ZETA-test
+            f1 = probabilityValues <= 0.01
+            counts[i, 1] = f1.sum()
+
+            # Manual spike-sorting
+            if qualityLabels is None:
+                include = np.full(len(session.population), True)
+            else:
+                exclude = np.full(len(session.population), False)
+                exclude[np.logical_or(qualityLabels == 0, qualityLabels == 1)] = True
+                include = np.invert(exclude)
+            f2 = np.vstack([
+                f1,
+                include,
+            ]).all(0)
+            counts[i, 2] = f2.sum()
+
+            # Quality  metrics
+            f3 = np.vstack([
+                f2,
+                amplitudeCutoff <= 0.1,
+                presenceRatio >= 0.9,
+                isiViolations <= 0.5,
+                firingRate >= 0.2,
+                responseLatency >= 0.025,
+            ]).all(0)
+            counts[i, 3] = f3.sum()
+
+        #
+        self.counts = counts
+
+        return
+    
+    def plotUnitLoss(
+        self,
+        figsize=(6, 3.5)
+        ):
+        """
+        """
+
+        if self.counts is None:
+            return
+        
+        fig, axs = plt.subplots(ncols=2, sharex=True)
+        axs[0].plot(np.arange(4), self.counts.sum(0), color='k', marker='o', markersize=4)
+        y = self.counts.mean(0)
+        e = np.std(self.counts, axis=0)
+        axs[1].plot(np.arange(4), y, color='k', marker='o', markersize=4)
+        # axs[1].fill_between(
+        #     np.arange(4),
+        #     y - e,
+        #     y + e,
+        #     color='k',
+        #     alpha=0.15
+        # )
+        axs[1].vlines(np.arange(4), y - e, y + e, color='k')
+        axs[0].set_ylabel('Total number of units')
+        axs[1].set_ylabel('# of units per session')
+        for ax in axs:
+            ax.set_xticks(np.arange(4))
+            ax.set_xticklabels(['Raw', 'ZETA', 'Phy', 'QC'])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, axs
+
+class ProbeLatencyAnalysis(AnalysisBase):
+    """
+    """
+
+    def histProbeLatency(
+        self,
+        trange=(-3, 3),
+        binsize=0.1,
+        leftEdge=-0.5,
+        rightEdge=0.5,
+        figsize=(2.5, 1.5)
+        ):
+        """
+        """
+
+        n = int(np.diff(trange).item() * 1000 // (binsize * 1000))
+        f = list()
+        for session in self.sessions:
+            if session.probeTimestamps is None:
+                continue
+            counts, edges = np.histogram(
+                session.probeLatencies,
+                range=trange,
+                bins=n
+            )
+            f.append(counts)
+        f = np.array(f)
+        t = np.arange(trange[0], trange[1], binsize) + (binsize / 2)
+
+        fig, ax = plt.subplots()
+
+        y = f.mean(0)
+        e = f.std(0)
+        ax.step(
+            t,
+            y,
+            where='mid',
+            color='0.5',
+        )
+        # ax.plot(
+        #     t,
+        #     y,
+        #     color='k',
+        # )
+        # ax.fill_between(
+        #     t,
+        #     y - e,
+        #     y + e,
+        #     color='k',
+        #     alpha=0.1,
+        #     edgecolor='none'
+        # )
+        ylim = ax.get_ylim()
+        ax.vlines(
+            [leftEdge, rightEdge],
+            *ylim,
+            color='k',
+            linestyle=':'
+        )
+        # ax.fill_between(
+        #     [leftEdge, rightEdge],
+        #     ylim[0],
+        #     ylim[1],
+        #     color='r',
+        #     alpha=0.1,
+        #     edgecolor='none'
+        # )
+        ax.set_ylim(ylim)
+        ax.set_xlim(trange)
+        ax.set_xticks([-3, -1.5, 0, 1.5, 3])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
         return fig, ax

@@ -490,7 +490,14 @@ class SaccadesProcessingMixin(object):
 
         #
         for eye in ('left', 'right'):
-            saccadeOnsetTimestamps = self.load(f'saccades/predicted/{eye}/timestamps')[:, 0]
+
+            #
+            saccadeEpochs = self.load(f'saccades/predicted/{eye}/timestamps')
+            if saccadeEpochs is None or saccadeEpochs.shape[0] == 0:
+                continue
+
+            #
+            saccadeOnsetTimestamps = saccadeEpochs[:, 0]
             gratingMotionBySaccade = list()
 
             if self.cohort in (1, 2, 3):
@@ -576,7 +583,7 @@ class SaccadesProcessingMixin(object):
                 gratingEpochs[:, 1] += bufferPhaseDuration
 
             #
-            elif self.cohort in (4,):
+            elif self.cohort in (4, 11):
 
                 #
                 motionOnsetTimestamps = self.load('stimuli/dg/grating/timestamps')
@@ -588,7 +595,7 @@ class SaccadesProcessingMixin(object):
 
             #
             else:
-                self.log('Could not extract grating motion during {saccadeDirection} saccades in the {eye} for self in cohort {self.cohort}')
+                self.log(f'Could not extract grating motion during saccades in the {eye} for self in cohort {self.cohort}')
                 self.save(f'saccades/predicted/{eye}/gmds', np.array([]).astype(int))
                 return
 
