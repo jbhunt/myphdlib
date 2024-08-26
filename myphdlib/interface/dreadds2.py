@@ -432,9 +432,9 @@ class Dreadds2Session(
                     pattern = 'start time:.*@'
                 result = re.findall(pattern, line)
                 if len(result) == 1:
-                    if self.cohort in [1, 11]:
+                    if self.cohort in [1, 11, 3]:
                         referenceSampleNumber = int(result.pop().rstrip('\n').split(': ')[-1])
-                    elif self.cohort == 2:
+                    elif self.cohort in [2, 31]:
                         referenceSampleNumber = int(result.pop().rstrip('@').split('start time: ')[1])
                     break
         
