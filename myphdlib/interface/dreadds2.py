@@ -426,9 +426,9 @@ class Dreadds2Session(
         with open(file, 'r') as stream:
             referenceSampleNumber = None
             for line in stream.readlines():
-                if self.cohort in [1, 11]:
+                if self.cohort in [1, 11, 3]:
                     pattern = '@.*30000.*Hz:.*\d*'
-                elif self.cohort == 2:
+                elif self.cohort in [2, 31]:
                     pattern = 'start time:.*@'
                 result = re.findall(pattern, line)
                 if len(result) == 1:
