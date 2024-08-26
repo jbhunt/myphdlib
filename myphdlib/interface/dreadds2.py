@@ -44,10 +44,10 @@ class StimuliProcessingMixinDreadds2(
         Creates chronological list of metadata files & asserts that the number of files equals the number of stimulus blocks
         """
         #need less hard coded way to enter mouse name and date
-        parentDirOptions = (
-            self.home.joinpath('videos'),
-            self.home.joinpath('stimuli', 'metadata')
-        )
+        #parentDirOptions = (
+        #    self.home.joinpath('videos'),
+        #    self.home.joinpath('stimuli', 'metadata')
+        #)
 
         # List of required metadata files
         partialFileList = [
@@ -67,7 +67,7 @@ class StimuliProcessingMixinDreadds2(
             'driftingGratingMetadata-9.txt',
             'fictiveSaccadeMetadata-4.pkl'
         ]
-
+        parentDir = self.home.joinpath('videos')
         # Choose whichever directory has all the metadata files
         for parentDir in parentDirOptions:
             if 'driftingGratingMetadata-0.txt' in list(parentDir.iterdir()):
