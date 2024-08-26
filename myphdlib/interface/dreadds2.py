@@ -69,9 +69,9 @@ class StimuliProcessingMixinDreadds2(
         ]
         parentDir = self.home.joinpath('videos')
         # Choose whichever directory has all the metadata files
-        for parentDir in parentDirOptions:
-            if 'driftingGratingMetadata-0.txt' in list(parentDir.iterdir()):
-                break
+        #for parentDir in parentDirOptions:
+         #   if 'driftingGratingMetadata-0.txt' in list(parentDir.iterdir()):
+          #      break
 
         fileList = []
         for f in partialFileList:
