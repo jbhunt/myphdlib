@@ -141,7 +141,7 @@ class StimuliProcessingMixinDreadds2(
         ):
         """
         """
-        if cohort == 11:
+        if self.cohort == 11:
             eventIndex = eventIndex + 160 #160 pulses per fictive saccade block
         else:
             with open(file, 'rb') as f:
