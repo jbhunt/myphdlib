@@ -29,6 +29,7 @@ class StimuliProcessingMixinDreadds2(
         #defining the labjack data should also be edited to pull from hdf
         timestamps = labjackData[:, 0]
         TTLdata = labjackData[:, 6]
+        # minimumPulseWidthInSeconds adjusted from 0.013 to check pulse count mismatch origin
         filtered = filterPulsesFromPhotologicDevice(labjackData[:, 6],
             minimumPulseWidthInSeconds=0.013)
         iPulses = np.where(np.diff(filtered) > 0.5)[0]
@@ -157,6 +158,7 @@ class StimuliProcessingMixinDreadds2(
             else:
                 thisBlockBools = np.logical_and((pulseTimestamps > intervalTimestamps[fileIndex-1]), \
                                     (pulseTimestamps < intervalTimestamps[fileIndex]))
+            print(thisBlockBools.sum())
             assert thisBlockBools.sum() == allEvents.shape[0], str(file) + " has pulse/event count mismatch!"
             thisBlockPulses = pulseTimestamps[thisBlockBools]
             thisBlockDiffs = np.diff(thisBlockPulses)
