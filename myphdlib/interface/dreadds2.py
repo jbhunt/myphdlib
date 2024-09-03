@@ -29,6 +29,7 @@ class StimuliProcessingMixinDreadds2(
         #defining the labjack data should also be edited to pull from hdf
         timestamps = labjackData[:, 0]
         TTLdata = labjackData[:, 6]
+        # minimumPulseWidthInSeconds adjusted from 0.013 to check pulse count mismatch origin
         filtered = filterPulsesFromPhotologicDevice(labjackData[:, 6],
             minimumPulseWidthInSeconds=0.013)
         iPulses = np.where(np.diff(filtered) > 0.5)[0]
@@ -44,10 +45,10 @@ class StimuliProcessingMixinDreadds2(
         Creates chronological list of metadata files & asserts that the number of files equals the number of stimulus blocks
         """
         #need less hard coded way to enter mouse name and date
-        parentDirOptions = (
-            self.home.joinpath('videos'),
-            self.home.joinpath('stimuli', 'metadata')
-        )
+        #parentDirOptions = (
+        #    self.home.joinpath('videos'),
+        #    self.home.joinpath('stimuli', 'metadata')
+        #)
 
         # List of required metadata files
         partialFileList = [
@@ -67,11 +68,11 @@ class StimuliProcessingMixinDreadds2(
             'driftingGratingMetadata-9.txt',
             'fictiveSaccadeMetadata-4.pkl'
         ]
-
+        parentDir = self.home.joinpath('videos')
         # Choose whichever directory has all the metadata files
-        for parentDir in parentDirOptions:
-            if 'driftingGratingMetadata-0.txt' in list(parentDir.iterdir()):
-                break
+        #for parentDir in parentDirOptions:
+         #   if 'driftingGratingMetadata-0.txt' in list(parentDir.iterdir()):
+          #      break
 
         fileList = []
         for f in partialFileList:
@@ -141,63 +142,65 @@ class StimuliProcessingMixinDreadds2(
         ):
         """
         """
-
-        #
-        with open(file, 'rb') as f:
-            metadataDict = np.load(f, allow_pickle=True)
-
-        allEvents = metadataDict['events'] # np 1D array
-        allTrials = metadataDict['trials'] # list
-        blockLength = allEvents.shape[0]
-        if fileIndex == 0:
-            thisBlockBools = pulseTimestamps < intervalTimestamps[0]
-        elif fileIndex == len(fileList) - 1:
-            thisBlockBools = pulseTimestamps > intervalTimestamps[-1]
+        if self.cohort == 11:
+            eventIndex = eventIndex + 160 #160 pulses per fictive saccade block
         else:
-            thisBlockBools = np.logical_and((pulseTimestamps > intervalTimestamps[fileIndex-1]), \
-                                (pulseTimestamps < intervalTimestamps[fileIndex]))
-        assert thisBlockBools.sum() == allEvents.shape[0], str(file) + " has pulse/event count mismatch!"
-        thisBlockPulses = pulseTimestamps[thisBlockBools]
-        thisBlockDiffs = np.diff(thisBlockPulses)
-        thisBlockDiffs = np.append(thisBlockDiffs, 999)
-        
-        # Iterate down pulses. Check the event type metadata of each one. Then, check distance from next.
-        # Depending on metadata condition, different timiing allowances are permitted.
-        pulseIndex = 0
-        trialIndex = 0
-        while pulseIndex < thisBlockPulses.shape[0]:
-            eventType = allEvents[pulseIndex]
-            trialType = allTrials[trialIndex]
-            if thisBlockDiffs[pulseIndex] > 0.4:
-                assert (trialType[2] == 'probe') or (trialType[2] == 'saccade'), \
-                    "Good error message!"
-                if trialType[2] == 'probe':
-                    metadataHolder[eventIndex, 0] = 3.0
-                    metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
-                    metadataHolder[eventIndex, 5] = 1
-                    metadataHolder[eventIndex, 6] = 0
-                elif trialType[2] == 'saccade':
+            with open(file, 'rb') as f:
+                metadataDict = np.load(f, allow_pickle=True)
+
+            allEvents = metadataDict['events'] # np 1D array
+            allTrials = metadataDict['trials'] # list
+            blockLength = allEvents.shape[0]
+            if fileIndex == 0:
+                thisBlockBools = pulseTimestamps < intervalTimestamps[0]
+            elif fileIndex == len(fileList) - 1:
+                thisBlockBools = pulseTimestamps > intervalTimestamps[-1]
+            else:
+                thisBlockBools = np.logical_and((pulseTimestamps > intervalTimestamps[fileIndex-1]), \
+                                    (pulseTimestamps < intervalTimestamps[fileIndex]))
+            print(thisBlockBools.sum())
+            assert thisBlockBools.sum() == allEvents.shape[0], str(file) + " has pulse/event count mismatch!"
+            thisBlockPulses = pulseTimestamps[thisBlockBools]
+            thisBlockDiffs = np.diff(thisBlockPulses)
+            thisBlockDiffs = np.append(thisBlockDiffs, 999)
+            
+            # Iterate down pulses. Check the event type metadata of each one. Then, check distance from next.
+            # Depending on metadata condition, different timiing allowances are permitted.
+            pulseIndex = 0
+            trialIndex = 0
+            while pulseIndex < thisBlockPulses.shape[0]:
+                eventType = allEvents[pulseIndex]
+                trialType = allTrials[trialIndex]
+                if thisBlockDiffs[pulseIndex] > 0.4:
+                    assert (trialType[2] == 'probe') or (trialType[2] == 'saccade'), \
+                        "Good error message!"
+                    if trialType[2] == 'probe':
+                        metadataHolder[eventIndex, 0] = 3.0
+                        metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
+                        metadataHolder[eventIndex, 5] = 1
+                        metadataHolder[eventIndex, 6] = 0
+                    elif trialType[2] == 'saccade':
+                        metadataHolder[eventIndex, 0] = 5.0
+                        metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
+                        metadataHolder[eventIndex, 5] = 1
+                        metadataHolder[eventIndex, 6] = 1
+                    eventIndex += 1
+                    pulseIndex    += 1 
+                    trialIndex    += 1
+                else:
+                    assert trialType[2] == 'combined', "Invalid trialtype found : " + str(trialType[2])
+                    assert pulseIndex != thisBlockPulses.shape[0] - 1, "Combined trial is last pulse, but only one found."
                     metadataHolder[eventIndex, 0] = 5.0
                     metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
                     metadataHolder[eventIndex, 5] = 1
-                    metadataHolder[eventIndex, 6] = 1
-                eventIndex += 1
-                pulseIndex    += 1 
-                trialIndex    += 1
-            else:
-                assert trialType[2] == 'combined', "Invalid trialtype found : " + str(trialType[2])
-                assert pulseIndex != thisBlockPulses.shape[0] - 1, "Combined trial is last pulse, but only one found."
-                metadataHolder[eventIndex, 0] = 5.0
-                metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
-                metadataHolder[eventIndex, 5] = 1
-                metadataHolder[eventIndex, 6] = 2
-                metadataHolder[eventIndex + 1, 0] = 3.0
-                metadataHolder[eventIndex + 1, 1] = allTrials[trialIndex][1]
-                metadataHolder[eventIndex + 1, 5] = 1
-                metadataHolder[eventIndex + 1, 6] = 2
-                pulseIndex    += 2 # Two associated pulses within the index.
-                trialIndex    += 1
-                eventIndex += 2
+                    metadataHolder[eventIndex, 6] = 2
+                    metadataHolder[eventIndex + 1, 0] = 3.0
+                    metadataHolder[eventIndex + 1, 1] = allTrials[trialIndex][1]
+                    metadataHolder[eventIndex + 1, 5] = 1
+                    metadataHolder[eventIndex + 1, 6] = 2
+                    pulseIndex    += 2 # Two associated pulses within the index.
+                    trialIndex    += 1
+                    eventIndex += 2
 
         return eventIndex, metadataHolder
 
@@ -256,50 +259,92 @@ class StimuliProcessingMixinDreadds2(
         pulseIndex = np.where(metadataHolder[:, 0] == 1)[0]
         blockDirection = metadataHolder[pulseIndex, 1]
         self.save('stimuli/dg/grating/motion', blockDirection)
-        
+    
+    def _processMetadataForMissingFS(self, pulseTimestamps):
+        """
+        Process metadata for sessions that are missing fictive saccade metadata
+        """
+        file = self.home.joinpath('videos', 'driftingGratingMetadata.txt')
+        metadata = np.genfromtxt(file, skip_header = 5, delimiter=',')
+        metadataHolder = np.full((len(pulseTimestamps), 8), np.nan)
+        print(len(metadata) + 800)
+        print(metadataHolder.shape[0])
+        if (len(metadata) + 800) != metadataHolder.shape[0]:
+            self.log('Observed and expected number of events are not equal', level='error')
+            return
+        eventIndex = 0
+        for i, row in enumerate(metadata):
+
+            # Populate metadata holder
+            metadataHolder[eventIndex, :5] = row
+            metadataHolder[eventIndex, 5] = 0
+            metadataHolder[eventIndex, 6] = np.nan
+            metadataHolder[eventIndex, 7] = np.nan
+
+            #
+            if (i + 1) == len(metadata):
+                break
+
+            # Check time from current event to next event
+            eventTimestampCurrent = row[-1]
+            eventTimestampNext = metadata[i + 1, -1]
+
+            # Check if entering FS block
+            dt = eventTimestampNext - eventTimestampCurrent
+            if dt > 50:
+                eventIndex += 160
+
+            # Increment event index
+            eventIndex += 1
+
+        return metadataHolder
 
     def _runStimuliModule(self):
         """
         """
 
         pulseTimestamps, intervalTimestamps, iPulses = self._calculatePulseIntervalTimestamps()
-        fileList = self._createMetadataFileList(pulseTimestamps, intervalTimestamps)
-        eventIndex = 0
-        #Columns in metadataHolder: 
-        #0: Event Type - 1 = Grating Start, 2 = Motion Start, 3 = Probe, 4 = Grating End, 5 = Fictive Saccade
-        #1: Motion Direction 
-        #2: Probe Contrast (DG Only)
-        #3: Probe Phase (DG Only)
-        #4: Event Timestamps (DG Only)
-        #5: Block Type - 0 = Drifting Grating, 1 = Fictive Saccade
-        #6: Trial Type (FS Only) - 0 = Probe, 1 = Fictive Saccade, 2 = Both
-        #7: Orientation (DG Only)
-        metadataHolder = np.full((len(pulseTimestamps), 8), np.nan)
-        for fileIndex, file in enumerate(fileList):
+        if self.cohort == 11:
+            metadataHolder = self._processMetadataForMissingFS(pulseTimestamps)
 
-            # DG metadata
-            if pl.Path(file).suffix == '.txt':
-                eventIndex, metadataHolder = self._processDriftingGratingProtocol( 
-                    file, 
-                    fileList,
-                    eventIndex,
-                    metadataHolder,
-                    fileIndex,
-                    pulseTimestamps,
-                    intervalTimestamps
-                )
+        else:
+            fileList = self._createMetadataFileList(pulseTimestamps, intervalTimestamps)
+            eventIndex = 0
+            #Columns in metadataHolder: 
+            #0: Event Type - 1 = Grating Start, 2 = Motion Start, 3 = Probe, 4 = Grating End, 5 = Fictive Saccade
+            #1: Motion Direction 
+            #2: Probe Contrast (DG Only)
+            #3: Probe Phase (DG Only)
+            #4: Event Timestamps (DG Only)
+            #5: Block Type - 0 = Drifting Grating, 1 = Fictive Saccade
+            #6: Trial Type (FS Only) - 0 = Probe, 1 = Fictive Saccade, 2 = Both
+            #7: Orientation (DG Only)
+            metadataHolder = np.full((len(pulseTimestamps), 8), np.nan)
+            for fileIndex, file in enumerate(fileList):
 
-            # FS metadata
-            elif pl.Path(file).suffix == '.pkl':
-                eventIndex, metadataHolder = self._processFictiveSaccadesProtocol(
-                    file,
-                    fileList,
-                    eventIndex,
-                    metadataHolder,
-                    fileIndex,
-                    pulseTimestamps,
-                    intervalTimestamps
-                )
+                # DG metadata
+                if pl.Path(file).suffix == '.txt':
+                    eventIndex, metadataHolder = self._processDriftingGratingProtocol( 
+                        file, 
+                        fileList,
+                        eventIndex,
+                        metadataHolder,
+                        fileIndex,
+                        pulseTimestamps,
+                        intervalTimestamps
+                    )
+
+                # FS metadata
+                elif pl.Path(file).suffix == '.pkl':
+                    eventIndex, metadataHolder = self._processFictiveSaccadesProtocol(
+                        file,
+                        fileList,
+                        eventIndex,
+                        metadataHolder,
+                        fileIndex,
+                        pulseTimestamps,
+                        intervalTimestamps
+                    )
 
         self._parseMetadataHolder(metadataHolder, iPulses)
         return metadataHolder
@@ -356,10 +401,12 @@ class Dreadds2Session(
         """
         """
 
-        if self.cohort == 1:
+        if self.cohort in [1, 11]:
             file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.ProbeA-AP', 'TTL', 'sample_numbers.npy')
-        elif self.cohort == 2:
+        elif self.cohort in [2, 31]:
             file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.0', 'TTL_1', 'timestamps.npy')
+        elif self.cohort == 3:
+            file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-103.ProbeA-AP', 'TTL', 'sample_numbers.npy')
         if file.exists() == False: 
             raise Exception('Could not locate ephys event timestamps file')
         
@@ -381,15 +428,15 @@ class Dreadds2Session(
         with open(file, 'r') as stream:
             referenceSampleNumber = None
             for line in stream.readlines():
-                if self.cohort == 1:
+                if self.cohort in [1, 11, 3]:
                     pattern = '@.*30000.*Hz:.*\d*'
-                elif self.cohort == 2:
+                elif self.cohort in [2, 31]:
                     pattern = 'start time:.*@'
                 result = re.findall(pattern, line)
                 if len(result) == 1:
-                    if self.cohort == 1:
+                    if self.cohort in [1, 11, 3]:
                         referenceSampleNumber = int(result.pop().rstrip('\n').split(': ')[-1])
-                    elif self.cohort == 2:
+                    elif self.cohort in [2, 31]:
                         referenceSampleNumber = int(result.pop().rstrip('@').split('start time: ')[1])
                     break
         

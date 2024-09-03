@@ -276,9 +276,9 @@ class SaccadesProcessingMixin(object):
             signal2 = eyePositionDecomposed[:, columnIndex]
             signal2 = np.delete(signal2, indices)
             r2, p =  pearsonr(signal1, signal2)
-            if r2 > 0.05 and p < 0.05:
+            if r2 > 0 and p < 0.05:
                 pass
-            elif r2 < -0.05 and p < 0.05:
+            elif r2 < 0 and p < 0.05:
                 signal3 *= -1
             else:
                 raise Exception('Could not determine correlation between raw and decomposed eye position')
