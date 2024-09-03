@@ -8,6 +8,9 @@ from myphdlib.figures.modulation import BasicSaccadicModulationAnalysis
 from myphdlib.figures.analysis import convertSaccadeDirectionToGratingMotion, convertGratingMotionToSaccadeDirection
 from matplotlib.colors import LinearSegmentedColormap
 from itertools import combinations
+from scipy.stats import pearsonr
+from sklearn.linear_model import HuberRegressor, RANSACRegressor, LinearRegression
+import statsmodels.api as sm
 
 def computeApparentMotion(
     session,
@@ -53,36 +56,34 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
         self,
         method='ratio',
         minimumResponseAmplitude=5,
-        perisaccadicWindow=(-0.5, 0.5),
-        denovo=True,
-        responseWindow=(0, 0.5),
-        baselineWindow=(-0.2, 0),
+        denovo=False,
+        # responseWindow=(0, 0.5),
+        # baselineWindow=(-0.2, 0),
         ):
         """
         """
 
-#
-        window = (
-            np.min([responseWindow, baselineWindow]),
-            np.max([responseWindow, baselineWindow])
-        )
-        tProbe, _ = psth2(
-            np.array([0]),
-            np.array([0]),
-            window=window,
-            binsize=0.01,
-        )
-        binIndicesForResponse = np.where(np.logical_and(
-            tProbe >= responseWindow[0],
-            tProbe <  responseWindow[1]
-        ))[0]
-        binIndicesForBaseline = np.where(np.logical_and(
-            tProbe >= baselineWindow[0],
-            tProbe <  baselineWindow[1]
-        ))[0]
+        # window = (
+        #     np.min([responseWindow, baselineWindow]),
+        #     np.max([responseWindow, baselineWindow])
+        # )
+        # tProbe, _ = psth2(
+        #     np.array([0]),
+        #     np.array([0]),
+        #     window=window,
+        #     binsize=0.01,
+        # )
+        # binIndicesForResponse = np.where(np.logical_and(
+        #     tProbe >= responseWindow[0],
+        #     tProbe <  responseWindow[1]
+        # ))[0]
+        # binIndicesForBaseline = np.where(np.logical_and(
+        #     tProbe >= baselineWindow[0],
+        #     tProbe <  baselineWindow[1]
+        # ))[0]
 
         #
-        dsi = np.full([len(self.ukeys), len(self.windows)], np.nan)
+        self.ns['dsi/probe/peri'] = np.full([len(self.ukeys), len(self.windows)], np.nan)
         nUnits = len(self.ukeys)
 
         #
@@ -101,91 +102,52 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
             for windowIndex in range(len(self.windows)):
 
                 #
-                perisaccadicWindow = self.windows[windowIndex]
+                # perisaccadicWindow = self.windows[windowIndex]
 
                 #
                 if denovo:
 
                     #
-                    trialIndices = np.where(np.logical_and(
-                        session.gratingMotionDuringProbes == -1,
-                        np.logical_and(
-                            session.probeLatencies >= perisaccadicWindow[0],
-                            session.probeLatencies <= perisaccadicWindow[1]
-                        )
-                    ))[0]
-
-                    #
-                    t, fr = unit.kde(
-                        session.probeTimestamps[trialIndices],
-                        responseWindow=window,
-                        binsize=0.01,
-                        sigma=0.01,
-                    )
-                    fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
-                    aLeft = np.max(np.abs(fr))
-
-                    #
-                    trialIndices = np.where(np.logical_and(
-                        session.gratingMotionDuringProbes == 1,
-                        np.logical_or(
-                            session.probeLatencies >= perisaccadicWindow[0],
-                            session.probeLatencies <= perisaccadicWindow[1]
-                        )
-                    ))[0]
-
-                    #
-                    t, fr = unit.kde(
-                        session.probeTimestamps[trialIndices],
-                        responseWindow=window,
-                        binsize=0.01,
-                        sigma=0.01,
-                    )
-                    fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[iUnit]
-                    aRight = np.max(np.abs(fr))
-
-                    #
-                    if aLeft > aRight:
-                        aPref = aLeft
-                        aNull = aRight
-                    else:
-                        aPref = aRight
-                        aNull = aLeft
+                    aPref = np.max(np.abs(self.ns['ppths/pref/real/peri'][iUnit, :, windowIndex]))
+                    aNull = np.max(np.abs(self.ns['ppths/null/real/peri'][iUnit, :, windowIndex]))
 
                 else:
                     # Get amplitude of largest component of preferred PPTH
-                    paramsPref = self.ns['params/pref/real/peri'][iUnit, windowIndex]
+                    paramsPref = self.ns['params/pref/real/peri'][iUnit, windowIndex, 0, :]
                     paramsPref = np.delete(paramsPref, np.isnan(paramsPref))
+                    if len(paramsPref) == 0:
+                        continue
                     A, B, C = np.split(paramsPref[:-1], 3)
                     aPref = A[0]
                     lPref = B[0]
 
                     # Get amplitude of corresponding component from the null PPTH
-                    paramsNull = self.ns['params/null/real/peri'][iUnit, windowIndex]
+                    paramsNull = self.ns['params/null/real/peri'][iUnit, windowIndex, 0, :]
                     paramsNull = np.delete(paramsNull, np.isnan(paramsNull))
+                    if len(paramsNull) == 0:
+                        continue
                     A, B, C = np.split(paramsNull[:-1], 3)
                     iComp = np.argmin(np.abs(B - lPref))
                     aNull = A[iComp]
 
-                    #
-                    if self.preference[iUnit] == -1:
-                        aLeft = aPref
-                        aRight = aNull
-                    else:
-                        aLeft = aNull
-                        aRight = aPref
+                # Translate pref/null to left/right
+                if self.preference[iUnit] == -1:
+                    aLeft = aPref
+                    aRight = aNull
+                else:
+                    aLeft = aNull
+                    aRight = aPref
 
                 #
                 aNull = np.clip(aNull, 0, np.inf)
 
                 #
-                if abs(aPref) < minimumResponseAmplitude:
+                if all([abs(aPref) < minimumResponseAmplitude, abs(aNull) < minimumResponseAmplitude]):
                     continue
 
                 # Ratio of difference and sum
                 if method == 'ratio':
-                    dsi = (aRight - aLeft) / (aRight + aLeft)
-
+                    dsi_ = (aRight - aLeft) / (aRight + aLeft)
 
                 # Normalized vector sum
                 elif method == 'vector-sum':
@@ -206,17 +168,17 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                     a, b = vertices.sum(0) / vectors[:, 0].sum()
                     dsi_ = np.sqrt(np.power(a, 2) + np.power(b, 2))
 
-                    #
-                    dsi[iUnit, windowIndex] = dsi_
+                #
+                self.ns['dsi/probe/peri'][iUnit, windowIndex] = dsi_
 
-        return dsi
+        return
 
     def measureDirectionSelectivityForExtrasaccadicProbes(
         self,
         method='ratio',
         minimumResponseAmplitude=5,
         perisaccadicWindow=(-0.5, 0.5),
-        denovo=True,
+        denovo=False,
         responseWindow=(0, 0.5),
         baselineWindow=(-0.2, 0),
         ):
@@ -247,7 +209,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
         ))[0]
 
         #
-        self.ns['dsi/probe'] = np.full(len(self.ukeys), np.nan)
+        self.ns['dsi/probe/extra'] = np.full(len(self.ukeys), np.nan)
         nUnits = len(self.ukeys)
 
         #
@@ -338,7 +300,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
             aNull = np.clip(aNull, 0, np.inf)
 
             #
-            if abs(aPref) < minimumResponseAmplitude:
+            if all([abs(aPref)< minimumResponseAmplitude, abs(aNull) < minimumResponseAmplitude]):
                 continue
 
             # Ratio of difference and sum
@@ -366,7 +328,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                 dsi = np.sqrt(np.power(a, 2) + np.power(b, 2))
             
             #
-            self.ns['dsi/probe'][iUnit] = dsi
+            self.ns['dsi/probe/extra'][iUnit] = dsi
 
         return
 
@@ -458,7 +420,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                 saccadeDirection = 'temporal'
 
             #
-            if abs(aPref) < minimumResponseAmplitude:
+            if all([abs(aPref) < minimumResponseAmplitude, abs(aNull) < minimumResponseAmplitude]):
                 continue
 
             # Clip null direction if sign reverses
@@ -554,13 +516,15 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
             # Clip at 0 if the null response is negative
             if aLeft > aRight:
                 aPref = aLeft
+                aNull = aRight
                 aRight = np.clip(aRight, 0, np.inf)
             else:
                 aPref = aRight
+                aNull = aLeft
                 aLeft = np.clip(aLeft, 0, np.inf)
 
             #
-            if abs(aPref) < minimumResponseAmplitude:
+            if all([abs(aPref) < minimumResponseAmplitude, abs(aNull) < minimumResponseAmplitude]):
                 continue
 
             #
@@ -573,7 +537,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
         self,
         responseWindow=(-0.2, 0.5),
         baselineWindow=(-1, -0.5),
-        minimumResposneAmplitude=3, 
+        minimumResposneAmplitude=5, 
         ):
         """
         """
@@ -650,7 +614,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                 continue
 
             #
-            if np.any([aLeft < minimumResposneAmplitude, aRight < minimumResposneAmplitude]):
+            if all([abs(aLeft) < minimumResposneAmplitude, abs(aRight) < minimumResposneAmplitude]):
                 continue
 
             # Clip at 0 if the null response is negative
@@ -670,8 +634,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
     def measureDirectionSelectivityForMovingBars(
         self,
         method='ratio',
-        minimumResponseAmplitude=5,
-        baselineWindow=(-0.5, 0),
+        minimumResponseAmplitude=0,
         ):
         """
         Compute DSI for the moving bars stimulus
@@ -696,9 +659,6 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
             
             #
             for ukey in self.ukeys:
-
-                #
-
 
                 #
                 if ukey[0] != str(session.date):
@@ -728,16 +688,16 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                         fr = M.item() / dt
 
                         # Baseline
-                        t, M = psth2(
-                            np.array([t1]),
-                            self.unit.timestamps,
-                            window=baselineWindow,
-                            binsize=None,
-                        )
-                        bl = M.item() / np.diff(baselineWindow)
+                        # t, M = psth2(
+                        #     np.array([t1]),
+                        #     self.unit.timestamps,
+                        #     window=baselineWindow,
+                        #     binsize=None,
+                        # )
+                        #bl = M.item() / np.diff(baselineWindow)
 
                         #
-                        amplitudes.append(fr - bl)
+                        amplitudes.append(fr)
 
                     # t, M = psth2(
                     #     movingBarTimestamps[trialIndices, 0],
@@ -749,8 +709,12 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                     # fr = (fr[binIndicesForResponse] - fr[binIndicesForBaseline].mean()) / self.factor[self.iUnit]
 
                     #
-                    vectors[rowIndex, 0] = np.mean(amplitudes) / self.factor[self.iUnit]
+                    vectors[rowIndex, 0] = np.mean(amplitudes)
                     vectors[rowIndex, 1] = np.deg2rad(orientation)
+
+                #
+                if np.all(vectors[:, 0] < minimumResponseAmplitude):
+                    continue
 
                 #
                 if method == 'vector-sum':
@@ -773,86 +737,376 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                     aRight = vectors[uniqueOrientations == 0, 0]
 
                     #
-                    if aLeft < 0 and aRight > 0 or aLeft > 0 and aRight < 0:
-                        continue
-
-                    #
-                    if aLeft > aRight:
-                        aPref = aLeft
-                    else:
-                        aPref = aRight
-                    if aPref < minimumResponseAmplitude:
-                        continue
-
-                    #
                     self.ns['dsi/bar'][self.iUnit] = (aRight - aLeft) / (aRight + aLeft)
 
         return
 
+    def measureDirectionSelectivityForDriftingGrating(
+        self,
+        responseWindow=(0, 1),
+        baselineWindow=(-1, 0),
+        minimumResponseAmplitude=0,
+        ):
+        """
+        """
+
+        nUnits = len(self.ukeys)
+        self.ns['dsi/dg'] = np.full(nUnits, np.nan)
+        for iUnit, ukey in enumerate(self.ukeys):
+
+            #
+            end = '\r' if iUnit + 1 != nUnits else '\n'
+            print(f'Working on unit {iUnit + 1} out of {nUnits} ...', end=end)
+
+            #
+            session = self._getSessionFromUnitKey(ukey)
+            unit = session.population.indexByCluster(ukey[-1])
+            gratingOnsetTimestamps = session.load('stimuli/dg/grating/timestamps')
+            motionOnsetTimestamps = session.load('stimuli/dg/motion/timestamps')
+            gratingMotion = session.load('stimuli/dg/grating/motion')
+
+            #
+            t, M = psth2(
+                gratingOnsetTimestamps[gratingMotion == -1],
+                unit.timestamps,
+                window=baselineWindow,
+                binsize=None
+            )
+            bl = M.mean(0) / np.diff(baselineWindow)
+            t, M = psth2(
+                motionOnsetTimestamps[gratingMotion == -1],
+                unit.timestamps,
+                window=responseWindow,
+                binsize=None
+            )
+            fr = M.mean(0) / np.diff(responseWindow)
+            aLeft = np.clip(fr, 0, np.inf).item()
+
+            #
+            t, M = psth2(
+                gratingOnsetTimestamps[gratingMotion == 1],
+                unit.timestamps,
+                window=baselineWindow,
+                binsize=None
+            )
+            bl = M.mean(0) / np.diff(baselineWindow)
+            t, M = psth2(
+                motionOnsetTimestamps[gratingMotion == 1],
+                unit.timestamps,
+                window=responseWindow,
+                binsize=None
+            )
+            fr = M.mean(0) / np.diff(responseWindow)
+            aRight = np.clip(fr, 0, np.inf).item()
+
+            #
+            if all([aLeft < minimumResponseAmplitude, aRight < minimumResponseAmplitude]):
+                continue
+
+            #
+            try:
+                dsi = (aRight - aLeft) / (aRight + aLeft)
+            except:
+                continue
+            self.ns['dsi/dg'][iUnit] = dsi
+
+        return
+
+    def measureDirectionSelectivity(
+        self,
+        minimumResponseAmplitude=5,
+        ):
+        """
+        """
+
+        self.measureDirectionSelectivityForDriftingGrating(minimumResponseAmplitude=0)
+        self.measureDirectionSelectivityForMovingBars(minimumResponseAmplitude=0)
+        self.measureDirectionSelectivityForExtrasaccadicProbes(minimumResponseAmplitude=minimumResponseAmplitude)
+        self.measureDirectionSelectivityForPerisaccadicProbes(minimumResponseAmplitude=minimumResponseAmplitude)
+        self.measureDirectionSelectivityForRealSaccades1(minimumResponseAmplitude=minimumResponseAmplitude)
+        self.measureDirectionSelectivityForFictiveSaccades(minimumResposneAmplitude=minimumResponseAmplitude)
+
+        return
+
+    def plotDeltaPreferenceByLatency(
+        self,
+        figsize=(5, 3),
+        minimumSelectivity=0.3,
+        perisaccadicWindow=(-0.3, 0.5),
+        nPointsForInterp=30,
+        ):
+        """
+        """
+
+        nUnits = len(self.ukeys)
+        t = self.windows.mean(1)
+        x = np.linspace(*perisaccadicWindow, nPointsForInterp)
+        f = np.full([nUnits, nPointsForInterp], np.nan)
+        d = np.full([nUnits, nPointsForInterp], np.nan)
+        for iUnit in range(nUnits):
+
+            #
+            dsiExtra = self.ns['dsi/probe/extra'][iUnit]
+            if np.isnan(dsiExtra) or abs(dsiExtra) < minimumSelectivity:
+                continue
+
+            #
+            fp1 = np.full(len(self.windows), np.nan)
+            fp2 = np.full(len(self.windows), np.nan)
+            for i, dsiPeri in enumerate(self.ns['dsi/probe/peri'][iUnit, :]):
+                if np.isnan(dsiPeri):
+                    continue
+                if dsiExtra > 0:
+                    if dsiPeri < 0:
+                        fp1[i] = 1.0
+                    else:
+                        fp1[i] = 0.0
+                if dsiExtra > 0:
+                    if dsiPeri < 0:
+                        fp1[i] = 1.0
+                    else:
+                        fp1[i] = 0.0
+                fp2[i] = dsiPeri - dsiExtra
+
+            #
+            params = self.ns['params/pref/real/extra'][iUnit]
+            abcd = np.delete(params, np.isnan(params))
+            A, B, C = np.split(abcd[:-1], 3)
+            xp = t + B[0]
+
+            #
+            y = np.interp(x, xp, fp1, left=np.nan, right=np.nan)
+            f[iUnit, :] = y
+
+            #
+            y = np.interp(x, xp, fp2, left=np.nan, right=np.nan)
+            d[iUnit, :] = y
+            
+        #
+        fig, axs = plt.subplots(ncols=2, sharex=True)
+        t = self.windows.mean(1)
+        axs[0].plot(x, np.nanmean(f, axis=0), color='k')
+        axs[0].set_ylim([0, 1])
+        axs[0].set_xlabel('Saccade-peak response latency (sec)')
+        axs[0].set_ylabel('Rate of preference reversal')
+        axs[1].plot(x, np.nanmedian(d, axis=0), color='k')
+        axs[1].fill_between(
+            x,
+            np.nanpercentile(d, 25, axis=0),
+            np.nanpercentile(d, 75, axis=0),
+            color='k',
+            edgecolor='none',
+            alpha=0.1
+        )
+        axs[1].set_ylim([-1, 1])
+        axs[1].set_ylabel(r'$DSI_{Peri} - DSI_{Extra}$')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, axs, d
+
+    def plotPreferenceCorrelationByLatency(
+        self,
+        ):
+        """
+        """
+
+        return
+        
     def scatterDirectionSelectivityByEvent(
         self,
+        windowIndices=(5,),
+        minimumDSI=0,
+        minimumResponseAmplitude=10,
         figsize=(6, 6),
         ):
         """
         """
 
-        fig, axs = plt.subplots(ncols=4, nrows=4, sharex=True, sharey=True)
-        paths = (
-            'dsi/probe',
-            'dsi/saccade/real',
-            'dsi/saccade/fictive',
-            'dsi/bar'
+        datasets = (
+            self.ns['dsi/probe/extra'],
+            *list(map(np.ravel, np.split(self.ns['dsi/probe/peri'][:, windowIndices], len(windowIndices), axis=1))),
+            self.ns['dsi/saccade/real'],
+            self.ns['dsi/saccade/fictive'],
+            self.ns['dsi/bar'],
+            self.ns['dsi/dg'],
         )
+        N = len(datasets)
+        R = np.full([N, N], np.nan)
+        P = np.full([N, N], np.nan)
+        C = np.full([N, N], np.nan)
+
+        fig, axs = plt.subplots(ncols=N, nrows=N, sharex=True, sharey=True)
         
-        for i, p1 in enumerate(paths):
-            for j, p2 in enumerate(paths):
+        for i, x in enumerate(datasets):
+            for j, y in enumerate(datasets):
+                m = np.vstack([
+                    np.invert(np.isnan(x)),
+                    np.invert(np.isnan(y)),
+                    np.abs(x) >= minimumDSI,
+                    np.abs(y) >= minimumDSI
+                ]).all(0)
+                # if i == 2 and j == 5:
+                #    return x[m], y[m]
                 if i == j:
                     continue
                 if i < j:
                     continue
-                x = self.ns[p1]
-                y = self.ns[p2]
                 axs[i, j].scatter(
-                    x,
-                    y,
+                    x[m],
+                    y[m],
                     color='k',
                     s=3,
                     edgecolor='none',
                     alpha=0.3
                 )
-                m = np.logical_and(np.logical_not(np.isnan(x)), np.logical_not(np.isnan(y)))
-                f = np.poly1d(np.polyfit(x[m], y[m], deg=1))
-                x1, x2 = np.nanmin(x), np.nanmax(x)
+                r, p = pearsonr(x[m], y[m])
+                R[i, j] = r
+                P[i, j] = p
+                x1, x2 = np.nanmin(x[m]), np.nanmax(x[m])
+                model = LinearRegression().fit(x[m].reshape(-1, 1),  y[m])
+                C[i, j] = model.coef_.item()
                 axs[i, j].plot(
                     [x1, x2],
-                    f([x1, x2]),
+                    model.predict(np.array([x1, x2]).reshape(-1, 1)),
                     color='r'
                 )
-        xlabels = (
-            r'$DSI_{Probe}$',
-            r'$DSI_{Saccade (Real)}$',
-            r'$DSI_{Saccade (Fictive)}$',
-            r'$DSI_{Bars}$'
-        )
-        ylabels = (
-            r'$DSI_{Probe}$',
-            r'$DSI_{Saccade (Real)}$',
-            r'$DSI_{Saccade (Fictive)}$',
-            r'$DSI_{Bars}$'
-        )
-        for j, ax in enumerate(axs[-1, :]):
-            ax.set_xlabel(xlabels[j])
-        for i, ax in enumerate(axs[:, 0]):
-            ax.set_ylabel(ylabels[i])
         for ax in axs.flatten():
             ax.set_xlim([-1, 1])
             ax.set_ylim([-1, 1])
             ax.set_aspect('equal')
+        for ax in axs.flatten():
+            if len(ax.collections) == 0:
+                for sp in ('top', 'right', 'left', 'bottom'):
+                    ax.spines[sp].set_visible(False)
+                ax.set_xticks([])
+                ax.set_yticks([])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, axs, R, P, C
+
+    def plotModulationFrequencyByDirectionSelectivity3(
+        self,
+        threshold=0.3,
+        minimumResponseAmplitude=5,
+        cmap='coolwarm',
+        figsize=(4, 1.5)
+        ):
+        """
+        """
+
+        Z = np.full([3, len(self.windows), 2], np.nan)
+        for i, sign in enumerate((-1, 0, 1)):
+            for j in np.arange(len(self.windows)):
+                for k in range(2):
+                    if k == 0:
+                        include = np.vstack([
+                            self.ns['params/pref/real/extra'][:, 0] >= minimumResponseAmplitude,
+                            self.ns['dsi/dg'] < threshold,
+                        ]).all(0)
+                    else:
+                        include = np.vstack([
+                            self.ns['params/pref/real/extra'][:, 0] >= minimumResponseAmplitude,
+                            self.ns['dsi/dg'] >= threshold,
+                        ]).all(0)  
+                    mi = np.delete(
+                        self.ns['mi/pref/real'][:, j, 0],
+                        np.invert(include)
+                    )
+                    p = np.delete(
+                        self.ns['p/pref/real'][:, j, 0],
+                        np.invert(include)
+                    )
+                    if sign == -1:
+                        mask = np.vstack([
+                            mi < 0,
+                            p < 0.05
+                        ]).all(0)
+                    elif sign == 0:
+                        mask = p >= 0.05              
+                    else:
+                        mask = np.vstack([
+                            mi > 0,
+                            p < 0.05
+                        ]).all(0)
+                    f = mask.sum() / mask.size
+                    Z[i, j, k] = f
+
+        #
+        fig, axs = plt.subplots(ncols=2, sharey=True, sharex=True)
+        cm = plt.get_cmap(cmap, 3)
+        colors = np.array([cm(i) for i in range(3)])
+        for k, ax in enumerate(axs):
+            for j in np.arange(len(self.windows)):
+                f = Z[:, j, k]
+                b = np.cumsum(np.concatenate([np.array([0,]), f[:-1]]))
+                ax.bar(
+                    np.mean(self.windows[j]),
+                    f,
+                    width=0.1,
+                    bottom=b,
+                    color=colors
+                )
+        
+        #
+        for ax in axs:
+            ax.set_ylim([0, 1])
+            ax.set_yticks([0, 0.5, 1])
+            ax.set_xlim([self.windows.min(), self.windows.max()])
+            ax.set_xticks([-0.5, 0, 0.5])
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
         return fig, axs
+
+    def plotModulationFrequencyByDirectionSelectivity2(
+        self,
+        nq=10,
+        minimumResponseAmplitude=5,
+        vrange=(0, 1),
+        figsize=(6, 1.25)
+        ):
+        """
+        """
+
+        exclude = np.vstack([
+            self.ns['params/pref/real/extra'][:, 0] < minimumResponseAmplitude,
+        ]).all(0)
+        Z = np.full([3, len(self.windows), nq], np.nan)
+        for i in range(len(self.windows)):
+            stacked = np.vstack([
+                np.delete(self.ns['dsi/probe/extra'], exclude),
+                np.delete(self.ns['mi/pref/real'][:, i, 0], exclude),
+                np.delete(self.ns['p/pref/real'][:, i, 0], exclude)
+            ]).T
+            subsets = np.array_split(
+                stacked,
+                nq,
+                axis=0
+            )
+            for j, subset in enumerate(subsets):
+                dsi, mi, p = np.split(subset, 3, axis=1)
+                Z[0, i, j] = np.sum(np.logical_and(mi < 0, p < 0.05)) / len(subset)
+                Z[1, i, j] = np.sum(p >= 0.05) / len(subset)
+                Z[2, i, j] = np.sum(np.logical_and(mi > 0, p < 0.05)) / len(subset)
+
+        #
+        fig, axs = plt.subplots(ncols=3, sharex=True, sharey=True)
+        X = np.concatenate([self.windows[:, 0], np.atleast_1d(self.windows[-1, 1])])
+        Y = np.arange(0.5, 11.5, 1)
+        for i in range(3):
+            axs[i].pcolor(X, Y, Z[i, :, :], cmap='viridis', vmin=vrange[0], vmax=vrange[1])
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, axs, Z
 
     def plotModulationFrequencyByDirectionSelectivity(
         self,
@@ -898,6 +1152,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
         #
         ylims = list()
+        ydata = list()
         for i, quantile in enumerate(np.array_split(stack, nq, axis=1)):
 
             #
@@ -933,16 +1188,211 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
         return fig, grid
 
+    def plotSlopeByDirectionSelectivity(
+        self,
+        nq=10,
+        nreps=300,
+        minimumResponseAmplitude=5,
+        alpha=0.05,
+        figsize=(3, 3),
+        ):
+        """
+        """
+
+
+        nUnits = len(self.ukeys)
+        xyz = list()
+        for iUnit in range(nUnits):
+            responseAmplitude = self.ns['params/pref/real/extra'][iUnit, 0]
+            if responseAmplitude < minimumResponseAmplitude:
+                continue
+            for windowIndex in range(len(self.windows)):
+                pvalues = (
+                    self.ns['p/pref/real'][iUnit, windowIndex, 0] < alpha,
+                    self.ns['p/null/real'][iUnit, windowIndex, 0] < alpha
+                )
+                if any(pvalues) == False:
+                    continue
+                xyz.append([
+                    self.ns['mi/pref/real'][iUnit, windowIndex, 0],
+                    self.ns['mi/null/real'][iUnit, windowIndex, 0],
+                    self.ns['dsi/probe/extra'][iUnit]
+                ])
+
+        #
+        xyz = np.array(xyz)
+        xyz = np.delete(xyz, np.isnan(xyz).any(1), axis=0)
+
+        #
+        dsi = np.clip(np.abs(xyz[:, 2]), 0, 1)
+        leftEdges = np.percentile(dsi, np.linspace(0, 100, nq + 1)[:-1])
+        rightEdges = np.percentile(dsi, np.linspace(0, 100, nq + 1)[1:])
+        binEdges = np.vstack([
+            leftEdges,
+            rightEdges
+        ]).T
+
+        #
+        slope = list()
+        for i in range(nreps):
+            y = list()
+            for leftEdge, rightEdge in binEdges:
+                mask = np.vstack([
+                    dsi >= leftEdge,
+                    dsi <  rightEdge
+                ]).all(0)
+                model = RANSACRegressor().fit(xyz[mask, 0].reshape(-1, 1), xyz[mask, 1])
+                y.append( model.estimator_.coef_.item())
+            slope.append(y)
+        slope = np.array(slope)
+
+        #
+        fig, ax = plt.subplots()
+        ax.plot(np.arange(nq), slope.mean(0), color='k')
+        ax.fill_between(
+            np.arange(nq),
+            slope.mean(0) - slope.std(0),
+            slope.mean(0) + slope.std(0),
+            color='k',
+            alpha=0.1,
+            edgecolor='none',
+        )
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax
+
+    def scatterModulationByPreference2(
+        self,
+        alpha=0.05,
+        windowIndices=(4, 5, 6, 7),
+        minimumResponseAmplitude=10,
+        minimumDSI=0.3,
+        allowMultiples=False,
+        directionSelective=False,
+        xylim=(-3, 3),
+        cmap=None,
+        ax=None,
+        figsize=(2.5, 2.5),
+        ):
+        """
+        """
+
+        nUnits = len(self.ukeys)
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.figure
+        if cmap is None:
+            cmap = plt.get_cmap('binary', 256)
+        f = lambda x: cmap(int(round(np.interp(x, np.linspace(0, 1, 256), np.arange(256).astype(float)), 0)))
+        def f(x):
+            xp = np.linspace(0, 1, 256)
+            fp = np.arange(256)
+            i = int(round(np.interp(x, xp, fp)))
+            color = cmap(i)
+            return color
+
+        #
+        xyz = list()
+
+        #
+        for iUnit in range(nUnits):
+
+            #
+            responseAmplitude = np.abs(self.ns['params/pref/real/extra'][iUnit, 0])
+            if responseAmplitude < minimumResponseAmplitude:
+                continue
+
+            #
+            miPref = self.ns['mi/pref/real'][iUnit, windowIndices, 0]
+            miNull = self.ns['mi/null/real'][iUnit, windowIndices, 0]
+            pPref = self.ns['p/pref/real'][iUnit, windowIndices, 0]
+            pNull = self.ns['p/null/real'][iUnit, windowIndices, 0]
+
+            # Skip if there is no significant modulation either direction
+            if np.sum(pPref < alpha) == 0 and np.sum(pNull < alpha) == 0:
+                continue
+
+            # Mask for any bin with modulation in either direction
+            modulated = np.logical_or(pPref < alpha, pNull < alpha)
+
+            #
+            if allowMultiples:
+                for binIndex in np.where(modulated)[0]:
+                    x = miPref[binIndex]
+                    y = miNull[binIndex]
+                    z = self.ns['dsi/dg'][iUnit]
+                    xyz.append([x, y, z])
+
+            else:
+                binIndex = np.argmax(np.abs(miPref[modulated]))
+                x = miPref[modulated][binIndex]
+                y = miNull[modulated][binIndex]
+                z = self.ns['dsi/dg'][iUnit]
+                xyz.append([x, y, z])
+
+        #
+        xyz = np.array(xyz)
+        xyz = np.delete(xyz, np.isnan(xyz).any(1), axis=0)
+
+        #
+        x = xyz[:, 0]
+        y = xyz[:, 1]
+        dsi = np.abs(xyz[:, 2])
+        if directionSelective:
+            include = dsi >= minimumDSI
+        else:
+            include = dsi < minimumDSI
+        ax.scatter(
+            np.clip(x[include], *xylim),
+            np.clip(y[include], *xylim),
+            color='k',
+            edgecolor='none',
+            alpha=1.0,
+            s=5,
+            rasterized=False,
+            clip_on=False,
+        )
+
+        #
+        r, p = pearsonr(x[include], y[include])
+        print(f'r={r:.2f}, p={p:.3f}')
+
+        #
+        x1, x2 = xylim
+        model = LinearRegression()
+        model.fit(x[include].reshape(-1, 1), y[include])
+        ax.plot([x1, x2], model.predict(np.array([x1, x2]).reshape(-1, 1)), color='r', linestyle=':')
+
+        #
+        ax.hlines(0, *xylim, color='k', linestyle=':', lw=1)
+        ax.vlines(0, *xylim, color='k', linestyle=':', lw=1)
+        if ax is None:
+            ax.set_aspect('equal')
+        ax.set_xticks(np.arange(-3, 3 + 1, 1))
+        ax.set_yticks(np.arange(-3, 3 + 1, 1))
+        ax.set_xlim([-3, 3])
+        ax.set_ylim([-3, 3])
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax, xyz, dsi
+
     def scatterModulationByPreference(
         self,
         alpha=0.05,
         windowIndex=5,
         modulationSign=-1,
-        minimumResponseAmplitude=10,
-        minimumSelectivity=0.25,
+        minimumResponseAmplitude=5,
+        minimumSelectivity=0,
         transform=False,
         xyrange=(-3, 3),
-        figsize=(2.5, 5),
+        figsize=(12, 3),
         ):
         """
         """
@@ -952,92 +1402,94 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
         # self._correctModulationIndexForNullProbes()
 
         #
-        fig, ax = plt.subplots()
+        fig, axs = plt.subplots(ncols=len(self.windows), sharey=True, sharex=True)
 
         #
-        include = np.vstack([
-            self.ns['params/pref/real/extra'][:, 0] >= minimumResponseAmplitude,
-            np.logical_or(
-                self.ns['p/pref/real'][:, windowIndex, 0] < alpha,
-                self.ns['p/null/real'][:, windowIndex, 0] < alpha
-            ),
-            np.abs(self.ns['dsi/probe']) >= minimumSelectivity,
-            self.ns['mi/pref/real'][:, windowIndex, 0] < 0 if modulationSign == -1 else self.ns['mi/pref/real'][:, windowIndex, 0] > 0
-        ]).all(0)
-        x = self.ns[f'mi/pref/real'][include, windowIndex, 0]
-        y = self.ns[f'mi/null/real'][include, windowIndex, 0]
-        if transform:
-            x = np.tanh(x)
-            y = np.tanh(y)
-            xyrange = (-1, 1)
-        else:
-            x = np.clip(x, *xyrange)
-            y = np.clip(y, *xyrange)
+        for windowIndex in range(len(self.windows)):
+            ax = axs[windowIndex]
+            include = np.vstack([
+                self.ns['params/pref/real/extra'][:, 0] >= minimumResponseAmplitude,
+                # np.logical_or(
+                #     self.ns['p/pref/real'][:, windowIndex, 0] < alpha,
+                #     self.ns['p/null/real'][:, windowIndex, 0] < alpha
+                # ),
+                np.abs(self.ns['dsi/probe/extra']) >= minimumSelectivity,
+                self.ns['mi/pref/real'][:, windowIndex, 0] < 0 if modulationSign == -1 else self.ns['mi/pref/real'][:, windowIndex, 0] > 0
+            ]).all(0)
+            x = self.ns[f'mi/pref/real'][include, windowIndex, 0]
+            y = self.ns[f'mi/null/real'][include, windowIndex, 0]
+            if transform:
+                x = np.tanh(x)
+                y = np.tanh(y)
+                xyrange = (-1, 1)
+            else:
+                x = np.clip(x, *xyrange)
+                y = np.clip(y, *xyrange)
 
-        #
-        colors = list()
-        ratios = list()
-        markers = list()
-        uniqueColors = (
-            '0.75',
-            '0.75',
-            '0.75', # both
-            'xkcd:gray',
-        )
-        labels = list()
-        for iUnit in range(len(self.ukeys)):
-            if include[iUnit]:
-                fPref = self.ns[f'p/pref/real'][iUnit, windowIndex, 0] < alpha
-                fNull = self.ns[f'p/null/real'][iUnit, windowIndex, 0] < alpha
-                if fNull and fPref:
-                    color = uniqueColors[2]
-                    label = 3
-                elif fNull:
-                    color = uniqueColors[0]
-                    label = 1
-                elif fPref:
-                    color = uniqueColors[1]
-                    label = 2
-                else:
-                    color = uniqueColors[3]
-                    label = 0
-                markers.append('o')
-                colors.append(color)
-                labels.append(label)
-                ratio = self.ns['p/pref/real'][iUnit, windowIndex, 0] - self.ns['p/null/real'][iUnit, windowIndex, 0]
-                ratios.append(ratio)
-
-        #
-        for label, color in zip([1, 2, 3, 0], uniqueColors):
-            mask = np.array(labels) == label
-            ax.scatter(
-                x[mask],
-                y[mask],
-                s=10,
-                color=color,
-                alpha=1,
-                marker='o',
-                clip_on=False,
-                edgecolor='none',
+            #
+            colors = list()
+            ratios = list()
+            markers = list()
+            uniqueColors = (
+                'k',
+                'k',
+                'k', # both
+                'xkcd:gray',
             )
+            labels = list()
+            for iUnit in range(len(self.ukeys)):
+                if include[iUnit]:
+                    fPref = self.ns[f'p/pref/real'][iUnit, windowIndex, 0] < alpha
+                    fNull = self.ns[f'p/null/real'][iUnit, windowIndex, 0] < alpha
+                    if fNull and fPref:
+                        color = uniqueColors[2]
+                        label = 3
+                    elif fNull:
+                        color = uniqueColors[0]
+                        label = 1
+                    elif fPref:
+                        color = uniqueColors[1]
+                        label = 2
+                    else:
+                        color = uniqueColors[3]
+                        label = 0
+                    markers.append('o')
+                    colors.append(color)
+                    labels.append(label)
+                    ratio = self.ns['p/pref/real'][iUnit, windowIndex, 0] - self.ns['p/null/real'][iUnit, windowIndex, 0]
+                    ratios.append(ratio)
 
-        # ax.vlines(0, *xyrange, color='k', linestyle=':')
-        ax.hlines(0, *xyrange, color='k', linestyle='-')
+            #
+            for label, color in zip([1, 2, 3, 0], uniqueColors):
+                mask = np.array(labels) == label
+                ax.scatter(
+                    x[mask],
+                    y[mask],
+                    s=5,
+                    color=color,
+                    alpha=1,
+                    marker='o',
+                    clip_on=False,
+                    edgecolor='none',
+                )
 
-        #
-        f = np.poly1d(np.polyfit(x, y, deg=1))
-        x2 = np.linspace(x.min(), x.max(), 100)
-        ax.plot(x2, f(x2), color='k', linestyle=':')
+            # ax.vlines(0, *xyrange, color='k', linestyle=':')
+            ax.hlines(0, *xyrange, color='k', linestyle=':', lw=0.5)
 
-        #
-        ax.set_ylim(xyrange)
-        if modulationSign == -1:
-            ax.set_xlim([xyrange[0], 0])
-        else:
-            ax.set_xlim([0, xyrange[1]])
-        ax.set_xlabel(r'$MI_{Pref}$')
-        ax.set_ylabel(r'$MI_{Null}$')
-        ax.set_aspect('equal')
+            #
+            f = np.poly1d(np.polyfit(x, y, deg=1))
+            x2 = np.linspace(x.min(), x.max(), 100)
+            ax.plot(x2, f(x2), color='r', linestyle='-')
+
+            #
+            ax.set_ylim(xyrange)
+            if modulationSign == -1:
+                ax.set_xlim([xyrange[0], 0])
+            else:
+                ax.set_xlim([0, xyrange[1]])
+            ax.set_aspect('equal')
+        axs[0].set_xlabel(r'$MI_{Pref}$')
+        axs[0].set_ylabel(r'$MI_{Null}$')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
@@ -1045,7 +1497,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
         #
         self.ns[f'mi/null/real'] = miRaw
 
-        return fig, ax, x, y
+        return fig, axs, x, y
 
     def histSaccadeResponseAmplitudeBySelectivity(
         self,
@@ -1136,9 +1588,56 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
         return fig, ax, amplitude
 
+    def plotExamplePeths2(
+        self,
+        responseWindow=(-10, 10),
+        binsize=0.1,
+        figsize=(4, 5)
+        ):
+        """
+        """
+
+        fig, axs = plt.subplots(nrows=len(self.examples), ncols=2, sharey=True)
+        axs = np.atleast_2d(axs)
+        for i, ukey in enumerate(self.examples):
+            iUnit = self._indexUnitKey(ukey)
+            session = self._getSessionFromUnitKey(ukey)
+            unit = session.population.indexByCluster(ukey[-1])
+            gratingTimestamps = session.load('stimuli/dg/grating/timestamps')
+            gratingMotion = session.load('stimuli/dg/grating/motion')
+            pd = self.preference[iUnit]
+            nd = -1 if pd == 1 else 1
+            for j, gm in enumerate([pd, nd]):
+                # t, fr = unit.kde(
+                #     gratingTimestamps[gratingMotion == gm],
+                #     responseWindow=responseWindow,
+                #     binsize=binsize,
+                #     sigma=0.05
+                # )
+                # axs[i, j].plot(t, fr, color='k')
+                t, M, spikeTimes = psth2(
+                    gratingTimestamps[gratingMotion == gm],
+                    unit.timestamps,
+                    window=responseWindow,
+                    binsize=binsize,
+                    returnTimestamps=True
+                )
+                for y, t in enumerate(spikeTimes):
+                    # axs[i, j].vlines(t, y - 0.45, y + 0.45, color='k', alpha=0.3, lw=1)
+                    yScaled = y * 1.0
+                    axs[i, j].scatter(t, np.full(len(t), yScaled), marker='|', edgecolor='none', facecolor='C0', lw=1.0, alpha=0.5, s=5)
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, axs
+
     def plotExamplePeths(
         self,
         componentIndex=0,
+        ymaxes=(50, 50),
         figsize=(5, 2)
         ):
         """
@@ -1182,7 +1681,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
             axs[j + 1].plot(t2, y2, color='k')
 
             #
-            dsi = self.ns['dsi/probe'][iUnit]
+            dsi = self.ns['dsi/probe/extra'][iUnit]
             axs[j].set_title(f'DSI={dsi:.3f}', fontsize=10)
             axs[j].set_xlabel('Time from probe (sec)')
 
@@ -1198,6 +1697,14 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
                 ax.set_ylim(ylim)
             axs[j + 1].set_yticklabels([])
             
+        #
+        axs[0].set_ylim([-5, ymaxes[0]])
+        axs[1].set_ylim([-5, ymaxes[0]])
+        axs[2].set_ylim([-5, ymaxes[1]])
+        axs[3].set_ylim([-5, ymaxes[1]])
+        for ax in axs:
+            ax.set_yticks([-5, 0, 50])
+
 
         #
         axs[0].set_ylabel('FR (SD)')
@@ -1211,8 +1718,8 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
     def histDirectionSelectivity(
         self,
-        threshold=0.5,
-        minmumResponseAmplitude=10,
+        threshold=0.3,
+        minmumResponseAmplitude=5,
         nbins=30,
         figsize=(3, 2),
         ):
@@ -1221,7 +1728,7 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
         fig, ax = plt.subplots()
         mask = np.abs(self.ns['params/pref/real/extra'][:, 0]) > minmumResponseAmplitude
-        dsi = self.ns['dsi/probe'][mask]
+        dsi = self.ns['dsi/dg'][mask]
         ax.hist(
             list(map(np.abs, (dsi[np.abs(dsi) < threshold], dsi[np.abs(dsi) >= threshold]))),
             color=('w', 'k'),
@@ -1278,3 +1785,38 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
         fig.tight_layout()
 
         return fig, (ax,), data
+
+    def plotDirectionSelectivityCorrelationByLatency(
+        self,
+        minimumDirectionSelectivityIndex=0,
+        figsize=(3, 4),
+        ):
+        """
+        """
+
+        t = self.windows.mean(1)
+        coeffs = list()
+        for windowIndex in range(len(self.windows)):
+            mask = np.vstack([
+                np.invert(np.isnan(self.ns['dsi/probe/extra'])),
+                np.invert(np.isnan(self.ns['dsi/probe/peri'][:, windowIndex])),
+                self.ns['dsi/probe/extra'] >= minimumDirectionSelectivityIndex
+            ]).all(0)
+            r, p = pearsonr(
+                self.ns['dsi/probe/extra'][mask],
+                self.ns['dsi/probe/peri'][mask, windowIndex]
+            )
+            coeffs.append(r)
+        coeffs = np.array(coeffs)
+
+        #
+        fig, ax = plt.subplots()
+        ax.plot(t, coeffs, color='k')
+        ax.set_ylim([-1, 1])
+        ax.set_xlabel('Saccade-probe latency (sec)')
+        ax.set_ylabel('Corr. Coeff.')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax

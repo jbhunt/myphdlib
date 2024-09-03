@@ -210,10 +210,12 @@ class Namespace():
             'p/null/fictive': None,
 
             # Direction selectivity index
-            'dsi/probe': None,
+            'dsi/probe/extra': None,
+            'dsi/probe/peri': None,
             'dsi/saccade/real': None,
-            'dsi/saccade/fictive/': None,
+            'dsi/saccade/fictive': None,
             'dsi/bar': None,
+            'dsi/dg': None,
 
             # Global variables
             'globals/factor': None, # Scaling factor (standard deviation of baseline firing rate for preferred direction)
@@ -322,7 +324,11 @@ class AnalysisBase():
                     else:
                         if data.size == data.shape[0]:
                             data = data.flatten()
-                        self.ns[path] = data[mask]
+                        try:
+                            self.ns[path] = data[mask]
+                        except:
+                            print(f'Warning: failed to load {path}')
+                            pass
 
         return
 

@@ -43,6 +43,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         binsize=0.01,
         smoothingKernelWidth=0.01,
         saccadeType='real',
+        probeDirection='pref',
         ):
         """
         """
@@ -60,12 +61,21 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         if ukey is not None:
             self.ukey = ukey
 
+        #
+        if probeDirection == 'pref':
+            gratingMotion = self.preference[self.iUnit]
+        elif probeDirection == 'null':
+            if self.preference[self.iUnit] == -1:
+                gratingMotion = 1
+            else:
+                gratingMotion = -1
+
         # Compute peri-saccadic response
         probeTimestamps, probeLatencies, saccadeLabels, gratingMotionDuringProbes = self._loadEventDataForProbes()
         trialIndicesPerisaccadic = np.vstack([
             probeLatencies >= perisaccadicWindow[0],
             probeLatencies <= perisaccadicWindow[1],
-            gratingMotionDuringProbes == self.preference[self.iUnit]
+            gratingMotionDuringProbes == gratingMotion
         ]).all(0)
 
         # NOTE: This might fail with not enough spikes in the peri-saccadic window
@@ -236,6 +246,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
                         ukey=self.ukeys[self.iUnit],
                         responseWindow=responseWindow,
                         perisaccadicWindow=perisaccadicWindow,
+                        probeDirection=probeDirection
                     )
 
                     # Standardize the PETHs

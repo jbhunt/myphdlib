@@ -306,7 +306,13 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         aReal, aFictive = self.measureSaccadeResponseAmplitude()
         for iUnit in range(nUnits):
 
-            # Identify type III units (same for both methods)
+            #
+            mi1 = self.ns['mi/pref/fictive'][iUnit, 0, 0]
+            mi2 = self.ns['mi/null/fictive'][iUnit, 0, 0]
+            if all(np.isnan([mi1, mi2])):
+                continue
+
+            # 
             check = np.vstack([
                 aReal[iUnit] > (-1 * minimumResponseAmplitude),
                 aReal[iUnit] < minimumResponseAmplitude,
@@ -530,11 +536,13 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
 
     def _plotAverageSaccadeResponseBySaccadeType(
         self,
-        axs,
+        axs=None,
         labels=(1, 2),
         responseWindow=(-0.2, 0.5),
         baselineWindow=(-1, -0.5),
         centeredWindow=(-0.2, 0.2),
+        parametric=True,
+        figsize=None
         ):
         """
         """
@@ -548,8 +556,10 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
             self.tSaccade >= baselineWindow[0],
             self.tSaccade <= baselineWindow[1]
         )
-        tCentered = np.linspace(*centeredWindow, 100)
+        tCentered = np.linspace(*centeredWindow, 31)
         result = list()
+        if axs is None:
+            fig, axs = plt.subplots(ncols=2, sharex=True, sharey=True)
         for ax, label in zip(axs, labels):
             mask = np.vstack([
                 u == label,
@@ -559,65 +569,79 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
                 'fictive': np.full([mask.sum(), tCentered.size], np.nan),
             }
             for i, iUnit in enumerate(np.where(mask)[0]):
+
+                #
                 session = self._getSessionFromUnitKey(self.ukeys[iUnit])
+                unit = session.population.indexByCluster(self.ukeys[iUnit][-1])
+                bins = np.arange(0, 1000 + 0.01, 0.01)
+                counts, edges = np.histogram(unit.timestamps, bins=bins)
+                fr = counts / 0.01
+                sigma = fr.std()
+
+                #
                 saccadeDirection = convertGratingMotionToSaccadeDirection(
                     self.preference[iUnit],
                     session.eye,
                 )
+
+                #
                 for saccadeType in ('real', 'fictive'):
                     psth = self.ns[f'psths/{saccadeDirection}/{saccadeType}'][iUnit, :]
                     zeroed = psth[binIndicesForResponse] - psth[binIndicesForBaseline].mean()
                     iPeak = np.argmax(np.abs(zeroed))
                     tPeak = self.tSaccade[binIndicesForResponse][iPeak]
+                    if zeroed[iPeak] < 0:
+                        coef = -1
+                    else:
+                        coef = +1
+
+                    #
+                    standardized = zeroed / sigma # Stand
                     if saccadeType == 'real':
-                        scalingFactor = zeroed[iPeak]
+                        scalingFactor = np.abs(standardized).max()
+                    scaled = standardized / scalingFactor
+
+                    #
                     centered = np.interp(
                         tCentered + tPeak,
                         self.tSaccade[binIndicesForResponse],
-                        zeroed,
+                        scaled,
                         left=np.nan,
                         right=np.nan
                     )
-                    # scaled = centered / scalingFactor
-                    scaled = centered
-                    if scaled[np.argmax(np.abs(scaled))] < 0:
-                        scaled *= -1
-                    psths[saccadeType][i] = scaled
+                    signed = centered * coef
+                    psths[saccadeType][i] = signed
             result.append(psths)
 
             #
-            ax.plot(
-                tCentered,
-                np.nanmean(psths['real'], axis=0),
-                color='k',
-                alpha=0.5,
-                label='Real'
-            )
-            e = sem(psths['real'], axis=0, nan_policy='omit') * 1.96
-            e = np.nanstd(psths['real'], axis=0)
-            ax.fill_between(
-                tCentered,
-                np.nanmean(psths['real'], axis=0) - e,
-                np.nanmean(psths['real'], axis=0) + e,
-                color='k',
-                alpha=0.1,
-            )
-            ax.plot(
-                tCentered,
-                np.nanmean(psths['fictive'], axis=0),
-                color='r',
-                alpha=0.5,
-                label='Fictive'
-            )
-            e = sem(psths['fictive'], axis=0, nan_policy='omit') * 1.96
-            e = np.nanstd(psths['fictive'], axis=0)
-            ax.fill_between(
-                tCentered,
-                np.nanmean(psths['fictive'], axis=0) - e,
-                np.nanmean(psths['fictive'], axis=0) + e,
-                color='r',
-                alpha=0.1,
-            )
+            for saccadeType, color in zip(['real', 'fictive'], ['k', 'r']):
+                if parametric:
+                    y1 = np.nanmean(psths[saccadeType], axis=0)
+                    error = np.array([
+                        sem(sample[np.invert(np.isnan(sample))])
+                            for sample in psths[saccadeType].T
+                    ])
+                    y2 = y1 - error
+                    y3 = y1 + error
+                else:
+                    y1 = np.nanmedian(psths[saccadeType], axis=0)
+                    y2 = np.nanpercentile(psths[saccadeType], 25, axis=0)
+                    y3 = np.nanpercentile(psths[saccadeType], 75, axis=0)
+                ax.plot(
+                    tCentered,
+                    y1,
+                    color=color,
+                    alpha=0.5,
+                    label=saccadeType,
+                )
+                ax.fill_between(
+                    tCentered,
+                    y2,
+                    y3,
+                    color=color,
+                    alpha=0.1,
+                    edgecolor='none',
+                )
 
         #
         for ax in axs:
@@ -640,7 +664,14 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
             ax.set_xticks([centeredWindow[0], 0, centeredWindow[1]])
             ax.set_xlim(centeredWindow)
 
-        return
+        #
+        fig = axs[0].figure
+        if figsize is not None:
+            fig.set_figwidth(figsize[0])
+            fig.set_figheight(figsize[1])
+            fig.tight_layout()
+
+        return fig, axs
     
     def plotEventRelatedActivity(
         self,

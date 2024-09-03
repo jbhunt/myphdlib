@@ -15,6 +15,7 @@ from scipy.ndimage import gaussian_filter1d
 from matplotlib_venn import venn2
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from myphdlib.general.toolkit import ttest_1samp_with_weights
+from scipy.stats import pearsonr
 
 def weighted_quantiles(values, weights, quantiles=0.5, interpolate=False):
 
@@ -622,6 +623,145 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         )
 
         #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, ax
+
+    def crossCorrelateModulation(
+        self,
+        minimumResponseAmplitude=5,
+        windowIndices=(4, 5, 6)
+        ):
+        """
+        """
+
+        nUnits = len(self.ukeys)
+        tRaw = self.windows.mean(1)
+        tExpanded = np.linspace(tRaw.min(), tRaw.max(), 100)
+        ccg = list()
+        for iUnit in range(nUnits):
+
+            #
+            params = self.ns['params/pref/real/extra'][iUnit]
+            abcd = np.delete(params, np.isnan(params))
+            A, B, C = np.split(abcd[:-1], 3)
+
+            #
+            if len(B) < 2:
+                continue
+            if any([A[0] < minimumResponseAmplitude, A[1] < minimumResponseAmplitude]):
+                continue
+            
+            #
+            suppressed = np.vstack([
+                self.ns['p/pref/real'][iUnit, windowIndices, 0] < 0.05,
+                self.ns['mi/pref/real'][iUnit, windowIndices, 0] < 0
+            ]).all(0)
+            if any(suppressed) == False:
+                continue
+
+            #
+            suppressed = np.vstack([
+                self.ns['p/pref/real'][iUnit, windowIndices, 1] < 0.05,
+                self.ns['mi/pref/real'][iUnit, windowIndices, 1] < 0
+            ]).all(0)
+            if any(suppressed) == False:
+                continue
+
+            #
+            corr = list()
+            for lag in np.linspace(-0.3, 0.3, 100):
+                y1 = np.interp(
+                    tExpanded,
+                    tRaw,
+                    self.ns['mi/pref/real'][iUnit, :, 0],
+                    left=np.nan,
+                    right=np.nan
+                )
+                y2 = np.interp(
+                    tExpanded + lag,
+                    tRaw,
+                    self.ns['mi/pref/real'][iUnit, :, 1],
+                    left=np.nan,
+                    right=np.nan
+                )
+                m = np.logical_not(
+                    np.logical_or(
+                        np.isnan(y1),
+                        np.isnan(y2)
+                    )
+                )
+                r, p = pearsonr(y1[m], y2[m])
+                corr.append(r)
+            ccg.append(corr)
+
+        return np.array(ccg)
+
+    def scatterModulationByComponent(
+        self,
+        t=None,
+        minimumResponseAmplitude=5,
+        figsize=(2, 2),
+        suppressPlot=False,
+        ):
+        """
+        Create a scatterplot which relates modulation of the largest component
+        to that of the second largest component
+        """
+
+        nUnits = len(self.ukeys)
+        xy = list()
+        for iUnit in range(nUnits):
+
+            #
+            params = self.ns['params/pref/real/extra'][iUnit]
+            abcd = np.delete(params, np.isnan(params))
+            A, B, C = np.split(abcd[:-1], 3)
+
+            #
+            if len(B) < 2:
+                continue
+            if any([A[0] < minimumResponseAmplitude, A[1] < minimumResponseAmplitude]):
+                continue
+
+            # Largest component
+            y1 = self.ns['mi/pref/real'][iUnit, :, 0]
+            t1 = self.windows.mean(1) + B[0]
+
+            # Second largest component
+            y2 = self.ns['mi/pref/real'][iUnit, :, 1]
+            t2 = self.windows.mean(1) + B[1]
+
+            #
+            if t is None:
+                binIndex = np.argmax(np.abs(y1))
+                t = t1[binIndex]
+            y = np.interp(t, t2, y2, left=np.nan, right=np.nan)
+            x = y1[np.argmax(np.abs(y1))]
+            if np.any(np.isnan([x, y])):
+                continue
+            xy.append([x, y])
+
+        #
+        xy = np.array(xy)
+        xy = np.clip(xy, -3, 3)
+        if len(xy) == 0:
+            return None, None
+
+        if suppressPlot:
+            r, p = pearsonr(xy[:, 0], xy[:, 1])
+            return r, p, xy
+
+        #
+        fig, ax = plt.subplots()
+        ax.scatter(xy[:, 0], xy[:, 1], s=5, color='k', edgecolor='none', alpha=0.5, clip_on=False)
+        ax.set_xlim([-3, 3])
+        ax.set_ylim([-3, 3])
+        ax.set_xlabel(r'$MI_{1}$')
+        ax.set_ylabel(r'$MI_{2}$')
+        ax.set_aspect('equal')
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()

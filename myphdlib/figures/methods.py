@@ -695,16 +695,18 @@ class EyeVelocityDistribution(AnalysisBase):
     def plotVelocityHistogram(
         self,
         saccadeDirection='temporal',
-        vrange=(-10, 10),
+        vrange=(-5, 5),
         nBins=200,
+        ax=None,
         figsize=(5, 2),
-        colors=('r', 'b'),
-        labels=('Left', 'Right')
         ):
         """
         """
 
-        fig, ax = plt.subplots()
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.figure
 
         #
         samples = {
@@ -727,6 +729,9 @@ class EyeVelocityDistribution(AnalysisBase):
 
         #
         for session in self.sessions:
+
+            #
+            sLeft, sRight, sCtrl = list(), list(), list()
         
             #
             for eye, d1, d2 in iterable:
@@ -741,7 +746,11 @@ class EyeVelocityDistribution(AnalysisBase):
                     v = dx[i]
                     if d2 == flipDirection:
                         v *= -1
-                    samples[d2].append(v)
+                    if d2 == 'left':
+                        sLeft.append(v)
+                    elif d2 == 'right':
+                        sRight.append(v)
+                    # samples[d2].append(v)
                 nSaccades = int(round(np.mean([
                     saccadeWaveforms['nasal'].shape[0],
                     saccadeWaveforms['temporal'].shape[0]
@@ -750,39 +759,71 @@ class EyeVelocityDistribution(AnalysisBase):
                 for v in np.random.choice(velocity, size=nSaccades, replace=False):
                     if d2 == flipDirection:
                         v *= -1
-                    samples['control'].append(v)
+                    sCtrl.append(v)
+                    # samples['control'].append(v)
+
+                
+            #
+            samples['control'].append(sCtrl)
+            samples['left'].append(sLeft)
+            samples['right'].append(sRight)
 
         #
+        freqs = {
+            'control': list(),
+            'left': list(),
+            'right': list()
+        }
         for i, k in enumerate(['left', 'control', 'right']):
-            counts, edges = np.histogram(samples[k], range=vrange, bins=nBins)
-            y = counts / counts.sum()
-            x = edges[:-1] + ((edges[1] - edges[0]) / 2)
-            ax.step(
-                x,
-                y,
-                where='mid',
-                color='k'
-            )
-            continue
-            ax.plot(x, y, color=colors[i], label=labels[i])
-            ax.fill_between(x, 0, y, color=colors[i], alpha=0.2)
+            nSamples = len(samples[k])
+            for iSample in range(nSamples):
+                counts, edges = np.histogram(samples[k][iSample], range=vrange, bins=nBins)
+                y = counts / counts.sum()
+                freqs[k].append(y)
+                x = edges[:-1] + ((edges[1] - edges[0]) / 2)
+                continue
+                ax.plot(
+                    x,
+                    y,
+                    color='0.7',
+                    lw=0.5,
+                    alpha=1.0
+                )
+                # ax.step(
+                #     x,
+                #     y,
+                #     where='mid',
+                #     color='k'
+                # )
+            # ax.plot(x, y, color=colors[i], label=labels[i])
+            # ax.fill_between(x, 0, y, color=colors[i], alpha=0.2)
 
         #
-        x = np.nanmean(samples['control'])
-        e = np.nanstd(samples['control']) * 1.96
+        for k in freqs.keys():
+            y = np.array(freqs[k]).mean(0)
+            e = np.std(freqs[k], axis=0)
+            ax.plot(x, y, color='k')
+            ax.fill_between(
+                x,
+                y - e,
+                y + e,
+                color='k',
+                edgecolor='none',
+                alpha=0.1
+            )
+
+        #
         y1, y2 = ax.get_ylim()
-        # ax.fill_between([x - e, x + e], y1, y2, color='k', alpha=0.1, label='Non-saccadic')
         ax.set_ylim([0, y2])
-        # ax.scatter(x, y2 / 2, color='k', marker='o', edgecolor='none')
-        # ax.hlines(y2 / 2, x - e, x + e, color='k')
 
         #
         # ax.legend()
         ax.set_xlabel('Velocity (pix/sec)')
         ax.set_ylabel('Probability')
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
+        if ax is None == False:
+            fig.set_figwidth(figsize[0])
+            fig.set_figheight(figsize[1])
+            fig.tight_layout()
                 
         return fig, ax
     
@@ -912,10 +953,11 @@ class ProbeLatencyAnalysis(AnalysisBase):
 
     def histProbeLatency(
         self,
-        trange=(-3, 3),
+        trange=(-10, 10),
         binsize=0.1,
         leftEdge=-0.5,
         rightEdge=0.5,
+        ax=None,
         figsize=(2.5, 1.5)
         ):
         """
@@ -935,16 +977,35 @@ class ProbeLatencyAnalysis(AnalysisBase):
         f = np.array(f)
         t = np.arange(trange[0], trange[1], binsize) + (binsize / 2)
 
-        fig, ax = plt.subplots()
+        #
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.figure
 
+        #
+        # for y in f:
+        #     ax.plot(t, y, color='0.7', alpha=1, lw=0.5)
         y = f.mean(0)
-        e = f.std(0)
-        ax.step(
+        ax.plot(t, y, color='k')
+        e = np.std(f, axis=0)
+        ax.fill_between(
             t,
-            y,
-            where='mid',
-            color='0.5',
+            y - e,
+            y + e,
+            color='k',
+            edgecolor='none',
+            alpha=0.1
         )
+
+        # y = f.mean(0)
+        # e = f.std(0)
+        # ax.step(
+        #     t,
+        #     y,
+        #     where='mid',
+        #    color='0.5',
+        # )
         # ax.plot(
         #     t,
         #     y,
@@ -975,9 +1036,10 @@ class ProbeLatencyAnalysis(AnalysisBase):
         # )
         ax.set_ylim(ylim)
         ax.set_xlim(trange)
-        ax.set_xticks([-3, -1.5, 0, 1.5, 3])
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
+        ax.set_xticks([-10, -5, 0, 5, 10])
+        if ax is None:
+            fig.set_figwidth(figsize[0])
+            fig.set_figheight(figsize[1])
+            fig.tight_layout()
 
         return fig, ax
