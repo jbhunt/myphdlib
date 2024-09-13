@@ -110,23 +110,63 @@ class StimuliProcessingMixinDreadds2(
         else:
             thisBlockBools = np.logical_and((pulseTimestamps > intervalTimestamps[fileIndex-1]), \
                                 (pulseTimestamps < intervalTimestamps[fileIndex]))
-        assert thisBlockBools.sum() == metadata.shape[0], str(file) + " has pulse/event count mismatch!"
+        print(thisBlockBools.sum())
+        print(metadata.shape[0])
+        # Mismatch detected - find the time window where the missed pulse will be.
+        #                   Response - kick out pulse, continue?
+        #                   More than one pulse missing, idk for now. - gnb and ab
+        if thisBlockBools.sum() == metadata.shape[0]:
+            pulseCountMismatch = False
+        else:
+            pulseCountMismatch = True
 
-        # Timing conditions
-        thisBlockPulses = pulseTimestamps[thisBlockBools]
-        thisBlockDiffs = np.diff(thisBlockPulses)
-        fromFileDiffs = np.diff(metadata[:,4])
-        
-        # Make sure the timing between pulses isn't too large
-        timingThresh = 0.1
-        timingDifferences = np.absolute(np.subtract(fromFileDiffs, thisBlockDiffs))
-        assert not (timingDifferences > timingThresh).sum() > 1 # Direction change must be accoutned for.
-        metadataHolder[eventIndex:eventIndex + blockLength, 0:5] = metadata
 
-        # adding a column that is 0 if drifting grating, 1 if fictive saccade
-        metadataHolder[eventIndex:eventIndex + blockLength, 5] = 0
-        metadataHolder[eventIndex:eventIndex + blockLength, 7] = orientation
-        eventIndex += blockLength
+        # Additional data massaging if there's an issue
+        # Situations:
+        # - pulse dropped, yields count mismatch and time mismatch.
+        # - pulse dropped, yields count mismatch, no timing mismatch (cannot easily identify timing)
+        # - pulse dropped and pulse added, yields potential timing mismatch (worst, don't deal w/ this unless
+        #           there is evidence that this is actually a problem)
+        if pulseCountMismatch:
+            # Timing conditions
+            thisBlockPulses = pulseTimestamps[thisBlockBools]
+            thisBlockDiffs = np.diff(thisBlockPulses)
+            fromFileDiffs = np.diff(metadata[:,4])
+            
+            # Make sure the timing between pulses isn't too large
+            timingThresh = 0.1
+            #timingDifferences = np.zeros((np.min(fromFileDiffs.shape[0], thisBlockDiffs.shape[0])))
+
+            prevPulseMissing = False
+            missingPulsesOffset = 0
+            for i in range(fromFileDiffs.shape[0]):
+                if prevPulseMissing:
+                    metadataHolder[eventIndex+i, :] = np.nan
+                    #i feel like we need to add the metadata for this iteration too, not just the previous missing pulse
+                    #metadataHolder[eventIndex+i+1, 0:5] = metadata[eventIndex+i+1, 0:5]
+                    #metadataHolder[eventIndex+i+1, 5] = 0
+                    #metadataHolder[eventIndex+i+1, 7] = orientation
+                    prevPulseMissing = False
+                else:
+                    thisDiff = fromFileDiffs[i] - thisBlockDiffs[i - missingPulsesOffset] #moved subtracting offset to thisBlockDiffs isntead
+                    # Dummy data for this row to keep things rolling
+                    if thisDiff > timingThresh:
+                        prevPulseMissing = True
+                        missingPulsesOffset += 1
+                    # True data populating the structure
+                    metadataHolder[eventIndex+i, 0:5] = metadata[i, 0:5]
+                    metadataHolder[eventIndex+i, 5]   = 0
+                    metadataHolder[eventIndex+i, 7]   = orientation
+                    #timingDifferences[it] = fromFileDiffs[it] - thisBlockDiffs[it]
+
+        # no pulseCountMismatch, whole block is good. Load the whole kaboodle
+        else:
+            metadataHolder[eventIndex:eventIndex + blockLength, 0:5] = metadata
+
+            # adding a column that is 0 if drifting grating, 1 if fictive saccade
+            metadataHolder[eventIndex:eventIndex + blockLength, 5] = 0
+            metadataHolder[eventIndex:eventIndex + blockLength, 7] = orientation
+            eventIndex += blockLength
 
         return eventIndex, metadataHolder
 
@@ -159,48 +199,57 @@ class StimuliProcessingMixinDreadds2(
                 thisBlockBools = np.logical_and((pulseTimestamps > intervalTimestamps[fileIndex-1]), \
                                     (pulseTimestamps < intervalTimestamps[fileIndex]))
             print(thisBlockBools.sum())
-            assert thisBlockBools.sum() == allEvents.shape[0], str(file) + " has pulse/event count mismatch!"
-            thisBlockPulses = pulseTimestamps[thisBlockBools]
-            thisBlockDiffs = np.diff(thisBlockPulses)
-            thisBlockDiffs = np.append(thisBlockDiffs, 999)
-            
-            # Iterate down pulses. Check the event type metadata of each one. Then, check distance from next.
-            # Depending on metadata condition, different timiing allowances are permitted.
-            pulseIndex = 0
-            trialIndex = 0
-            while pulseIndex < thisBlockPulses.shape[0]:
-                eventType = allEvents[pulseIndex]
-                trialType = allTrials[trialIndex]
-                if thisBlockDiffs[pulseIndex] > 0.4:
-                    assert (trialType[2] == 'probe') or (trialType[2] == 'saccade'), \
-                        "Good error message!"
-                    if trialType[2] == 'probe':
-                        metadataHolder[eventIndex, 0] = 3.0
-                        metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
-                        metadataHolder[eventIndex, 5] = 1
-                        metadataHolder[eventIndex, 6] = 0
-                    elif trialType[2] == 'saccade':
+            #assert thisBlockBools.sum() == allEvents.shape[0], str(file) + " has pulse/event count mismatch!"
+            if thisBlockBools.sum() == allEvents.shape[0]:
+                pulseCountMismatch = False
+            else:
+                pulseCountMismatch = True
+            if pulseCountMismatch:
+                #stuff
+                #ok worst case scenario could we adopt the cohort11 method? just skip the block essentially and add 160 to eventIndex?
+                #or would that mess things up in other places if cohort is not 11?
+            else:
+                thisBlockPulses = pulseTimestamps[thisBlockBools]
+                thisBlockDiffs = np.diff(thisBlockPulses)
+                thisBlockDiffs = np.append(thisBlockDiffs, 999)
+                
+                # Iterate down pulses. Check the event type metadata of each one. Then, check distance from next.
+                # Depending on metadata condition, different timiing allowances are permitted.
+                pulseIndex = 0
+                trialIndex = 0
+                while pulseIndex < thisBlockPulses.shape[0]:
+                    eventType = allEvents[pulseIndex]
+                    trialType = allTrials[trialIndex]
+                    if thisBlockDiffs[pulseIndex] > 0.4:
+                        assert (trialType[2] == 'probe') or (trialType[2] == 'saccade'), \
+                            "Good error message!"
+                        if trialType[2] == 'probe':
+                            metadataHolder[eventIndex, 0] = 3.0
+                            metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
+                            metadataHolder[eventIndex, 5] = 1
+                            metadataHolder[eventIndex, 6] = 0
+                        elif trialType[2] == 'saccade':
+                            metadataHolder[eventIndex, 0] = 5.0
+                            metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
+                            metadataHolder[eventIndex, 5] = 1
+                            metadataHolder[eventIndex, 6] = 1
+                        eventIndex += 1
+                        pulseIndex    += 1 
+                        trialIndex    += 1
+                    else:
+                        assert trialType[2] == 'combined', "Invalid trialtype found : " + str(trialType[2])
+                        assert pulseIndex != thisBlockPulses.shape[0] - 1, "Combined trial is last pulse, but only one found."
                         metadataHolder[eventIndex, 0] = 5.0
                         metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
                         metadataHolder[eventIndex, 5] = 1
-                        metadataHolder[eventIndex, 6] = 1
-                    eventIndex += 1
-                    pulseIndex    += 1 
-                    trialIndex    += 1
-                else:
-                    assert trialType[2] == 'combined', "Invalid trialtype found : " + str(trialType[2])
-                    assert pulseIndex != thisBlockPulses.shape[0] - 1, "Combined trial is last pulse, but only one found."
-                    metadataHolder[eventIndex, 0] = 5.0
-                    metadataHolder[eventIndex, 1] = allTrials[trialIndex][1]
-                    metadataHolder[eventIndex, 5] = 1
-                    metadataHolder[eventIndex, 6] = 2
-                    metadataHolder[eventIndex + 1, 0] = 3.0
-                    metadataHolder[eventIndex + 1, 1] = allTrials[trialIndex][1]
-                    metadataHolder[eventIndex + 1, 5] = 1
-                    metadataHolder[eventIndex + 1, 6] = 2
-                    pulseIndex    += 2 # Two associated pulses within the index.
-                    trialIndex    += 1
-                    eventIndex += 2
+                        metadataHolder[eventIndex, 6] = 2
+                        metadataHolder[eventIndex + 1, 0] = 3.0
+                        metadataHolder[eventIndex + 1, 1] = allTrials[trialIndex][1]
+                        metadataHolder[eventIndex + 1, 5] = 1
+                        metadataHolder[eventIndex + 1, 6] = 2
+                        pulseIndex    += 2 # Two associated pulses within the index.
+                        trialIndex    += 1
+                        eventIndex += 2
 
         return eventIndex, metadataHolder
 
