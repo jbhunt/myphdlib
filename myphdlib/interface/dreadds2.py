@@ -9,6 +9,8 @@ import pathlib as pl
 import numpy as np
 import re
 
+import code
+
 class StimuliProcessingMixinDreadds2(
     ):
     """
@@ -33,11 +35,19 @@ class StimuliProcessingMixinDreadds2(
         filtered = filterPulsesFromPhotologicDevice(labjackData[:, 6],
             minimumPulseWidthInSeconds=0.013)
         iPulses = np.where(np.diff(filtered) > 0.5)[0]
+        iPulsesFall = np.where(np.diff(filtered) < -0.5)[0] # fall times, should be one for each.
+        
+        # Return pulseDurations for use in pulsewidth checking later :)
+        # idk if adding it right away breaks something
+        pulseDurations = np.subtract(iPulsesFall, iPulses)        
+
         iIntervals = np.where(np.diff(iPulses) > 16000)[0] #figure out threshold value 
         iIntervals2 = iPulses[iIntervals]
         pulseTimestamps = timestamps[iPulses]
         intervalTimestamps = (timestamps[iIntervals2] + 3)
-        return pulseTimestamps, intervalTimestamps, iPulses
+        # DEBUG, remove - Sept 16th, 2024
+        code.interact(local=dict(globals(), **locals())) 
+        return pulseTimestamps, intervalTimestamps, iPulses, pulseDurations
 
     def _createMetadataFileList(self, pulseTimestamps, intervalTimestamps
         ):
@@ -158,6 +168,7 @@ class StimuliProcessingMixinDreadds2(
                     metadataHolder[eventIndex+i, 5]   = 0
                     metadataHolder[eventIndex+i, 7]   = orientation
                     #timingDifferences[it] = fromFileDiffs[it] - thisBlockDiffs[it]
+            eventIndex += blockLength
 
         # no pulseCountMismatch, whole block is good. Load the whole kaboodle
         else:
@@ -204,15 +215,104 @@ class StimuliProcessingMixinDreadds2(
                 pulseCountMismatch = False
             else:
                 pulseCountMismatch = True
+            
+            # For pulse diagnosis and metadata cleaning
+            thisBlockPulses = pulseTimestamps[thisBlockBools]
+            thisBlockDiffs = np.diff(thisBlockPulses)
+            thisBlockDiffs = np.append(thisBlockDiffs, 999) # arbitrary dist to next block
+
+            pulseWidthThreshold = 100
+            timeToNextPulseThreshold = 2.1
+            
+            # Starting pulse diagnosis 
             if pulseCountMismatch:
-                #stuff
-                #ok worst case scenario could we adopt the cohort11 method? just skip the block essentially and add 160 to eventIndex?
-                #or would that mess things up in other places if cohort is not 11?
+                pulseIndex = 0
+                trialIndex = 0
+                inBlockIter = 0
+                missingPulsesOffset = 0
+                pulseDurationOffset = 0
+                while inBlockIter < 160: # Expecting 160 events for each block
+                    eventType = allEvents[pulseIndex]
+                    trialType = allTrials[trialIndex]
+                    #the problem with using arrays that were calculated originally (pulseDurations & thisBlockDiffs)
+                    #is that we have to correct every time we have an issue
+                    pulseDuration = pulseDurations[eventIndex + inBlockIter - missingpulsesOffset - pulseDurationOffset]
+                    pulseWidthViolation = (pulseDuration > pulseWidthThreshold)
+                    timeToNextPulseViolation = thisBlockDiffs[inBlockIter - missingPulsesOffset - pulseDurationOffset] > timeToNextPulseThreshold
+                    if pulseWidthViolation:
+                        metadataHolder[eventIndex + inBlockIter, :] = np.nan
+                        metadataHolder[eventIndex + inBlockIter + 1, :] = np.nan
+                        # NaN this and the next entry since two signals have been fused and cannot be used. 
+                        inBlockIter += 2
+                        pulseIndex += 2
+                        trialIndex += 1
+                        pulseDurationOffset +=1
+                        #as this is set up, we cannot check if we are missing a pulse directly after a pulse width violation
+                        #maybe add this but i dont think it will be fatal msot of the time
+                    else:
+                        if timeToNextPulseViolation:
+                              #because we know that there is a long time to next pulse, know it cannot be combined event
+                              #were going to populate first because we will always populate this row regardless of whether the next pulse has issue
+                            assert (trialType[2] == 'probe') or (trialType[2] == 'saccade'), \
+                                    "Good error message!"
+                            if trialType[2] == 'probe':
+                                metadataHolder[eventIndex + inBlockIter, 0] = 3.0
+                                metadataHolder[eventIndex + inBlockIter, 1] = allTrials[trialIndex][1]
+                                metadataHolder[eventIndex + inBlockIter, 5] = 1
+                                metadataHolder[eventIndex + inBlockIter, 6] = 0
+                            elif trialType[2] == 'saccade':
+                                metadataHolder[eventIndex + inBlockIter, 0] = 5.0
+                                metadataHolder[eventIndex + inBlockIter, 1] = allTrials[trialIndex][1]
+                                metadataHolder[eventIndex + inBlockIter, 5] = 1
+                                metadataHolder[eventIndex + inBlockIter, 6] = 1
+                            pulseIndex    += 1 
+                            trialIndex    += 1
+                            #if there is no direction change, populate next row with nan
+                            if metadataDict[inBlockIter, 1] == metadataDict[inBlockIter + 1, 1]:
+                                metadataHolder[eventIndex + inBlockIter + 1, :] = np.nan
+                                inBlockIter += 1
+                                pulseIndex += 1
+                                trialIndex += 1
+                                missingPulsesOffset += 1
+                                #this does not work if the missing trial is a combined trial
+                            inBlockIter += 1
+                        else:
+                            # Pulse (probably) has nothing wrong w/ it. Populate metadataHolder.
+                            # Populate
+                            if thisBlockDiffs[pulseIndex] > 0.4:
+                                assert (trialType[2] == 'probe') or (trialType[2] == 'saccade'), \
+                                    "Good error message!"
+                                if trialType[2] == 'probe':
+                                    metadataHolder[eventIndex + inBlockIter, 0] = 3.0
+                                    metadataHolder[eventIndex + inBlockIter, 1] = allTrials[trialIndex][1]
+                                    metadataHolder[eventIndex + inBlockIter, 5] = 1
+                                    metadataHolder[eventIndex + inBlockIter, 6] = 0
+                                elif trialType[2] == 'saccade':
+                                    metadataHolder[eventIndex + inBlockIter, 0] = 5.0
+                                    metadataHolder[eventIndex + inBlockIter, 1] = allTrials[trialIndex][1]
+                                    metadataHolder[eventIndex + inBlockIter, 5] = 1
+                                    metadataHolder[eventIndex + inBlockIter, 6] = 1
+                                inBlockIter += 1
+                                pulseIndex    += 1 
+                                trialIndex    += 1
+                            else:
+                                assert trialType[2] == 'combined', "Invalid trialtype found : " + str(trialType[2])
+                                assert pulseIndex != thisBlockPulses.shape[0] - 1, "Combined trial is last pulse, but only one found."
+                                metadataHolder[eventIndex+ inBlockIter, 0] = 5.0
+                                metadataHolder[eventIndex+ inBlockIter, 1] = allTrials[trialIndex][1]
+                                metadataHolder[eventIndex+ inBlockIter, 5] = 1
+                                metadataHolder[eventIndex+ inBlockIter, 6] = 2
+                                metadataHolder[eventIndex + inBlockIter+ 1, 0] = 3.0
+                                metadataHolder[eventIndex + inBlockIter+ 1, 1] = allTrials[trialIndex][1]
+                                metadataHolder[eventIndex + inBlockIter+ 1, 5] = 1
+                                metadataHolder[eventIndex + inBlockIter+ 1, 6] = 2
+                                pulseIndex    += 2 # Two associated pulses within the index.
+                                trialIndex    += 1
+                               # eventIndex += 2
+                                inBlockIter += 2
+                eventIndex = eventIndex + 160
+
             else:
-                thisBlockPulses = pulseTimestamps[thisBlockBools]
-                thisBlockDiffs = np.diff(thisBlockPulses)
-                thisBlockDiffs = np.append(thisBlockDiffs, 999)
-                
                 # Iterate down pulses. Check the event type metadata of each one. Then, check distance from next.
                 # Depending on metadata condition, different timiing allowances are permitted.
                 pulseIndex = 0
