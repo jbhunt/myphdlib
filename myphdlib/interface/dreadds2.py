@@ -452,7 +452,7 @@ class StimuliProcessingMixinDreadds2(
         """
         """
 
-        pulseTimestamps, intervalTimestamps, iPulses = self._calculatePulseIntervalTimestamps()
+        pulseTimestamps, intervalTimestamps, iPulses, pulseDurations = self._calculatePulseIntervalTimestamps()
         if self.cohort == 11:
             metadataHolder = self._processMetadataForMissingFS(pulseTimestamps)
 
