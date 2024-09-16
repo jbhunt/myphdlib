@@ -46,7 +46,7 @@ class StimuliProcessingMixinDreadds2(
         pulseTimestamps = timestamps[iPulses]
         intervalTimestamps = (timestamps[iIntervals2] + 3)
         # DEBUG, remove - Sept 16th, 2024
-        code.interact(local=dict(globals(), **locals())) 
+        #code.interact(local=dict(globals(), **locals())) 
         return pulseTimestamps, intervalTimestamps, iPulses, pulseDurations
 
     def _createMetadataFileList(self, pulseTimestamps, intervalTimestamps
