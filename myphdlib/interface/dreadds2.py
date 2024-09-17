@@ -189,7 +189,8 @@ class StimuliProcessingMixinDreadds2(
         metadataHolder,
         fileIndex,
         pulseTimestamps,
-        intervalTimestamps
+        intervalTimestamps,
+        pulseDurations
         ):
         """
         """
@@ -222,10 +223,12 @@ class StimuliProcessingMixinDreadds2(
             thisBlockDiffs = np.append(thisBlockDiffs, 999) # arbitrary dist to next block
 
             pulseWidthThreshold = 100
-            timeToNextPulseThreshold = 2.1
+            timeToNextPulseThreshold = 2.5
             
             # Starting pulse diagnosis 
             if pulseCountMismatch:
+                eventIndex = eventIndex + 160
+                """
                 pulseIndex = 0
                 trialIndex = 0
                 inBlockIter = 0
@@ -236,7 +239,7 @@ class StimuliProcessingMixinDreadds2(
                     trialType = allTrials[trialIndex]
                     #the problem with using arrays that were calculated originally (pulseDurations & thisBlockDiffs)
                     #is that we have to correct every time we have an issue
-                    pulseDuration = pulseDurations[eventIndex + inBlockIter - missingpulsesOffset - pulseDurationOffset]
+                    pulseDuration = pulseDurations[eventIndex + inBlockIter - missingPulsesOffset - pulseDurationOffset]
                     pulseWidthViolation = (pulseDuration > pulseWidthThreshold)
                     timeToNextPulseViolation = thisBlockDiffs[inBlockIter - missingPulsesOffset - pulseDurationOffset] > timeToNextPulseThreshold
                     if pulseWidthViolation:
@@ -268,18 +271,26 @@ class StimuliProcessingMixinDreadds2(
                             pulseIndex    += 1 
                             trialIndex    += 1
                             #if there is no direction change, populate next row with nan
-                            if metadataDict[inBlockIter, 1] == metadataDict[inBlockIter + 1, 1]:
-                                metadataHolder[eventIndex + inBlockIter + 1, :] = np.nan
+                            #ISSUE HERE WITH INDEXING TO GET THE DIRECTION VALUES
+                            if trialIndex < len(allTrials):
+                                if allTrials[trialIndex][1] == allTrials[trialIndex + 1][1]:
+                                    metadataHolder[eventIndex + inBlockIter + 1, :] = np.nan
+                                    inBlockIter += 1
+                                    pulseIndex += 1
+                                    trialIndex += 1
+                                    missingPulsesOffset += 1
+                                    #this does not work if the missing trial is a combined trial
+                                inBlockIter += 1
+                            else:
                                 inBlockIter += 1
                                 pulseIndex += 1
                                 trialIndex += 1
-                                missingPulsesOffset += 1
-                                #this does not work if the missing trial is a combined trial
-                            inBlockIter += 1
+
+                        
                         else:
                             # Pulse (probably) has nothing wrong w/ it. Populate metadataHolder.
                             # Populate
-                            if thisBlockDiffs[pulseIndex] > 0.4:
+                            if thisBlockDiffs[inBlockIter - missingPulsesOffset - pulseDurationOffset] > 0.4:
                                 assert (trialType[2] == 'probe') or (trialType[2] == 'saccade'), \
                                     "Good error message!"
                                 if trialType[2] == 'probe':
@@ -296,8 +307,11 @@ class StimuliProcessingMixinDreadds2(
                                 pulseIndex    += 1 
                                 trialIndex    += 1
                             else:
+                               # try:
                                 assert trialType[2] == 'combined', "Invalid trialtype found : " + str(trialType[2])
                                 assert pulseIndex != thisBlockPulses.shape[0] - 1, "Combined trial is last pulse, but only one found."
+                                #except:
+                                    #code.interact(local=dict(globals(), **locals())) 
                                 metadataHolder[eventIndex+ inBlockIter, 0] = 5.0
                                 metadataHolder[eventIndex+ inBlockIter, 1] = allTrials[trialIndex][1]
                                 metadataHolder[eventIndex+ inBlockIter, 5] = 1
@@ -311,6 +325,7 @@ class StimuliProcessingMixinDreadds2(
                                # eventIndex += 2
                                 inBlockIter += 2
                 eventIndex = eventIndex + 160
+                """
 
             else:
                 # Iterate down pulses. Check the event type metadata of each one. Then, check distance from next.
@@ -336,6 +351,7 @@ class StimuliProcessingMixinDreadds2(
                         eventIndex += 1
                         pulseIndex    += 1 
                         trialIndex    += 1
+                        #print(metadataHolder[6500:])
                     else:
                         assert trialType[2] == 'combined', "Invalid trialtype found : " + str(trialType[2])
                         assert pulseIndex != thisBlockPulses.shape[0] - 1, "Combined trial is last pulse, but only one found."
@@ -350,6 +366,7 @@ class StimuliProcessingMixinDreadds2(
                         pulseIndex    += 2 # Two associated pulses within the index.
                         trialIndex    += 1
                         eventIndex += 2
+                    
 
         return eventIndex, metadataHolder
 
@@ -492,10 +509,14 @@ class StimuliProcessingMixinDreadds2(
                         metadataHolder,
                         fileIndex,
                         pulseTimestamps,
-                        intervalTimestamps
+                        intervalTimestamps,
+                        pulseDurations
                     )
 
         self._parseMetadataHolder(metadataHolder, iPulses)
+        #print(metadataHolder)
+        #import sys
+        #np.set_printoptions(threshold=sys.maxsize)
         return metadataHolder
 
 class Dreadds2Session(
