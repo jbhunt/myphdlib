@@ -383,12 +383,13 @@ class StimuliProcessingMixinDreadds2(
         self.save('stimuli/dg/probe/timestamps', probeTimestampsDG)
 
         # Computer fictive saccade probe timestamps
-        pulseIndex = np.where(metadataHolder[:, 0] == 3)[0]
-        fsPulse = np.where(metadataHolder[:, 5] == 1)[0]
-        matchingIndicesFS = np.intersect1d(pulseIndex, fsPulse)
-        probeIndexFS = iPulses[matchingIndicesFS]
-        probeTimestampsFS = self.computeTimestamps(probeIndexFS)
-        self.save('stimuli/fs/probes/timestamps', probeTimestampsFS)
+        #commented out to avoid error
+        #pulseIndex = np.where(metadataHolder[:, 0] == 3)[0]
+        #fsPulse = np.where(metadataHolder[:, 5] == 1)[0]
+        #matchingIndicesFS = np.intersect1d(pulseIndex, fsPulse)
+        #probeIndexFS = iPulses[matchingIndicesFS]
+        #probeTimestampsFS = self.computeTimestamps(probeIndexFS)
+        #self.save('stimuli/fs/probes/timestamps', probeTimestampsFS)
 
         # Compute timestamps of grating initialization (DG Only)
         pulseIndex = np.where(metadataHolder[:, 0] == 1)[0]
@@ -406,13 +407,14 @@ class StimuliProcessingMixinDreadds2(
         pulseIndex = np.where(metadataHolder[:, 0] == 4)[0]
         itiIndex = iPulses[pulseIndex]
         itiTimestamps = self.computeTimestamps(itiIndex)
+        import pdb; pdb.set_trace()
         self.save('stimuli/dg/iti/timestamps', itiTimestamps)
 
         #Compute fictive saccade timestamps
-        pulseIndex = np.where(metadataHolder[:, 0] == 5)[0]
-        saccadeIndex = iPulses[pulseIndex]
-        saccadeTimestamps = self.computeTimestamps(saccadeIndex)
-        self.save('stimuli/fs/saccades/timestamps', saccadeTimestamps)
+        #pulseIndex = np.where(metadataHolder[:, 0] == 5)[0]
+        #saccadeIndex = iPulses[pulseIndex]
+        #saccadeTimestamps = self.computeTimestamps(saccadeIndex)
+        #self.save('stimuli/fs/saccades/timestamps', saccadeTimestamps)
 
         #Assign direction to DG probe
         pulseIndex = np.where(metadataHolder[:, 0] == 3)[0]
@@ -485,7 +487,7 @@ class StimuliProcessingMixinDreadds2(
             #5: Block Type - 0 = Drifting Grating, 1 = Fictive Saccade
             #6: Trial Type (FS Only) - 0 = Probe, 1 = Fictive Saccade, 2 = Both
             #7: Orientation (DG Only)
-            metadataHolder = np.full((len(pulseTimestamps), 8), np.nan)
+            metadataHolder = np.full((len(pulseTimestamps) + 100, 8), np.nan)
             for fileIndex, file in enumerate(fileList):
 
                 # DG metadata
@@ -615,6 +617,59 @@ class Dreadds2Session(
             raise Exception('Failed to parse sync messages file for first sample number')
 
         return referenceSampleNumber
+
+    def _determineGratingMotionAssociatedWithEachSaccade(
+        self,
+        ):
+        """
+        """
+
+        gratingMotionByBlock = self.load('stimuli/dg/grating/motion')
+        if gratingMotionByBlock is None:
+            self.log(f'Session missing processed data for the drifting grating stimulus', level='warning')
+            return
+        nBlocks = gratingMotionByBlock.size
+
+        #
+        for eye in ('left', 'right'):
+
+            #
+            saccadeEpochs = self.load(f'saccades/predicted/{eye}/timestamps')
+            if saccadeEpochs is None or saccadeEpochs.shape[0] == 0:
+                continue
+
+            #
+            saccadeOnsetTimestamps = saccadeEpochs[:, 0]
+            gratingMotionBySaccade = list()
+
+            #
+            motionOnsetTimestamps = self.load('stimuli/dg/grating/timestamps')
+            motionOffsetTimestamps = self.load('stimuli/dg/iti/timestamps')
+            gratingEpochs = np.hstack([
+                motionOnsetTimestamps.reshape(-1, 1),
+                motionOffsetTimestamps.reshape(-1, 1)
+            ])
+
+            #
+            nBlocks = gratingEpochs.shape[0]
+            for saccadeOnsetTimestamp in saccadeOnsetTimestamps:
+                searchResult = False
+                for blockIndex in range(nBlocks):
+                    gratingOnsetTimestamp, gratingOffsetTimestamp = gratingEpochs[blockIndex]
+                    gratingMotion = gratingMotionByBlock[blockIndex]
+                    if gratingOnsetTimestamp <= saccadeOnsetTimestamp <= gratingOffsetTimestamp:
+                        searchResult = True
+                        break
+                if searchResult:
+                    gratingMotionBySaccade.append(gratingMotion)
+                else:
+                    gratingMotionBySaccade.append(0)
+
+            #
+            gratingMotionBySaccade = np.array(gratingMotionBySaccade)
+            self.save(f'saccades/predicted/{eye}/gmds', gratingMotionBySaccade)
+
+        return
 
     def _runSaccadesModule(self, pupilCenterName='center'):
         """
