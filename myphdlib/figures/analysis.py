@@ -253,19 +253,14 @@ class AnalysisBase():
         self, 
         ukey=None,
         hdf=None,
-        tag='JH-DATA-',
-        mount=False,
-        experiments=('Mlati',),
+        **kwargs_
         ):
         """
         """
 
+
         self._ukeys = None
         self._ukey = None
-        if mount:
-            self._factory = SessionFactory(mount=tag)
-        else:
-            self._factory = SessionFactory(tag=tag)
         self._session = None
         self._unit = None
         if ukey is not None:
@@ -274,7 +269,26 @@ class AnalysisBase():
         self.ns = Namespace()
 
         #
-        self._loadSessions(experiments)
+        kwargs = {
+            'tag': 'JH-DATA-',
+            'mount': False,
+            'experiment': ('Mlati',),
+            'dates': (None, None),
+            'cohort': None,
+            'animals': None,
+        }
+        kwargs.update(kwargs_)
+        if kwargs['mount']:
+            self._factory = SessionFactory(mount=kwargs['tag'])
+        else:
+            self._factory = SessionFactory(tag=kwargs['tag'])
+        subset = {
+            'experiment': kwargs['experiment'],
+            'dates': kwargs['dates'],
+            'cohort': kwargs['cohort'],
+            'animals': kwargs['animals']
+        }
+        self._loadSessions(**subset)
         self._loadUnitKeys()
 
         # Globals
@@ -455,12 +469,12 @@ class AnalysisBase():
     
     def _loadSessions(
         self,
-        experiments
+        **kwargs
         ):
         """
         """
 
-        self._sessions = self._factory.produce(experiment=experiments)
+        self._sessions = self._factory.produce(**kwargs)
 
         return
     
