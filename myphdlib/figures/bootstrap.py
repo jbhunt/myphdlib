@@ -360,6 +360,8 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         cmap='coolwarm',
         xrange=(-3, 3),
         xticks=(-3, 0, 3),
+        ymax=120,
+        yticks=None,
         figsize=(7, 1.5),
         ):
         """
@@ -482,8 +484,12 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
                 ylim[0] = y1
             if y2 > ylim[1]:
                 ylim[1] = y2
+        if ymax is not None:
+            ylim[1] = ymax
         for ax in axs:
             ax.set_ylim(ylim)
+        if yticks is not None:
+            axs[0].set_yticks(yticks)
 
         # axs[0].set_ylabel('# of units')
         # axs[0].set_xlabel(f'Modulation index (MI)')
