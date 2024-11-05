@@ -42,7 +42,6 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             ('2023-07-11', 'mlati10', 291),
             ('2023-07-19', 'mlati10', 327),
             ('2023-07-11', 'mlati10', 295),
-            # ('2023-07-19', 'mlati10', 268),
             ('2023-07-14', 'mlati9', 165),
         )
 
