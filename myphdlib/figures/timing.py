@@ -352,6 +352,7 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
         transform=False,
         yrange=(-1, 1),
         figsize=(2.5, 3),
+        ax=None,
         **kwargs_
         ):
         """
@@ -369,7 +370,10 @@ class SaccadicModulationTimingAnalysis(BasicSaccadicModulationAnalysis):
             'alpha': 0.5,
         }
         kwargs.update(kwargs_)
-        fig, ax = plt.subplots()
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.figure
 
         #
         responseAmplitudes = self.ns['params/pref/real/extra'][:, 0]
