@@ -1191,3 +1191,61 @@ isoluminantBlueGreenOrangeColorspace = [
 def getCetI1Colormap(N=256):
     cmap = LinearSegmentedColormap.from_list('cet_i1', isoluminantBlueGreenOrangeColorspace, N=N)
     return cmap
+
+def makeNormalizedHistogramWithCategories(
+    x,
+    bins,
+    range,
+    ax=None,
+    facecolors=None,
+    edgecolors=None,
+    ):
+    """
+    """
+
+    #
+    flattened = np.concatenate(x)
+    n = flattened.size
+
+    #
+    if ax is None:
+        fig, ax = plt.subplots()
+
+    #
+    binCounts, binEdges = np.histogram([], bins, range)
+    binWidth = (binEdges[1] - binEdges[0])
+    binCenters = binEdges[:-1] + (binWidth / 2)
+    floor = np.zeros(binCenters.size)
+    for i, xi in enumerate(x):
+
+        #
+        binCounts, binEdges = np.histogram(
+            xi,
+            bins=bins,
+            range=range
+        )
+        binCountsNormed = binCounts / n
+
+        #
+        patches = ax.bar(
+            binCenters,
+            binCountsNormed,
+            width=binWidth,
+            bottom=floor,
+        )
+
+        #
+        for patch in patches:
+            if facecolors is None:
+                patch.set(facecolor='none')
+            else:
+                patch.set(facecolor=facecolors[i])
+            if edgecolors is None:
+                patch.set(edgecolor='none')
+            else:
+                patch.set(edgecolor=edgecolors[i])
+
+        #
+        floor = floor + binCountsNormed
+
+    return

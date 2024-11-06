@@ -10,6 +10,7 @@ from itertools import product
 from scipy.stats import spearmanr
 from multiprocessing import Pool, cpu_count
 from joblib import delayed, Parallel
+from myphdlib.extensions.matplotlib import makeNormalizedHistogramWithCategories
 
 def _generateNullSampleForSingleUnit(
     peths,
@@ -362,6 +363,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         xticks=(-3, 0, 3),
         ymax=120,
         yticks=None,
+        normalize=False,
         figsize=(7, 1.5),
         ):
         """
@@ -396,43 +398,52 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
 
             #
             f = plt.get_cmap(cmap, 3)
-            # binCounts_, binEdges, patchList = ax.hist(
-            #     samples,
-            #     bins=nbins,
-            #     histtype='barstacked',
-            #     color=[f(i) for i in (0, 2, 1)],
-            #     range=xrange
-            # )
             binCounts_, binEdges = np.histogram(
                 np.concatenate(samples),
                 bins=nbins,
                 range=xrange
             )
 
-            ax.hist(
-                np.concatenate(samples),
-                bins=nbins,
-                color='0.8',
-                range=xrange,
-                histtype='stepfilled',
-                edgecolor='none'
-            )
-            ax.hist(
-                samples[0],
-                bins=nbins,
-                color=f(0),
-                range=xrange,
-                histtype='stepfilled',
-                edgecolor='none'
-            )
-            ax.hist(
-                samples[1],
-                bins=nbins,
-                color=f(2),
-                range=xrange,
-                histtype='stepfilled',
-                edgecolor='none'
-            )
+            #
+            if normalize:
+                samplesOrdered = [
+                    samples[0],
+                    samples[1],
+                    samples[2]
+                ]
+                makeNormalizedHistogramWithCategories(
+                    samplesOrdered,
+                    nbins,
+                    xrange,
+                    ax,
+                    facecolors=(f(0), f(2), '0.8')
+                )
+
+            else:
+                ax.hist(
+                    np.concatenate(samples),
+                    bins=nbins,
+                    color='0.8',
+                    range=xrange,
+                    histtype='stepfilled',
+                    edgecolor='none'
+                )
+                ax.hist(
+                    samples[0],
+                    bins=nbins,
+                    color=f(0),
+                    range=xrange,
+                    histtype='stepfilled',
+                    edgecolor='none'
+                )
+                ax.hist(
+                    samples[1],
+                    bins=nbins,
+                    color=f(2),
+                    range=xrange,
+                    histtype='stepfilled',
+                    edgecolor='none'
+                )
 
             #
             if windowIndex != 0:
@@ -498,7 +509,7 @@ class BootstrappedSaccadicModulationAnalysis(BasicSaccadicModulationAnalysis):
         fig.tight_layout()
         fig.subplots_adjust(wspace=0.1)
 
-        return fig, ax
+        return fig, axs
 
     def plotFractionModulatedByProbeLatency(
         self,
