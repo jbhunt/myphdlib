@@ -172,6 +172,10 @@ class Namespace():
             'psths/temporal/real': None,
             'psths/nasal/fictive': None,
             'psths/temporal/fictive': None,
+            'psths/pref/real': None,
+            'psths/null/real': None,
+            'psths/pref/fictive': None,
+            'psths/null/fictive': None,
 
             # Response terms
             'terms/pref/real/extra': None,
@@ -220,6 +224,7 @@ class Namespace():
             # Global variables
             'globals/factor': None, # Scaling factor (standard deviation of baseline firing rate for preferred direction)
             'globals/preference': None, # Preferred direction of motion
+            'globals/ssi': None, # Saccade selectivity index
             'globals/labels': None, # Response complexity categories
             'globals/windows': None, # Peri-saccadic time windows
 
