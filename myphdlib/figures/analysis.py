@@ -253,6 +253,7 @@ class AnalysisBase():
         self, 
         ukey=None,
         hdf=None,
+        event='probe',
         **kwargs_
         ):
         """
@@ -289,7 +290,7 @@ class AnalysisBase():
             'animals': kwargs['animals']
         }
         self._loadSessions(**subset)
-        self._loadUnitKeys()
+        self._loadUnitKeys(event)
 
         # Globals
         self.tProbe = None
@@ -481,6 +482,7 @@ class AnalysisBase():
     # TODO: Implement a filter for excluding units that response too fast
     def _loadUnitKeys(
         self,
+        event='probe',
         **kwargs_,
         ):
         """
@@ -526,14 +528,18 @@ class AnalysisBase():
             presenceRatio = session.load('metrics/pr')
             isiViolations = session.load('metrics/rpvr')
             firingRate = session.load('metrics/fr')
-            probabilityValues = np.nanmin(np.vstack([
-                session.load('zeta/probe/left/p'),
-                session.load('zeta/probe/right/p')
-            ]), axis=0)
-            responseLatency = np.nanmin(np.vstack([
-                session.load('zeta/probe/left/latency'),
-                session.load('zeta/probe/right/latency'),
-            ]), axis=0)
+            if session.hasDataset(f'zeta/{event}/left/p') == False:
+                probabilityValues = np.full(len(firingRate), np.nan)
+                responseLatency = np.full(len(firingRate), np.nan)
+            else:
+                probabilityValues = np.nanmin(np.vstack([
+                    session.load(f'zeta/{event}/left/p'),
+                    session.load(f'zeta/{event}/right/p')
+                ]), axis=0)
+                responseLatency = np.nanmin(np.vstack([
+                    session.load(f'zeta/{event}/left/latency'),
+                    session.load(f'zeta/{event}/right/latency'),
+                ]), axis=0)
 
             #
             nUnits = len(session.population)
