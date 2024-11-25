@@ -484,7 +484,7 @@ class AnalysisBase():
 
         return
     
-    # TODO: Implement a filter for excluding units that response too fast
+    # TODO: Implement a filter for excluding units that response too fast [X]
     def _loadUnitKeys(
         self,
         event='probe',
@@ -510,7 +510,7 @@ class AnalysisBase():
             'maximumIsiViolations': 0.5,
             'maximumProbabilityValue': 0.01,
             'minimumFiringRate': 0.2,
-            'minimumResponseLatency': 0.025,
+            'minimumResponseLatency': None,
         }
         kwargs.update(kwargs_)
 
@@ -533,18 +533,34 @@ class AnalysisBase():
             presenceRatio = session.load('metrics/pr')
             isiViolations = session.load('metrics/rpvr')
             firingRate = session.load('metrics/fr')
-            if session.hasDataset(f'zeta/{event}/left/p') == False:
-                probabilityValues = np.full(len(firingRate), np.nan)
-                responseLatency = np.full(len(firingRate), np.nan)
-            else:
+
+            #
+            if event == 'probe':
                 probabilityValues = np.nanmin(np.vstack([
-                    session.load(f'zeta/{event}/left/p'),
-                    session.load(f'zeta/{event}/right/p')
+                    session.load(f'zeta/probe/left/p'),
+                    session.load(f'zeta/probe/right/p')
                 ]), axis=0)
                 responseLatency = np.nanmin(np.vstack([
-                    session.load(f'zeta/{event}/left/latency'),
-                    session.load(f'zeta/{event}/right/latency'),
+                    session.load(f'zeta/probe/left/latency'),
+                    session.load(f'zeta/probe/right/latency'),
                 ]), axis=0)
+            
+            #
+            elif event == 'saccade':
+                testDataset = session.load('zeta/saccade/temporal/latency')
+                if testDataset is None or np.all(np.isnan(testDataset)):
+                    print(f'Warning: No ZETA-test data for saccades available for {session.animal} on {session.date}')
+                    kwargs['maximumProbabilityValue'] = None
+                    kwargs['minimumResponseLatency'] = None
+                else:
+                    probabilityValues = np.nanmin(np.vstack([
+                        session.load(f'zeta/saccade/nasal/p'),
+                        session.load(f'zeta/saccade/temporal/p')
+                    ]), axis=0)
+                    responseLatency = np.nanmin(np.vstack([
+                        session.load(f'zeta/saccade/nasal/latency'),
+                        session.load(f'zeta/saccade/temporal/latency'),
+                    ]), axis=0)
 
             #
             nUnits = len(session.population)

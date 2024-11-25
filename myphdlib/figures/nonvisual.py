@@ -1,6 +1,7 @@
 import numpy as np
 from myphdlib.general.toolkit import psth2
 from myphdlib.figures.analysis import AnalysisBase
+from matplotlib import pyplot as plt
 
 class SaccadeResponseAnalysis(AnalysisBase):
     """
@@ -28,7 +29,9 @@ class SaccadeResponseAnalysis(AnalysisBase):
             'nasal': list(),
             'temporal': list()
         }
-        for ukey in self.ukeys:
+        nUnits = len(self.ukeys)
+        for iUnit, ukey in enumerate(self.ukeys):
+            print(f'Computing PSTH for unit {iUnit} out of {nUnits}', end='\r')
             self.ukey = ukey
             for saccadeLabel, saccadeDirection in zip([1, -1], ['nasal', 'temporal']):
                 saccadeIndices = np.where(self.session.saccadeLabels == saccadeLabel)[0]
@@ -38,6 +41,7 @@ class SaccadeResponseAnalysis(AnalysisBase):
                     binsize=binsize
                 )
                 t, M = psth2(
+                    self.session.saccadeTimestamps[saccadeIndices, 0],
                     self.unit.timestamps,
                     window=baselineWindow,
                     binsize=None
@@ -74,3 +78,28 @@ class SaccadeResponseAnalysis(AnalysisBase):
         self.ns[f'globals/ssi'] = ssi
 
         return
+
+    def plotPeths(
+        self,
+        minimumResponseAmplitude=5,
+        ):
+        """
+        """
+
+        fig, ax = plt.subplots()
+        pethsNormed = list()
+        responeLatency = list()
+        for fr in self.ns['psths/pref/real']:
+            a = np.max(np.abs(fr))
+            if a < minimumResponseAmplitude:
+                continue
+            i = np.argmax(np.abs(fr))
+            pethsNormed.append(fr / a)
+            responeLatency.append(i)
+        sortedIndex = np.argsort(responeLatency)
+        pethsNormed = np.array(pethsNormed)
+
+        ax.pcolor(self.tSaccade, np.arange(sortedIndex.size), pethsNormed[sortedIndex], vmin=-0.8, vmax=0.8, cmap='viridis')
+        ax.vlines(0, 0, sortedIndex.size, color='k')
+
+        return fig, [ax,]
