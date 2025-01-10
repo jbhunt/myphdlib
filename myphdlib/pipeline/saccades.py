@@ -583,7 +583,7 @@ class SaccadesProcessingMixin(object):
                 gratingEpochs[:, 1] += bufferPhaseDuration
 
             #
-            elif self.cohort in (4, 11):
+            elif self.cohort in (4, 11, 31):
 
                 #
                 motionOnsetTimestamps = self.load('stimuli/dg/grating/timestamps')
