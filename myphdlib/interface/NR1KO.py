@@ -117,6 +117,8 @@ class StimuliProcessingMixinNR1(
         with open(file, 'r') as stream:
             lines = stream.readlines()
         orientation = int(re.findall('\s\d*\s', lines[2]).pop().strip()) # TODO: Place this in the metadata holder
+        velocity = int(re.findall('\s\d*\s', lines[1]).pop().strip())
+        contrast = int(re.findall('\s\d*\s', lines[3]).pop().strip())
         metadata = np.genfromtxt(file, skip_header = 5, delimiter=',')
         blockLength = metadata.shape[0]
         if fileIndex == 0:
@@ -173,6 +175,8 @@ class StimuliProcessingMixinNR1(
                     metadataHolder[eventIndex+i, 0:5] = metadata[i, 0:5]
                     metadataHolder[eventIndex+i, 5]   = 0
                     metadataHolder[eventIndex+i, 7]   = orientation
+                    metadataHolder[eventIndex+i, 8] = velocity
+                    metadataHolder[eventIndex+i, 9] = contrast
                     #timingDifferences[it] = fromFileDiffs[it] - thisBlockDiffs[it]
             eventIndex += blockLength
 
@@ -183,6 +187,8 @@ class StimuliProcessingMixinNR1(
             # adding a column that is 0 if drifting grating, 1 if fictive saccade
             metadataHolder[eventIndex:eventIndex + blockLength, 5] = 0
             metadataHolder[eventIndex:eventIndex + blockLength, 7] = orientation
+            metadataHolder[eventIndex+i, 8] = velocity
+            metadataHolder[eventIndex+i, 9] = contrast
             eventIndex += blockLength
 
         return eventIndex, metadataHolder
@@ -263,44 +269,6 @@ class StimuliProcessingMixinNR1(
         blockDirection = metadataHolder[pulseIndex, 1]
         self.save('stimuli/dg/grating/motion', blockDirection)
     
-    def _processMetadataForMissingFS(self, pulseTimestamps):
-        """
-        Process metadata for sessions that are missing fictive saccade metadata
-        """
-        file = self.home.joinpath('videos', 'driftingGratingMetadata.txt')
-        metadata = np.genfromtxt(file, skip_header = 5, delimiter=',')
-        metadataHolder = np.full((len(pulseTimestamps), 8), np.nan)
-        print(len(metadata) + 800)
-        print(metadataHolder.shape[0])
-        if (len(metadata) + 800) != metadataHolder.shape[0]:
-            self.log('Observed and expected number of events are not equal', level='error')
-            return
-        eventIndex = 0
-        for i, row in enumerate(metadata):
-
-            # Populate metadata holder
-            metadataHolder[eventIndex, :5] = row
-            metadataHolder[eventIndex, 5] = 0
-            metadataHolder[eventIndex, 6] = np.nan
-            metadataHolder[eventIndex, 7] = np.nan
-
-            #
-            if (i + 1) == len(metadata):
-                break
-
-            # Check time from current event to next event
-            eventTimestampCurrent = row[-1]
-            eventTimestampNext = metadata[i + 1, -1]
-
-            # Check if entering FS block
-            dt = eventTimestampNext - eventTimestampCurrent
-            if dt > 50:
-                eventIndex += 160
-
-            # Increment event index
-            eventIndex += 1
-
-        return metadataHolder
 
     def _runStimuliModule(self):
         """
@@ -322,7 +290,9 @@ class StimuliProcessingMixinNR1(
             #5: Block Type - 0 = Drifting Grating, 1 = Fictive Saccade
             #6: Trial Type (FS Only) - 0 = Probe, 1 = Fictive Saccade, 2 = Both
             #7: Orientation (DG Only)
-            metadataHolder = np.full((len(pulseTimestamps) + 100, 8), np.nan)
+            #8: Velocity (DG Only)
+            #9: Contrast (DG Only)
+            metadataHolder = np.full((len(pulseTimestamps) + 100, 10), np.nan)
             for fileIndex, file in enumerate(fileList):
 
                 # DG metadata
