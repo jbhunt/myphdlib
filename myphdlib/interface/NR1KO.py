@@ -114,11 +114,12 @@ class StimuliProcessingMixinNR1(
         ):
         """
         """
+        print(file)
         with open(file, 'r') as stream:
             lines = stream.readlines()
         orientation = int(re.findall('\s\d*\s', lines[2]).pop().strip()) # TODO: Place this in the metadata holder
-        velocity = int(re.findall('\s\d*\s', lines[1]).pop().strip())
-        contrast = int(re.findall('\s\d*\s', lines[3]).pop().strip())
+        velocity = float(re.findall(r'\d+\.\d+|\d+', lines[1])[0])
+        contrast = float(re.findall(r'\d+\.\d+|\d+', lines[3]).pop(0))
         metadata = np.genfromtxt(file, skip_header = 5, delimiter=',')
         blockLength = metadata.shape[0]
         if fileIndex == 0:
@@ -187,8 +188,8 @@ class StimuliProcessingMixinNR1(
             # adding a column that is 0 if drifting grating, 1 if fictive saccade
             metadataHolder[eventIndex:eventIndex + blockLength, 5] = 0
             metadataHolder[eventIndex:eventIndex + blockLength, 7] = orientation
-            metadataHolder[eventIndex+i, 8] = velocity
-            metadataHolder[eventIndex+i, 9] = contrast
+            metadataHolder[eventIndex:eventIndex + blockLength, 8] = velocity
+            metadataHolder[eventIndex:eventIndex + blockLength, 9] = contrast
             eventIndex += blockLength
 
         return eventIndex, metadataHolder
@@ -268,6 +269,17 @@ class StimuliProcessingMixinNR1(
         pulseIndex = np.where(metadataHolder[:, 0] == 1)[0]
         blockDirection = metadataHolder[pulseIndex, 1]
         self.save('stimuli/dg/grating/motion', blockDirection)
+
+        #Assign contrast to each drifting grating block
+        pulseIndex = np.where(metadataHolder[:, 0] == 1)[0]
+        blockContrast = metadataHolder[pulseIndex, 9]
+        self.save('stimuli/dg/grating/contrast', blockContrast)
+
+        #Assign velocity to each drifting grating block
+        pulseIndex = np.where(metadataHolder[:, 0] == 1)[0]
+        blockVelocity = metadataHolder[pulseIndex, 8]
+        self.save('stimuli/dg/grating/velocity', blockVelocity)
+
     
 
     def _runStimuliModule(self):
@@ -430,6 +442,8 @@ class NR1Session(
         """
 
         gratingMotionByBlock = self.load('stimuli/dg/grating/motion')
+        contrastByBlock = self.load('stimuli/dg/grating/contrast')
+        velocityByBlock = self.load('stimuli/dg/grating/velocity')
         if gratingMotionByBlock is None:
             self.log(f'Session missing processed data for the drifting grating stimulus', level='warning')
             return
@@ -446,6 +460,8 @@ class NR1Session(
             #
             saccadeOnsetTimestamps = saccadeEpochs[:, 0]
             gratingMotionBySaccade = list()
+            contrastBySaccade = list()
+            velocityBySaccade = list()
 
             #
             motionOnsetTimestamps = self.load('stimuli/dg/grating/timestamps')
@@ -462,17 +478,27 @@ class NR1Session(
                 for blockIndex in range(nBlocks):
                     gratingOnsetTimestamp, gratingOffsetTimestamp = gratingEpochs[blockIndex]
                     gratingMotion = gratingMotionByBlock[blockIndex]
+                    gratingContrast = contrastByBlock[blockIndex]
+                    gratingVelocity = velocityByBlock[blockIndex]
                     if gratingOnsetTimestamp <= saccadeOnsetTimestamp <= gratingOffsetTimestamp:
                         searchResult = True
                         break
                 if searchResult:
                     gratingMotionBySaccade.append(gratingMotion)
+                    contrastBySaccade.append(gratingContrast)
+                    velocityBySaccade.append(gratingVelocity)
                 else:
                     gratingMotionBySaccade.append(0)
+                    contrastBySaccade.append(0)
+                    velocityBySaccade.append(0)
 
             #
             gratingMotionBySaccade = np.array(gratingMotionBySaccade)
+            contrastBySaccade = np.array(contrastBySaccade)
+            velocityBySaccade = np.array(velocityBySaccade)
             self.save(f'saccades/predicted/{eye}/gmds', gratingMotionBySaccade)
+            self.save(f'saccades/predicted/{eye}/cbs', contrastBySaccade)
+            self.save(f'saccades/predicted/{eye}/vbs', velocityBySaccade)
 
         return
 
