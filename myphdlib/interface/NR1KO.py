@@ -390,7 +390,7 @@ class NR1Session(
         """
         """
 
-        if self.cohort in [1, 11]:
+        if self.cohort in [1, 11, 12]:
             file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.ProbeA-AP', 'TTL', 'sample_numbers.npy')
         elif self.cohort in [2, 31]:
             file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.0', 'TTL_1', 'timestamps.npy')
@@ -417,13 +417,13 @@ class NR1Session(
         with open(file, 'r') as stream:
             referenceSampleNumber = None
             for line in stream.readlines():
-                if self.cohort in [1, 11, 3]:
+                if self.cohort in [1, 11, 3, 12]:
                     pattern = '@.*30000.*Hz:.*\d*'
                 elif self.cohort in [2, 31]:
                     pattern = 'start time:.*@'
                 result = re.findall(pattern, line)
                 if len(result) == 1:
-                    if self.cohort in [1, 11, 3]:
+                    if self.cohort in [1, 11, 3, 12]:
                         referenceSampleNumber = int(result.pop().rstrip('\n').split(': ')[-1])
                     elif self.cohort in [2, 31]:
                         referenceSampleNumber = int(result.pop().rstrip('@').split('start time: ')[1])
@@ -486,11 +486,14 @@ class NR1Session(
                 if searchResult:
                     gratingMotionBySaccade.append(gratingMotion)
                     contrastBySaccade.append(gratingContrast)
-                    velocityBySaccade.append(gratingVelocity)
+                    if gratingContrast == 0:
+                        velocityBySaccade.append(0)
+                    else:
+                        velocityBySaccade.append(gratingVelocity)
                 else:
                     gratingMotionBySaccade.append(0)
-                    contrastBySaccade.append(0)
-                    velocityBySaccade.append(0)
+                    contrastBySaccade.append(-1)
+                    velocityBySaccade.append(-1)
 
             #
             gratingMotionBySaccade = np.array(gratingMotionBySaccade)
