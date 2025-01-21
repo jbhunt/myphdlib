@@ -8,6 +8,7 @@ from myphdlib.pipeline.activity import ActivityProcessingMixin
 import pathlib as pl
 import numpy as np
 import re
+import pandas as pd
 
 import code
 
@@ -30,10 +31,16 @@ class StimuliProcessingMixinNR1(
             labjackData = self.load('labjack/matrix')
         #defining the labjack data should also be edited to pull from hdf
         timestamps = labjackData[:, 0]
-        TTLdata = labjackData[:, 8]
+        if self.cohort == 1:
+            TTLdata = labjackData[:, 8]
         # minimumPulseWidthInSeconds adjusted from 0.013 to check pulse count mismatch origin
-        filtered = filterPulsesFromPhotologicDevice(labjackData[:, 8],
-            minimumPulseWidthInSeconds=0.013)
+            filtered = filterPulsesFromPhotologicDevice(labjackData[:, 8],
+                minimumPulseWidthInSeconds=0.0469)
+        elif self.cohort == 12:
+            TTLdata = labjackData[:, 6]
+        # minimumPulseWidthInSeconds adjusted from 0.013 to check pulse count mismatch origin
+            filtered = filterPulsesFromPhotologicDevice(labjackData[:, 6],
+                minimumPulseWidthInSeconds=0.0469)
         iPulses = np.where(np.diff(filtered) > 0.5)[0]
         iPulsesFall = np.where(np.diff(filtered) < -0.5)[0] # fall times, should be one for each.
         
@@ -350,17 +357,24 @@ class NR1Session(
     """
     """
 
-    labjackChannelMapping = {
-        'barcode': 7,
-        'cameras': 9,
-        'stimulus': 8,
-    }
 
     def __init__(self, sessionFolder, eye='left'):
         """
         """
 
         super().__init__(sessionFolder, eye=eye)
+        if self.cohort == 1:
+            self.labjackChannelMapping = {
+            'barcode': 7,
+            'cameras': 9,
+            'stimulus': 8,
+            }
+        elif self.cohort == 12:
+            self.labjackChannelMapping = {
+            'barcode': 5,
+            'cameras': 7,
+            'stimulus': 6,
+            }
 
         return
     
@@ -435,8 +449,26 @@ class NR1Session(
 
         return referenceSampleNumber
 
+    def pullManuallyLabeledSaccades(self, csvFile):
+        """
+        If we label saccades manually with Alon's GUI, run this function and use output to run determineGratingMotion
+        """
+
+        xl = csvFile
+        xlfile = pd.read_excel(xl)
+        saccadeFrames = xlfile.time
+        frameTimestamps = self.load('frames/left/timestamps')
+        saccadeTimes = frameTimestamps[saccadeFrames]
+        saccadeDirection = xlfile.nasal_temporal
+        self.save('saccades/predicted/left/manualtimes', saccadeTimes)
+        self.save('saccades/predicted/left/manuallabels', saccadeDirection)
+
+        return
+
+
     def _determineGratingMotionAssociatedWithEachSaccade(
         self,
+        manualLabeling=False
         ):
         """
         """
@@ -453,12 +485,17 @@ class NR1Session(
         for eye in ('left', 'right'):
 
             #
-            saccadeEpochs = self.load(f'saccades/predicted/{eye}/timestamps')
-            if saccadeEpochs is None or saccadeEpochs.shape[0] == 0:
-                continue
+            if manualLabeling==False:
+                saccadeEpochs = self.load(f'saccades/predicted/{eye}/timestamps')
+                if saccadeEpochs is None or saccadeEpochs.shape[0] == 0:
+                    continue
+                saccadeOnsetTimestamps = saccadeEpochs[:, 0]
+            elif manualLabeling==True:
+                saccadeOnsetTimestamps = self.load(f'saccades/predicted/{eye}/manualtimes')
+                if saccadeOnsetTimestamps is None or saccadeOnsetTimestamps.shape[0] == 0:
+                    continue
 
             #
-            saccadeOnsetTimestamps = saccadeEpochs[:, 0]
             gratingMotionBySaccade = list()
             contrastBySaccade = list()
             velocityBySaccade = list()
