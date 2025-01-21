@@ -172,6 +172,10 @@ class Namespace():
             'psths/temporal/real': None,
             'psths/nasal/fictive': None,
             'psths/temporal/fictive': None,
+            'psths/pref/real': None,
+            'psths/null/real': None,
+            'psths/pref/fictive': None,
+            'psths/null/fictive': None,
 
             # Response terms
             'terms/pref/real/extra': None,
@@ -210,14 +214,17 @@ class Namespace():
             'p/null/fictive': None,
 
             # Direction selectivity index
-            'dsi/probe': None,
+            'dsi/probe/extra': None,
+            'dsi/probe/peri': None,
             'dsi/saccade/real': None,
-            'dsi/saccade/fictive/': None,
+            'dsi/saccade/fictive': None,
             'dsi/bar': None,
+            'dsi/dg': None,
 
             # Global variables
             'globals/factor': None, # Scaling factor (standard deviation of baseline firing rate for preferred direction)
             'globals/preference': None, # Preferred direction of motion
+            'globals/ssi': None, # Saccade selectivity index
             'globals/labels': None, # Response complexity categories
             'globals/windows': None, # Peri-saccadic time windows
 
@@ -251,19 +258,15 @@ class AnalysisBase():
         self, 
         ukey=None,
         hdf=None,
-        tag='JH-DATA-',
-        mount=False,
-        experiments=('Mlati',),
+        event='probe',
+        **kwargs_
         ):
         """
         """
 
+
         self._ukeys = None
         self._ukey = None
-        if mount:
-            self._factory = SessionFactory(mount=tag)
-        else:
-            self._factory = SessionFactory(tag=tag)
         self._session = None
         self._unit = None
         if ukey is not None:
@@ -272,8 +275,27 @@ class AnalysisBase():
         self.ns = Namespace()
 
         #
-        self._loadSessions(experiments)
-        self._loadUnitKeys()
+        kwargs = {
+            'tag': 'JH-DATA-',
+            'mount': False,
+            'experiment': ('Mlati',),
+            'dates': (None, None),
+            'cohort': None,
+            'animals': None,
+        }
+        kwargs.update(kwargs_)
+        if kwargs['mount']:
+            self._factory = SessionFactory(mount=kwargs['tag'])
+        else:
+            self._factory = SessionFactory(tag=kwargs['tag'])
+        subset = {
+            'experiment': kwargs['experiment'],
+            'dates': kwargs['dates'],
+            'cohort': kwargs['cohort'],
+            'animals': kwargs['animals']
+        }
+        self._loadSessions(**subset)
+        self._loadUnitKeys(event)
 
         # Globals
         self.tProbe = None
@@ -322,7 +344,11 @@ class AnalysisBase():
                     else:
                         if data.size == data.shape[0]:
                             data = data.flatten()
-                        self.ns[path] = data[mask]
+                        try:
+                            self.ns[path] = data[mask]
+                        except:
+                            print(f'Warning: failed to load {path}')
+                            pass
 
         return
 
@@ -449,18 +475,19 @@ class AnalysisBase():
     
     def _loadSessions(
         self,
-        experiments
+        **kwargs
         ):
         """
         """
 
-        self._sessions = self._factory.produce(experiment=experiments)
+        self._sessions = self._factory.produce(**kwargs)
 
         return
     
-    # TODO: Implement a filter for excluding units that response too fast
+    # TODO: Implement a filter for excluding units that response too fast [X]
     def _loadUnitKeys(
         self,
+        event='probe',
         **kwargs_,
         ):
         """
@@ -483,7 +510,7 @@ class AnalysisBase():
             'maximumIsiViolations': 0.5,
             'maximumProbabilityValue': 0.01,
             'minimumFiringRate': 0.2,
-            'minimumResponseLatency': 0.025,
+            'minimumResponseLatency': None,
         }
         kwargs.update(kwargs_)
 
@@ -506,14 +533,34 @@ class AnalysisBase():
             presenceRatio = session.load('metrics/pr')
             isiViolations = session.load('metrics/rpvr')
             firingRate = session.load('metrics/fr')
-            probabilityValues = np.nanmin(np.vstack([
-                session.load('zeta/probe/left/p'),
-                session.load('zeta/probe/right/p')
-            ]), axis=0)
-            responseLatency = np.nanmin(np.vstack([
-                session.load('zeta/probe/left/latency'),
-                session.load('zeta/probe/right/latency'),
-            ]), axis=0)
+
+            #
+            if event == 'probe':
+                probabilityValues = np.nanmin(np.vstack([
+                    session.load(f'zeta/probe/left/p'),
+                    session.load(f'zeta/probe/right/p')
+                ]), axis=0)
+                responseLatency = np.nanmin(np.vstack([
+                    session.load(f'zeta/probe/left/latency'),
+                    session.load(f'zeta/probe/right/latency'),
+                ]), axis=0)
+            
+            #
+            elif event == 'saccade':
+                testDataset = session.load('zeta/saccade/temporal/latency')
+                if testDataset is None or np.all(np.isnan(testDataset)):
+                    print(f'Warning: No ZETA-test data for saccades available for {session.animal} on {session.date}')
+                    kwargs['maximumProbabilityValue'] = None
+                    kwargs['minimumResponseLatency'] = None
+                else:
+                    probabilityValues = np.nanmin(np.vstack([
+                        session.load(f'zeta/saccade/nasal/p'),
+                        session.load(f'zeta/saccade/temporal/p')
+                    ]), axis=0)
+                    responseLatency = np.nanmin(np.vstack([
+                        session.load(f'zeta/saccade/nasal/latency'),
+                        session.load(f'zeta/saccade/temporal/latency'),
+                    ]), axis=0)
 
             #
             nUnits = len(session.population)

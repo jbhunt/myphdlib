@@ -43,6 +43,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         binsize=0.01,
         smoothingKernelWidth=0.01,
         saccadeType='real',
+        probeDirection='pref',
         ):
         """
         """
@@ -60,12 +61,21 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         if ukey is not None:
             self.ukey = ukey
 
+        #
+        if probeDirection == 'pref':
+            gratingMotion = self.preference[self.iUnit]
+        elif probeDirection == 'null':
+            if self.preference[self.iUnit] == -1:
+                gratingMotion = 1
+            else:
+                gratingMotion = -1
+
         # Compute peri-saccadic response
         probeTimestamps, probeLatencies, saccadeLabels, gratingMotionDuringProbes = self._loadEventDataForProbes()
         trialIndicesPerisaccadic = np.vstack([
             probeLatencies >= perisaccadicWindow[0],
             probeLatencies <= perisaccadicWindow[1],
-            gratingMotionDuringProbes == self.preference[self.iUnit]
+            gratingMotionDuringProbes == gratingMotion
         ]).all(0)
 
         # NOTE: This might fail with not enough spikes in the peri-saccadic window
@@ -236,6 +246,7 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
                         ukey=self.ukeys[self.iUnit],
                         responseWindow=responseWindow,
                         perisaccadicWindow=perisaccadicWindow,
+                        probeDirection=probeDirection
                     )
 
                     # Standardize the PETHs
@@ -1202,3 +1213,71 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         fig.tight_layout()
 
         return fig, ax
+
+import pickle
+
+def plotExampleNeuralTrajectories(
+    pkl,
+    cmap='viridis',
+    t1=0,
+    t2=0.15,
+    n=50
+    ):
+    """
+    """
+
+    with open(pkl, 'rb') as stream:
+        data = pickle.load(stream)
+
+    #
+    tProbe = np.arange(-0.2, 0.5, 0.02) + 0.01
+    tProbeInterperlated = np.linspace(-0.2 + 0.02, 0.5 - 0.02, n)
+    zExtra = list()
+    zPeri = list()
+    for j in range(3):
+        yExtra = np.interp(
+            tProbeInterperlated,
+            tProbe,
+            data['rp_extra_path'][:, j],
+        )
+        zExtra.append(yExtra)
+        yPeri = np.interp(
+            tProbeInterperlated,
+            tProbe,
+            data['rp_peri_path'][:, j],
+        )
+        zPeri.append(yPeri)
+    zExtra = np.array(zExtra).T
+    zPeri = np.array(zPeri).T
+
+    #
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    nColors = np.logical_and(tProbeInterperlated > t1, tProbeInterperlated <= t2).sum()
+    if type(cmap) == str:
+        cm = plt.get_cmap(cmap, nColors)
+    else:
+        cm = cmap.resampled(nColors)
+    offset = np.where(tProbeInterperlated >= t1)[0].min()
+    for z, ls in zip([zExtra, zPeri], ['-', '-']):
+        segments = list()
+        for i in range(len(z)):
+            start = z[i, :]
+            stop = np.take(z, i + 1, axis=0, mode='wrap')
+            segment = np.vstack([
+                start,
+                stop
+            ])
+            segments.append(segment)
+            ax.plot(
+                segment[:, 0],
+                segment[:, 1],
+                segment[:, 2],
+                color=cm(i - offset),
+                linestyle=ls,
+                linewidth=1.5,
+                alpha=0.85
+            )
+            print(i - offset)
+
+    return fig, ax

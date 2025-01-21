@@ -1,6 +1,6 @@
 # myphdlib
 
-This is a joke of scientific software and analysis documentation that was written during my graduate research.
+This is a repository for the scientific software and analysis documentation that I produced during my graduate research.
 
 ## Datasets ##
 The processed data for each session is stored in an H5 file named `output.hdf`. Within this file, there are datasets grouped by the associated data processing step.
