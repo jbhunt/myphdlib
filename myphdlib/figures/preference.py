@@ -1588,52 +1588,6 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
 
         return fig, ax, amplitude
 
-    def plotExamplePeths2(
-        self,
-        responseWindow=(-10, 10),
-        binsize=0.1,
-        figsize=(4, 5)
-        ):
-        """
-        """
-
-        fig, axs = plt.subplots(nrows=len(self.examples), ncols=2, sharey=True)
-        axs = np.atleast_2d(axs)
-        for i, ukey in enumerate(self.examples):
-            iUnit = self._indexUnitKey(ukey)
-            session = self._getSessionFromUnitKey(ukey)
-            unit = session.population.indexByCluster(ukey[-1])
-            gratingTimestamps = session.load('stimuli/dg/grating/timestamps')
-            gratingMotion = session.load('stimuli/dg/grating/motion')
-            pd = self.preference[iUnit]
-            nd = -1 if pd == 1 else 1
-            for j, gm in enumerate([pd, nd]):
-                # t, fr = unit.kde(
-                #     gratingTimestamps[gratingMotion == gm],
-                #     responseWindow=responseWindow,
-                #     binsize=binsize,
-                #     sigma=0.05
-                # )
-                # axs[i, j].plot(t, fr, color='k')
-                t, M, spikeTimes = psth2(
-                    gratingTimestamps[gratingMotion == gm],
-                    unit.timestamps,
-                    window=responseWindow,
-                    binsize=binsize,
-                    returnTimestamps=True
-                )
-                for y, t in enumerate(spikeTimes):
-                    # axs[i, j].vlines(t, y - 0.45, y + 0.45, color='k', alpha=0.3, lw=1)
-                    yScaled = y * 1.0
-                    axs[i, j].scatter(t, np.full(len(t), yScaled), marker='|', edgecolor='none', facecolor='C0', lw=1.0, alpha=0.5, s=5)
-
-        #
-        fig.set_figwidth(figsize[0])
-        fig.set_figheight(figsize[1])
-        fig.tight_layout()
-
-        return fig, axs
-
     def plotExamplePeths(
         self,
         componentIndex=0,
@@ -1713,6 +1667,72 @@ class DirectionSectivityAnalysis(BasicSaccadicModulationAnalysis, AnalysisBase):
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
+
+        return fig, axs
+
+    def plotExamplePeths2(
+        self,
+        responseWindow=(-0.2, 0.3),
+        binsize=0.01,
+        figsize=(3.7, 3.4),
+        examples=(('2023-04-14', 'mlati6', 518), ('2023-04-25', 'mlati6', 275))
+        ):
+        """
+        """
+
+        originalExamples = self.examples
+        self.examples = examples
+
+        fig, axs = plt.subplots(nrows=len(self.examples), ncols=2, sharex=True)
+        axs = np.atleast_2d(axs)
+        for i, ukey in enumerate(self.examples):
+            iUnit = self._indexUnitKey(ukey)
+            session = self._getSessionFromUnitKey(ukey)
+            unit = session.population.indexByCluster(ukey[-1])
+            gratingTimestamps = session.load('stimuli/dg/grating/timestamps')
+            gratingMotion = session.load('stimuli/dg/grating/motion')
+            pd = self.preference[iUnit]
+            nd = -1 if pd == 1 else 1
+            for j, gm in enumerate([pd, nd]):
+                t, fr = unit.kde(
+                    gratingTimestamps[gratingMotion == gm],
+                    responseWindow=responseWindow,
+                    binsize=binsize,
+                    sigma=0.005
+                )
+                axs[i, j].plot(t, fr, color='k')
+                continue
+                t, M, spikeTimestamps = psth2(
+                    gratingTimestamps[gratingMotion == gm],
+                    unit.timestamps,
+                    window=responseWindow,
+                    binsize=binsize,
+                    returnTimestamps=True
+                )
+                for irow, t in enumerate(spikeTimestamps):
+                    axs[i, j].vlines(t, irow - 0.45, irow + 0.45, color='k')
+
+
+        #
+        for row in axs:
+            ylim = [np.inf, -np.inf]
+            for ax in row:
+                y1, y2 = ax.get_ylim()
+                if y1 < ylim[0]:
+                    ylim[0] = y1
+                if y2 > ylim[1]:
+                    ylim[1] = y2
+            for ax in row:
+                ax.set_ylim(ylim)
+        
+
+        #
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        #
+        self.examples = originalExamples
 
         return fig, axs
 

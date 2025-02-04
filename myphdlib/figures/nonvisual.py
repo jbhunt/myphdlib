@@ -82,24 +82,39 @@ class SaccadeResponseAnalysis(AnalysisBase):
     def plotPeths(
         self,
         minimumResponseAmplitude=5,
+        normalize=True,
+        vrange=(-1, 1),
+        sortby='latency',
+        cmap='viridis',
+        figsize=(4, 4),
         ):
         """
         """
 
         fig, ax = plt.subplots()
         pethsNormed = list()
-        responeLatency = list()
+        sortingData = list()
         for fr in self.ns['psths/pref/real']:
-            a = np.max(np.abs(fr))
-            if a < minimumResponseAmplitude:
-                continue
             i = np.argmax(np.abs(fr))
-            pethsNormed.append(fr / a)
-            responeLatency.append(i)
-        sortedIndex = np.argsort(responeLatency)
+            a = fr[i]
+            if abs(a) < minimumResponseAmplitude:
+                continue
+            if sortby == 'latency':
+                sortingData.append(i)
+            elif sortby == 'amplitude':
+                # a2 = fr[np.logical_and(self.tSaccade >= 0, self.tSaccade < 0.3)].mean()
+                sortingData.append(a)
+            if normalize:
+                pethsNormed.append(fr / a)
+            else:
+                pethsNormed.append(fr)
+        sortedIndex = np.argsort(sortingData)
         pethsNormed = np.array(pethsNormed)
 
-        ax.pcolor(self.tSaccade, np.arange(sortedIndex.size), pethsNormed[sortedIndex], vmin=-0.8, vmax=0.8, cmap='viridis')
+        ax.pcolor(self.tSaccade, np.arange(sortedIndex.size), pethsNormed[sortedIndex], vmin=vrange[0], vmax=vrange[1], cmap=cmap, rasterized=True)
         ax.vlines(0, 0, sortedIndex.size, color='k')
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
 
         return fig, [ax,]
