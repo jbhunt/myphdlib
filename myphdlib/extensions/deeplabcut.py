@@ -1,7 +1,10 @@
 import os
 import re
+import sys
 import yaml
 import time
+import logging
+import contextlib
 import numpy as np
 import pandas as pd
 import pathlib as pl
@@ -122,10 +125,24 @@ def visualizeGpuMemory(refresh=1, head=5, window=30, **kwargs):
 
     return
 
+def analyzeVideosQuietly(*args, **kwargs):
+    """
+    Call DeepLabCut's analyze_videos function but suppress messaging
+    """
+
+    with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
+        logging.disable(logging.CRITICAL)  # Disable logging
+        try:
+            return dlc.analyze_videos(*args, **kwargs)
+        finally:
+            logging.disable(logging.NOTSET)  # Re-enable logging
+
 def transferAndExtractPose(
     configFile,
     targetDirectory,
     videoList,
+    skipExisting=True,
+    timeout=30,
     ):
     """
     """
@@ -133,31 +150,58 @@ def transferAndExtractPose(
     for src in videoList:
 
         #
-        dst = targetDirectory.joinpath(src.name)
-        print(f'Copying {dst.name}')
-        shutil.copy2(
-            src,
-            targetDirectory.joinpath(src.name)
-        )
+        try:
 
-        #
-        print(f'Analyzing {dst.name}')
-        dlc.analyze_videos(
-            configFile,
-            [dst,],
-            save_as_csv=True,
-        )
+            # Check for existing pose estimates
+            src = pl.Path(src)
+            skip = False
+            for file in src.parent.iterdir():
+                if 'sacnet' in file.name and skipExisting == True:
+                    skip = True
+            if skip:
+                print(f'INFO: Skipping {src}')
+                continue
 
-        #
-        for file in targetDirectory.iterdir():
-            if file.suffix == '.csv':
-                shutil.copy2(
-                    file,
-                    src.parent.joinpath(file.name)
-                )
-                file.unlink()
+            # Copy
+            dst = targetDirectory.joinpath(src.name)
+            print(f'INFO: Copying {src} --> {dst}')
+            shutil.copy2(
+                src,
+                targetDirectory.joinpath(src.name)
+            )
+
+            #
+            print(f'INFO: Analyzing {dst}')
+            analyzeVideosQuietly(
+                configFile,
+                [str(dst),],
+                save_as_csv=True,
+            )
+
+            #
+            for file in targetDirectory.iterdir():
+                if file.suffix == '.csv':
+                    dst2 = src.parent.joinpath(file.name)
+                    print(f'INFO: Copying {file} --> {dst2}')
+                    os.system(f'cp "{file}" "{dst2}"') # NOTE: shutil freaks out trying to copy to a networked drive
+                    t1 = time.time()
+                    while dst2.exists() != True: # Wait 30 seconds
+                        dt = time.time() - t1
+                        if dt >= timeout:
+                            break
+                        continue
+                    if dst2.exists() == False:
+                        raise Exception()
+
+        except KeyboardInterrupt:
+            break
+
+        except:
+            print(f'ERROR: Pose estimation failed for {dst}')
+            pass
         
         # Clean up
+        print(f'INFO: Cleaning up target directory')
         dst.unlink()
         for file in targetDirectory.iterdir():
             file.unlink()
