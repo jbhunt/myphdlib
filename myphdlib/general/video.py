@@ -1,10 +1,12 @@
 import os
+import numpy as np
 import pathlib as pl
 import subprocess as sp
 try:
     import cv2 as cv
 except ImportError:
     cv = None
+from tifffile import imsave
 
 def ffmpegInstalled():
     """
@@ -117,3 +119,36 @@ def countVideoFrames(video, backend='ffprobe'):
             result = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
 
     return result
+
+def convertVideoToMultipageTiff(video, filename=None):
+    """
+    Convert a video into a multipage tiff
+    """
+
+    videoFilePath = pl.Path(video)
+    if filename is None:
+        outputFilename = videoFilePath.parent.joinpath(f'{videoFilePath.stem}.tif')
+    else:
+        outputFilename = videoFilePath.parent.joinpath(f'{filename}.tif')
+
+    stream = cv.VideoCapture(video)
+    if stream.isOpened == False:
+        raise Exception('Could not open video')
+
+    #
+    depth = stream.get(cv.CAP_PROP_FRAME_COUNT)
+    width = stream.get(cv.CAP_PROP_FRAME_WIDTH)
+    height = stream.get(cv.CAP_PROP_FRAME_HEIGHT)
+    shape = list(map(int, [depth, height, width]))
+    frames = np.full(shape, 0).astype(np.uint16)
+
+    #
+    for iFrame in range(depth):
+        result, frame = stream.read()
+        gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+        frames[iFrame, :, :] = gray
+
+    #
+    imsave(str(outputFilename), frames)
+
+    return
