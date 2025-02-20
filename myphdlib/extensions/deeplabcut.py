@@ -7,6 +7,11 @@ import pandas as pd
 import pathlib as pl
 import subprocess as sp
 from matplotlib import pylab as plt
+import shutil
+try:
+    import deeplabcut as dlc
+except ImportError:
+    dlc = None
 
 configFilePath = None
 
@@ -114,5 +119,47 @@ def visualizeGpuMemory(refresh=1, head=5, window=30, **kwargs):
         except KeyboardInterrupt as error:
             plt.close(fig)
             break
+
+    return
+
+def transferAndExtractPose(
+    configFile,
+    targetDirectory,
+    videoList,
+    ):
+    """
+    """
+
+    for src in videoList:
+
+        #
+        dst = targetDirectory.joinpath(src.name)
+        print(f'Copying {dst.name}')
+        shutil.copy2(
+            src,
+            targetDirectory.joinpath(src.name)
+        )
+
+        #
+        print(f'Analyzing {dst.name}')
+        dlc.analyze_videos(
+            configFile,
+            [dst,],
+            save_as_csv=True,
+        )
+
+        #
+        for file in targetDirectory.iterdir():
+            if file.suffix == '.csv':
+                shutil.copy2(
+                    file,
+                    src.parent.joinpath(file.name)
+                )
+                file.unlink()
+        
+        # Clean up
+        dst.unlink()
+        for file in targetDirectory.iterdir():
+            file.unlink()
 
     return
