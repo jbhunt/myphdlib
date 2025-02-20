@@ -7,7 +7,9 @@ import pathlib as pl
 from datetime import date
 from string import ascii_uppercase as letters
 from myphdlib.interface.muscimol import MuscimolSession
-from myphdlib.interface.suppression import SuppressionSession
+from myphdlib.interface.dreadds import DreaddsSession
+from myphdlib.interface.mlati import MlatiSession
+from myphdlib.interface.dreadds2 import Dreadds2Session
 
 class SessionFactory(object):
     """
@@ -15,19 +17,21 @@ class SessionFactory(object):
 
     def __init__(
         self,
-        tag='JH-DATA-'
+        tag='JH-DATA-',
+        mount=None,
         ):
         """
         """
 
-        self._findDataVolumes(tag)
-        # self._loadExperimentData()
+        self._findDataVolumes(tag, mount)
+        self._loadExperimentData()
 
         return
     
     def _findDataVolumes(
         self,
-        tag='JH-DATA-'
+        tag='JH-DATA-06',
+        mount=None
         ):
         """
         """
@@ -46,10 +50,15 @@ class SessionFactory(object):
 
         # Linux
         elif os.name == 'posix':
-            for user in pl.Path('/media/').iterdir():
-                for drive in user.iterdir():
-                    if bool(re.search(f'.*{tag}.*', str(drive.name))):
-                        self.volumes.append(drive)
+            if mount is not None:
+                drive = pl.Path(mount)
+                self.volumes.append(drive)
+            
+            else:
+                for user in pl.Path('/media/').iterdir():
+                    for drive in user.iterdir():
+                        if bool(re.search(f'.*{tag}.*', str(drive.name))):
+                            self.volumes.append(drive)
 
         #
         else:
@@ -84,24 +93,48 @@ class SessionFactory(object):
         animals=None,
         dates=(None, None),
         letters=(None, 'a', 'b', 'c'),
+        eye='left',
         ):
         """
         """
 
+        #
+        if type(animals) == str:
+            animals = (animals,)
+        if type(dates) == str:
+            dates = (dates,)
+        if type(experiment) == str:
+            experiment = (experiment,)
+
         keys = list()
         for experiment_ in self.metadata.keys():
-            if experiment is not None and experiment_ != experiment:
+            if experiment is not None and experiment_ not in experiment:
                 continue
             for animal_ in self.metadata[experiment_].keys():
                 if animals is not None and animal_ not in animals:
                     continue
                 for date_ in self.metadata[experiment_][animal_]:
-                    if dates[0] is not None:
-                        if date_ < date.fromisoformat(dates[0]):
-                            continue 
-                    if dates[1] is not None:
-                        if date_ > date.fromisoformat(dates[1]):
+
+                    # Single date
+                    if len(dates) == 1:
+                        if date_ != date.fromisoformat(dates[0]):
                             continue
+
+                    # Date range
+                    if len(dates) == 2:
+                        if dates[0] is not None:
+                            if date_ < date.fromisoformat(dates[0]):
+                                continue 
+                        if dates[1] is not None:
+                            if date_ > date.fromisoformat(dates[1]):
+                                continue
+
+                    # List of dates
+                    if len(dates) > 2:
+                        if str(date_) not in dates:
+                            continue
+
+                    #
                     for letter in letters:
                         entry = (
                             experiment_,
@@ -110,16 +143,20 @@ class SessionFactory(object):
                         )
                         keys.append(entry)
 
-        #
+        # Create session objects
         sessions = list()
         for experiment_, animal_, date_ in keys:
             for volume in self.volumes:
                 folder = volume.joinpath(str(date_), animal_)
                 if folder.exists():
                     if experiment_ == 'Muscimol':
-                        session = MuscimolSession(folder)
-                    elif experiment_ == 'Suppression':
-                        session = SuppressionSession(folder)
+                        session = MuscimolSession(folder, eye=eye)
+                    elif experiment_ == 'Dreadds':
+                        session = DreaddsSession(folder, eye=eye)
+                    elif experiment_ == 'Mlati':
+                        session = MlatiSession(folder, eye=eye)
+                    elif experiment_ == 'NPDreadd':
+                        session = Dreadds2Session(folder, eye=eye)
                     else:
                         continue
                     sessions.append(session)

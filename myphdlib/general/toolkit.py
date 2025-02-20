@@ -5,6 +5,7 @@ import pathlib as pl
 import subprocess as sp
 from decimal import Decimal
 from scipy.stats import pearsonr
+from scipy import stats
 from scipy.interpolate import Akima1DInterpolator
 
 def smooth(a, window_size=5, window_type='hanning', axis=1):
@@ -169,7 +170,7 @@ def psth(target_events, relative_events, binsize=0.01, window=(-0.5, 1), edges=N
     else:
         return edges, M
 
-def psth2(event1, event2, window=(-1, 1), binsize=None, returnZeroIndex=False):
+def psth2(event1, event2, window=(-1, 1), binsize=None, returnTimestamps=False, returnShape=False):
     """
     """
 
@@ -195,13 +196,13 @@ def psth2(event1, event2, window=(-1, 1), binsize=None, returnZeroIndex=False):
         binEdges = np.linspace(start, stop, nBins + 1)
         t = binEdges[:-1] + binsize / 2
 
-        #
-        right = np.where(t > 0)[0].min()
-        left = right - 1
-        i = int((left + right) / 2)
+    #
+    if returnShape:
+        return t, event1.size, nBins
 
     #
     M = np.full([event1.size, nBins], np.nan)
+    relativeTimestamps = list()
     for rowIndex, timestamp in enumerate(event1):
         relative = event2 - timestamp
         withinWindowMask = np.logical_and(
@@ -210,10 +211,13 @@ def psth2(event1, event2, window=(-1, 1), binsize=None, returnZeroIndex=False):
         )
         binCounts, binEdges = np.histogram(relative[withinWindowMask], bins=binEdges)
         M[rowIndex, :] = binCounts
+        relativeTimestamps.append(relative[withinWindowMask])
+        # for ts in relative[withinWindowMask]:
+        #     relativeTimestamps.append(ts)
 
     #
-    if returnZeroIndex:
-        return t, M, i
+    if returnTimestamps:
+        return t, M, relativeTimestamps
     else:
         return t, M
 
@@ -307,3 +311,281 @@ class DotDict(dict):
         return DotDict(val) if type(val) is dict else val
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
+
+def computeAngleFromStandardPosition(point):
+    """
+    """
+
+    x, y = np.around(point, 2)
+
+    # Point and origin coincide
+    if x == 0 and y == 0:
+        theta = np.nan
+
+    # Point lies on quadrant boundaries
+    elif x == 0 or y == 0:
+        if x == 0 and y > 0:
+            theta = 90
+        if x == 0 and y < 0:
+            theta = 270
+        if y == 0 and x > 0:
+            theta = 0
+        if y == 0 and x < 0:
+            theta = 180
+    
+    # Point within a single quadrant
+    else:
+        theta = abs(np.rad2deg(np.arctan(y / x)))
+        if x > 0 and y > 0:
+            theta += 0
+        if x < 0 and y > 0:
+            theta += 90
+        if x < 0 and y < 0:
+            theta += 180
+        if x > 0 and y < 0:
+            theta += 270
+
+    return theta
+
+def stretch(a, b=None, c=(0, 1)):
+    """
+    Linearly re-scale and array
+    """
+
+    if b is None:
+        bmin, bmax = np.nanmin(a), np.nanmax(a)
+    elif len(b) == 2:
+        bmin, bmax = b
+    mask = np.invert(np.isnan(a))
+    d = np.full(a.size, np.nan)
+    d[mask] =  ((a[mask] - bmin) / (bmax - bmin)) * (np.max(c) - np.min(c)) + np.min(c)
+    return d    
+
+def ttest_1samp_with_weights(samp, populationMean=0, weights=None):
+    """
+    """
+
+    if weights is None:
+        weights = np.full(len(samp), 1.0)
+    xbar = np.average(samp, weights=weights)
+    s = np.sqrt(np.average((samp - xbar) ** 2, weights=weights))
+    t = (populationMean - xbar) / (s / np.sqrt(len(samp)))
+    df = len(samp) - 1
+    p = stats.t.sf(abs(t), df) * 2
+
+    return t, p
+
+def _computeEmpricalCummulativeDensityFunction(
+    spikeTimestamps,
+    eventTimestamps,
+    responseWindow=(-1, 1),
+    concatenateWithRange=True,
+    ):
+    """
+    """
+
+    # Compute the sample of pooled event-relative spike timestamps 
+    sample = list()
+    for eventTimestamp in eventTimestamps:
+        spikeTimestampsRelative = spikeTimestamps - eventTimestamp
+        inWindow = np.logical_and(
+            spikeTimestampsRelative >= responseWindow[0],
+            spikeTimestampsRelative <  responseWindow[1]
+        )
+        for spikeTimestamp in spikeTimestampsRelative[inWindow]:
+            sample.append(spikeTimestamp)
+    sample = np.array(sample)
+
+    # Include the minimum and maximum values of the window
+    if concatenateWithRange:
+        sample = np.concatenate([sample, responseWindow])
+
+    # Sort the sample
+    sample.sort()
+
+    # Compute the position of each spike in the sorted sample as a fraction of the sample size (i.e., range is scaled 0 to 1)
+    g = np.arange(sample.size) / sample.size
+
+    return sample, g
+
+def zetaTest(
+    spikeTimestamps,
+    eventTimestamps,
+    responseWindow=(0, 0.5),
+    nRuns=30,
+    ):
+    """
+    """
+
+    # Compute test values
+    tTest, gTest = _computeEmpricalCummulativeDensityFunction(
+        spikeTimestamps,
+        eventTimestamps,
+        responseWindow
+    )
+    bTest = (tTest + tTest.min()) / (tTest.max() - tTest.min())
+    dTest = gTest - bTest
+    dBar = np.mean(dTest)
+    dTest -= dBar
+
+    # Compute null distribution
+    dNull = list()
+    for iRun in range(nRuns):
+        jitter = np.random.uniform(
+            low=np.max(np.abs(responseWindow))  * -1,
+            high=np.max(np.abs(responseWindow)),
+            size=eventTimestamps.size
+        )
+        eventTimestampsJittered = eventTimestamps + jitter
+        tNull, gNull = _computeEmpricalCummulativeDensityFunction(
+            spikeTimestamps,
+            eventTimestampsJittered,
+            responseWindow
+        )
+        gNull = np.interp(tTest, tNull, gNull)
+        dNull_ = gNull - bTest
+        dBar = np.mean(dNull_)
+        dNull.append(dNull_ - dBar)
+    dNull = np.array(dNull)
+
+    # Compute p-value
+    testValue = np.max(np.abs(dTest))
+    nullSample = np.array([np.max(np.abs(dNull_)) for dNull_ in dNull])
+    p = np.sum(nullSample > testValue) / nullSample.size
+
+    return tTest, dTest, dNull, p
+
+def zetaTestWithHistogram(
+    spikeTimestamps,
+    eventTimestamps,
+    responseWindow=(0, 0.5),
+    nRuns=30,
+    nBins=1000,
+    ):
+    """
+    """
+
+    # Compute test values
+    tTest, gTest_ = _computeEmpricalCummulativeDensityFunction(
+        spikeTimestamps,
+        eventTimestamps,
+        responseWindow
+    )
+    binCounts, binEdges = np.histogram(tTest, range=responseWindow, bins=nBins)
+    binCenters = binEdges[:-1] + ((binEdges[1] - binEdges[0]) / 2)
+    gTest = np.cumsum(binCounts) / binCounts.sum()
+    b = (binCenters + abs(binCenters.min())) / (binCenters.max() - binCenters.min())
+    dTest = gTest - b
+
+    # Compute null distribution
+    dNull = list()
+    for iRun in range(nRuns):
+        jitter = np.random.uniform(
+            low=np.max(np.abs(responseWindow)) * -1,
+            high=np.max(np.abs(responseWindow)),
+            size=eventTimestamps.size
+        )
+        eventTimestampsJittered = eventTimestamps + jitter
+        tNull, gNull_ = _computeEmpricalCummulativeDensityFunction(
+            spikeTimestamps,
+            eventTimestampsJittered,
+            responseWindow
+        )
+        binCounts, binEdges = np.histogram(tNull, range=responseWindow, bins=nBins)
+        gNull = np.cumsum(binCounts) / binCounts.sum()
+        dNull.append(gNull - b)
+    dNull = np.array(dNull)
+
+    return binCenters, dTest, dNull
+
+def zetaTestWithHistogram2(
+    spikeTimestamps,
+    eventTimestamps,
+    responseWindow=(0, 0.5),
+    nRuns=30,
+    nBins=1000,
+    ):
+    """
+    """
+
+    # Compute test values
+    tTest, gTest_ = _computeEmpricalCummulativeDensityFunction(
+        spikeTimestamps,
+        eventTimestamps,
+        responseWindow
+    )
+    binCountsTest, binEdges = np.histogram(tTest, range=responseWindow, bins=nBins)
+    binCenters = binEdges[:-1] + ((binEdges[1] - binEdges[0]) / 2)
+
+    #
+    binCountsNull = list()
+    for iRun in range(nRuns):
+        jitter = np.random.uniform(
+            low=np.max(np.abs(responseWindow)) * -1,
+            high=np.max(np.abs(responseWindow)),
+            size=eventTimestamps.size
+        )
+        eventTimestampsJittered = eventTimestamps + jitter
+        tNull, gNull_ = _computeEmpricalCummulativeDensityFunction(
+            spikeTimestamps,
+            eventTimestampsJittered,
+            responseWindow
+        )
+        binCounts_, binEdges = np.histogram(tNull, range=responseWindow, bins=nBins)
+        binCountsNull.append(binCounts_)
+    binCountsNull = np.array(binCountsNull)
+
+    # Compute null deviations
+    nullDeviations = list()
+    for iRun in range(nRuns):
+        nullDeviation = binCountsNull[iRun] - binCountsNull.mean(0)
+        nullDeviations.append(nullDeviation)
+    nullDeviations = np.array(nullDeviations)
+    
+    # Compute the test deviations
+    testDeviation = binCountsTest - binCountsNull.mean(0)
+
+    # Compute p-values
+    pValues = list()
+    for iBin in range(nBins):
+        nullSample = np.abs(nullDeviations[:, iBin])
+        testValue = abs(testDeviation[iBin])
+        p = np.sum(nullSample > testValue) / nullSample.size
+        pValues.append(p)
+    
+    return binCenters, testDeviation, nullDeviations, pValues
+
+from scipy.stats import wilcoxon
+
+def eventRelatedActivityTest(
+    saccadeTimestamps,
+    spikeTimestamps,
+    baselineWindow=(-1, -0.9),
+    responseWindow=(-0.1, 0),
+    ):
+    """
+    """
+
+    t, mBaseline = psth2(
+        saccadeTimestamps,
+        spikeTimestamps,
+        window=baselineWindow,
+        binsize=None
+    )
+    t, mResponse = psth2(
+        saccadeTimestamps,
+        spikeTimestamps,
+        window=responseWindow,
+        binsize=None
+    )
+    yBaseline = mBaseline.ravel() / np.diff(baselineWindow)
+    yResponse = mResponse.ravel() / np.diff(responseWindow)
+    if yBaseline.sum() == 0:
+        return np.nan
+    else:
+        result = wilcoxon(
+            yBaseline,
+            yResponse,
+            method='exact'
+        )
+        return result.pvalue

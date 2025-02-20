@@ -2,7 +2,7 @@ import yaml
 import numpy as np
 import pandas as pd
 import pathlib as pl
-from myphdlib.interface._session import SessionBase
+from myphdlib.interface.session import SessionBase
 
 class GonogoSession(SessionBase):
     """
@@ -323,7 +323,7 @@ class GonogoSession(SessionBase):
         ax.set_xlabel('Trials by Contrast Change')
         return fig
 
-    count1 = 0
+        count1 = 0
         count6 = 0
         count5 = 0
         count4 = 0

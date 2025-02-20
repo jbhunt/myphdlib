@@ -29,7 +29,7 @@ def locateSoftwareDependencies(
     if matlabAddonsFolder is None:
         raise Exception('Path to MATLAB addons not specified')
 
-    if kilosortVersion != '2.0':
+    if kilosortVersion not in ('2.0', '2.5-branch'):
         raise Exception(f'Kilosort-{kilosortVersion} is not supported yet')
 
     #

@@ -120,35 +120,34 @@ def countVideoFrames(video, backend='ffprobe'):
 
     return result
 
-def convertVideoToMultipageTiff(video, filename=None):
+def convertVideoToMultipageTiff2(video, dst=None):
     """
-    Convert a video into a multipage tiff
     """
 
-    videoFilePath = pl.Path(video)
-    if filename is None:
-        outputFilename = videoFilePath.parent.joinpath(f'{videoFilePath.stem}.tif')
+    video = pl.Path(video)
+    if dst is None:
+        dst = video.parent
     else:
-        outputFilename = videoFilePath.parent.joinpath(f'{filename}.tif')
+        dst = pl.Path(dst)
+    filename = dst.joinpath(f'{video.stem}.tif')
 
-    stream = cv.VideoCapture(video)
-    if stream.isOpened == False:
-        raise Exception('Could not open video')
+    #
+    stream = cv.VideoCapture(str(video))
 
     #
     depth = stream.get(cv.CAP_PROP_FRAME_COUNT)
     width = stream.get(cv.CAP_PROP_FRAME_WIDTH)
     height = stream.get(cv.CAP_PROP_FRAME_HEIGHT)
     shape = list(map(int, [depth, height, width]))
-    frames = np.full(shape, 0).astype(np.uint16)
+    frames = np.full(shape, 0, dtype=np.uint8)
 
     #
-    for iFrame in range(depth):
+    for iFrame in range(int(depth)):
         result, frame = stream.read()
         gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
         frames[iFrame, :, :] = gray
 
     #
-    imsave(str(outputFilename), frames)
+    imsave(filename, frames)
 
     return
