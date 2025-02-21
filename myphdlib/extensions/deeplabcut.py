@@ -130,10 +130,12 @@ def analyzeVideosQuietly(*args, **kwargs):
     Call DeepLabCut's analyze_videos function but suppress messaging
     """
 
+    kwargs_ = {}
+    kwargs_.update(kwargs)
     with open(os.devnull, 'w') as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
         logging.disable(logging.CRITICAL)  # Disable logging
         try:
-            return dlc.analyze_videos(*args, **kwargs)
+            return dlc.analyze_videos(*args, **kwargs_)
         finally:
             logging.disable(logging.NOTSET)  # Re-enable logging
 
