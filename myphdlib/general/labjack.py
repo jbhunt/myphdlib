@@ -3,6 +3,7 @@ import re
 import numpy as np
 import pathlib as pl
 from scipy.signal import find_peaks
+from scipy.ndimage import gaussian_filter
 
 # Number of samples in a single LabJack dat file
 NSAMPLES = 12000
@@ -235,8 +236,34 @@ def filterPulsesFromPhotologicDevice(signal, minimumPulseWidthInSeconds=0.015, s
     #
     deltaState = np.diff(mutated)
     edgeIndices = np.where(abs(deltaState) > 0.5)[0]
-
     if np.all(np.diff(edgeIndices) > threshold):
         return mutated
     else:
         raise Exception('Pulse filtering failed')
+
+def filterPulsesWithSmoothing(signal):
+    """
+    if normal pulse filtering fails, try this
+    """
+    threshold = 40
+    threshold2 = 30
+    gaussianFiltered = gaussian_filter(signal, 10)
+    squareWave = np.where(gaussianFiltered > 0.01, 1, 0)
+    waveDiff = np.diff(squareWave)
+    edges = np.where(abs(waveDiff) > 0.5)[0]
+    intervals = np.hstack([edges[0: -1].reshape(-1, 1), edges[1:   ].reshape(-1, 1)])
+    for first, second in intervals:
+        dt = second - first
+        if dt < threshold:
+            squareWave[first + 1: second + 1] = 1
+            continue
+    deltaState = np.diff(squareWave)
+    edgeIndices = np.where(abs(deltaState) > 0.5)[0]
+    if np.all(np.diff(edgeIndices) > threshold2):
+        return squareWave
+    else:
+        raise Exception('Pulse filtering with smoothing failed')
+
+
+
+

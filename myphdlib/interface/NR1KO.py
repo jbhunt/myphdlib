@@ -2,14 +2,16 @@ from myphdlib.interface.session import SessionBase
 from myphdlib.pipeline.events import EventsProcessingMixin
 from myphdlib.pipeline.saccades import SaccadesProcessingMixin
 from myphdlib.general.labjack import filterPulsesFromPhotologicDevice
+from myphdlib.general.labjack import filterPulsesWithSmoothing
 from myphdlib.pipeline.prediction import PredictionProcessingMixin
 from myphdlib.pipeline.spikes import SpikesProcessingMixin
 from myphdlib.pipeline.activity import ActivityProcessingMixin
+from myphdlib.pipeline.tuning import TuningProcessingMixin
 import pathlib as pl
 import numpy as np
 import re
 import pandas as pd
-
+import pickle
 import code
 
 class StimuliProcessingMixinNR1(
@@ -34,13 +36,20 @@ class StimuliProcessingMixinNR1(
         if self.cohort == 1:
             TTLdata = labjackData[:, 8]
         # minimumPulseWidthInSeconds adjusted from 0.013 to check pulse count mismatch origin
-            filtered = filterPulsesFromPhotologicDevice(labjackData[:, 8],
-                minimumPulseWidthInSeconds=0.0469)
+            try:
+                filtered = filterPulsesFromPhotologicDevice(labjackData[:, 8],
+                minimumPulseWidthInSeconds=0.013)
+            except:
+                filtered = filterPulsesWithSmoothing(labjackData[:, 8])
+                print('smoothed')
         elif self.cohort == 12:
             TTLdata = labjackData[:, 6]
         # minimumPulseWidthInSeconds adjusted from 0.013 to check pulse count mismatch origin
-            filtered = filterPulsesFromPhotologicDevice(labjackData[:, 6],
-                minimumPulseWidthInSeconds=0.0469)
+            try:
+                filtered = filterPulsesFromPhotologicDevice(labjackData[:, 6],
+                minimumPulseWidthInSeconds=0.013)
+            except:
+                filtered = filterPulsesWithSmoothing(labjackData[:, 6])
         iPulses = np.where(np.diff(filtered) > 0.5)[0]
         iPulsesFall = np.where(np.diff(filtered) < -0.5)[0] # fall times, should be one for each.
         
@@ -52,6 +61,7 @@ class StimuliProcessingMixinNR1(
         iIntervals2 = iPulses[iIntervals]
         pulseTimestamps = timestamps[iPulses]
         intervalTimestamps = (timestamps[iIntervals2] + 3)
+
         # DEBUG, remove - Sept 16th, 2024
         #code.interact(local=dict(globals(), **locals())) 
         return pulseTimestamps, intervalTimestamps, iPulses, pulseDurations
@@ -210,12 +220,37 @@ class StimuliProcessingMixinNR1(
         fileIndex,
         pulseTimestamps,
         intervalTimestamps,
-        pulseDurations
+        pulseDurations,
+        iPulses
         ):
         """
         """
+
+        # Do this
         if self.cohort == 1:
             eventIndex = eventIndex + 340 #160 pulses per fictive saccade block
+    
+        #do this now
+        nTrialsExpected = 340
+        snBools = pulseTimestamps < intervalTimestamps[0]
+        snPulses = iPulses[snBools]
+        assert nTrialsExpected == len(snPulses)
+        data = {
+                'fields': list(),
+                'timestamps': list()
+            }
+        data['timestamps'] = self.computeTimestamps(np.array(snPulses))
+        fileName = self.home.joinpath('videos', 'sparseNoiseMetadata-1.pkl')
+        with open(fileName, 'rb') as stream:
+            f = pickle.load(stream)
+        fields = f['fields']
+        for field in fields:
+            for phase in ['on', 'off']:
+                data['fields'].append(field)
+        data['fields'] = np.array(data['fields'])
+        self.save('stimuli/sn/pre/timestamps', data['timestamps'])
+        self.save('stimuli/sn/pre/fields', data['fields'])
+
                     
         return eventIndex, metadataHolder
 
@@ -336,8 +371,10 @@ class StimuliProcessingMixinNR1(
                         fileIndex,
                         pulseTimestamps,
                         intervalTimestamps,
-                        pulseDurations
+                        pulseDurations,
+                        iPulses
                     )
+
 
         self._parseMetadataHolder(metadataHolder, iPulses)
         #print(metadataHolder)
@@ -352,6 +389,7 @@ class NR1Session(
     PredictionProcessingMixin,
     SpikesProcessingMixin,
     ActivityProcessingMixin,
+    TuningProcessingMixin,
     SessionBase
     ):
     """
@@ -456,12 +494,23 @@ class NR1Session(
 
         xl = csvFile
         xlfile = pd.read_excel(xl)
-        saccadeFrames = xlfile.time
-        frameTimestamps = self.load('frames/left/timestamps')
-        saccadeTimes = frameTimestamps[saccadeFrames]
+        saccadeFramesCorrected = list()
+        saccadeLabelsCorrected = list()
+        saccadeFrames = xlfile.frame
+        specialEvents = xlfile.special
         saccadeDirection = xlfile.nasal_temporal
+        for i, frame in enumerate(saccadeFrames):
+            if specialEvents[i] == 0:
+                saccadeFramesCorrected.append(frame)
+                saccadeLabelsCorrected.append(saccadeDirection[i])
+        frameTimestamps = self.load('frames/left/timestamps')
+        saccadeTimes = frameTimestamps[saccadeFramesCorrected]
+        saccadeTimes = np.array(saccadeTimes)
+        saccadeLabelsCorrected = np.array(saccadeLabelsCorrected)
+        saccadeFramesCorrected = np.array(saccadeFramesCorrected)
         self.save('saccades/predicted/left/manualtimes', saccadeTimes)
-        self.save('saccades/predicted/left/manuallabels', saccadeDirection)
+        self.save('saccades/predicted/left/manualframes', saccadeFramesCorrected)
+        self.save('saccades/predicted/left/manuallabels', saccadeLabelsCorrected)
 
         return
 
