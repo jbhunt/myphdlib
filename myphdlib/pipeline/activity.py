@@ -87,20 +87,20 @@ class ActivityProcessingMixin(object):
         """
 
         eventNames = (
-            # 'probe',
-            # 'probe',
+            'probe',
+            'probe',
             'saccade',
             'saccade',
         )
         eventDirections = (
-            # 'left',
-            # 'right',
+            'left',
+            'right',
             'nasal',
             'temporal'
         )
         responseWindows = (
-            # peristimulusWindow,
-            # peristimulusWindow,
+            peristimulusWindow,
+            peristimulusWindow,
             perisaccadicWindow,
             perisaccadicWindow,
         )
@@ -116,8 +116,8 @@ class ActivityProcessingMixin(object):
 
         #
         eventTimestamps = (
-            # self.probeTimestamps[self.filterProbes(trialType='es', probeDirections=(-1,))],
-            # self.probeTimestamps[self.filterProbes(trialType='es', probeDirections=(+1,))],
+            self.probeTimestamps[self.filterProbes(trialType='es', probeDirections=(-1,))],
+            self.probeTimestamps[self.filterProbes(trialType='es', probeDirections=(+1,))],
             self.saccadeTimestamps[self.saccadeLabels ==  1, 0],
             self.saccadeTimestamps[self.saccadeLabels == -1, 0]
         )
