@@ -969,7 +969,7 @@ class ProbeLatencyAnalysis(AnalysisBase):
             if session.probeTimestamps is None:
                 continue
             counts, edges = np.histogram(
-                session.probeLatencies,
+                np.abs(session.probeLatencies),
                 range=trange,
                 bins=n
             )
