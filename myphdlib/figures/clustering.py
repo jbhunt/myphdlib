@@ -107,7 +107,7 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             #
             end = None if iUnit + 1 == nUnits else '\r'
             print(f'Working on {iUnit + 1} out of {nUnits} units', end=end)
-            self.ukey = ukey # NOTE: Very important
+            self.ukey = ukey # NOTE: Very important, this invokes the ukey.setter situation
 
             #
             features = {
@@ -173,6 +173,9 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
             if saccadeType == 'real':
                 self.ns[f'globals/preference'][iUnit] = np.array([-1, 1])[iPref]
                 self.ns[f'globals/factor'][iUnit] = features['stats'][iPref, 1]
+
+            # Z-score the firing rate
+            # TODO: Correct the z-scoring method; right now the estimate of SD is wrong
             for motionDirection, iRow in zip(['pref', 'null'], [iPref, iNull]):
                 z = (features['ppths'][iRow] - features['stats'][iRow, 0]) / self.ns[f'globals/factor'][iUnit]
                 self.ns[f'ppths/{motionDirection}/{saccadeType}/extra'][iUnit] = z
@@ -228,12 +231,12 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
 
                 #
                 yStandard = self.ns[f'ppths/{motionDirection}/{saccadeType}/{probeCondition}'][iUnit]
-                yNormal = yStandard / np.max(np.abs(yStandard))
+                yNormal = yStandard / np.max(np.abs(yStandard)) #amplitude normalized so peak of largest component = 1
 
                 #
                 peakIndices = list()
                 peakProminences = list()
-                for coef in (-1, 1):
+                for coef in (-1, 1): #this allows us to flip signal so we can get max and min peaks since this only finds max
                     peakIndices_, peakProperties = findPeaks(
                         coef * yNormal,
                         height=kwargs['minimumPeakHeight'],
@@ -255,8 +258,8 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 peakIndices = np.array(peakIndices)
                 if peakIndices.size == 0:
                     continue
-                peakProminences = np.array(peakProminences)
-                peakAmplitudes = yStandard[peakIndices]
+                peakProminences = np.array(peakProminences) #amplitude from shoulders of peak
+                peakAmplitudes = yStandard[peakIndices] #amplitude from baseline
                 peakLatencies = self.tProbe[peakIndices]
 
                 # Use only the k largest peaks
@@ -271,13 +274,13 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
                 k = peakIndices.size
 
                 # Initialize the parameter space
-                p0 = np.concatenate([
-                    np.array([0]),
+                p0 = np.concatenate([ #these are the parameters we need to fit the gaussian function
+                    np.array([0]), #constant offset for some reason
                     peakAmplitudes,
-                    peakLatencies,
-                    np.full(k, kwargs['initialPeakWidth'])
+                    peakLatencies, 
+                    np.full(k, kwargs['initialPeakWidth']) #set width manually bc find peaks does not estimate this well
                 ])
-                bounds = np.vstack([
+                bounds = np.vstack([ #set min and max values for each parameter intelligently :)
                     np.array([[
                         -1 * kwargs['maximumBaselineShift'],
                         kwargs['maximumBaselineShift']
