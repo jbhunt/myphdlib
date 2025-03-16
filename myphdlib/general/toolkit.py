@@ -589,3 +589,46 @@ def eventRelatedActivityTest(
             method='exact'
         )
         return result.pvalue
+    
+from scipy import stats
+def weighted_one_sample_t_test(sample, mu=0, weights=None, tailed='two'):
+    """
+    Run a one-sample t-test with weighting of individual observations
+    """
+
+    # No weighting
+    if weights is None:
+        xbar = np.mean(sample) # Sample mean
+        se = np.std(sample, ddof=1) / np.sqrt(len(sample)) # Standard error
+        df = len(sample) - 1 # Degrees of freedom
+
+    # Weight observations
+    else:
+
+        # Check the weights have the same size as the sample
+        if len(weights) != len(sample):
+            raise Exception('Different number of weights and observations')
+        
+        # Compute parameters
+        xbar = np.sum(sample * weights) / np.sum(weights) # Weighted sample mean
+        s = np.sum(weights * (sample - xbar) ** 2) / np.sum(weights) # Weighted variance
+        se =  np.sqrt(s / np.sum(weights)) # Weighted standard error
+        df = (np.sum(weights) ** 2) / np.sum((weights ** 2) / len(sample)) # Weighted degrees of freedom (effective sample size)
+
+    # Compute the t-statistic
+    statistic = (xbar - mu) / se
+
+    # Compute the p-value
+    if tailed == 'two': # Two-tailed test (smaple mean != population mean)
+        p = 2 * (1 - stats.t.cdf(abs(statistic), df))
+
+    elif tailed in ['left', 'lower']: # Left-tailed test (sample mean < population mean)
+        p = stats.t.cdf(statistic, df)
+
+    elif tailed in ['right', 'upper']: # Right-tailed test (sample mean > population mean)
+        p = 1 - stats.t.cdf(statistic, df)
+
+    else:
+        raise Exception('Test can only be two-tailed (two), left-tailed (left, lower), or right-tailed (right, upper)')
+
+    return statistic, p
