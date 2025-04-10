@@ -1043,3 +1043,273 @@ class ProbeLatencyAnalysis(AnalysisBase):
             fig.tight_layout()
 
         return fig, ax
+    
+class SaccadeDescriptionAnalysis(AnalysisBase):
+    """
+    """
+
+    def __init__(self, *args, **kwargs):
+        """
+        """
+
+        self.saccadeFeatures = {
+            'label': list(),
+            'velocity': list(),
+            'startpoint': list(),
+            'endpoint': list(),
+            'amplitude': list(),
+            'duration': list()
+        }
+        super().__init__(*args, **kwargs)
+
+        return
+    
+    def _measurePeakVelocityForNoiseSaccades(self, session):
+        """
+        """
+
+        saccadeWaveformsTrue = session.load(f'saccades/predicted/{session.eye}/waveforms')
+        saccadeWaveformsPutative = session.load(f'saccades/putative/{session.eye}/waveforms')
+        saccadeWaveformsFalse = list()
+        for wf in saccadeWaveformsPutative:
+            if wf not in saccadeWaveformsTrue:
+                saccadeWaveformsFalse.append(wf)
+        saccadeWaveformsFalse = np.array(saccadeWaveformsFalse)
+        peakVelocity = list()
+        for wf in saccadeWaveformsFalse:
+            v = np.diff(wf) * session.fps
+            vmax = np.interp(0.5, np.linspace(0, 1, v.size), v).item()
+            peakVelocity.append(vmax)
+
+        return np.array(peakVelocity)
+    
+    def _measureNullVelocityDistribution(self, session, n=30):
+        """
+        """
+
+        poseEstimates = session.load('pose/filtered')
+        if session.eye == 'left':
+            eyePosition = poseEstimates[:, 0]
+        elif session.eye == 'right':
+            eyePosition = poseEstimates[:, 2]
+        velocity = np.diff(eyePosition)
+        sample = list()
+        while len(sample) < n:
+            observation = np.random.choice(velocity, size=1).item()
+            if np.isnan(observation):
+                continue
+            sample.append(observation)
+
+        return np.array(sample)
+
+    def extractSaccadeFeatures(
+        self,
+        ):
+        """
+        """
+
+        self.saccadeFeatures = {
+            'label': list(),
+            'velocity': list(),
+            'startpoint': list(),
+            'endpoint': list(),
+            'amplitude': list(),
+            'duration': list()
+        }
+
+        nSessions = len(self.sessions)
+        for i, session in enumerate(self.sessions):
+            end = '\r' if (i + 1) != nSessions else '\n'
+            print(f'Working on session {i + 1} out of {nSessions}', end=end)
+
+            #
+            saccadeLabels = session.load(f'saccades/predicted/{session.eye}/labels')
+            nSaccades = saccadeLabels.size
+            saccadeWaveforms = session.load(f'saccades/predicted/{session.eye}/waveforms')
+            saccadeEpochs = session.load(f'saccades/predicted/{session.eye}/epochs')
+            saccadeTimestamps = session.load(f'saccades/predicted/{session.eye}/timestamps')
+
+            # Validate session
+            poseEstimates = session.load(f'pose/filtered')
+            if session.eye == 'left': 
+                eyePosition = poseEstimates[:, 0]
+            elif session.eye == 'right':
+                eyePosition = poseEstimates[:, 2]
+            droppedFrames = session.load(f'frames/{session.eye}/dropped')
+            nFramesRecorded = droppedFrames.size
+            if nFramesRecorded > eyePosition.size:
+                continue
+
+            # Estimate null velocity
+            peakVelocitiesNull = self._measureNullVelocityDistribution(session, n=nSaccades)
+            for vmax in peakVelocitiesNull:
+                self.saccadeFeatures['label'].append(0)
+                self.saccadeFeatures['velocity'].append(vmax)
+                for k in ('amplitude', 'duration', 'startpoint', 'endpoint'):
+                    self.saccadeFeatures[k].append(np.nan)
+
+            # Real saccades
+            iterable = list(zip(
+                saccadeLabels,
+                saccadeWaveforms,
+                saccadeEpochs[:, 0],
+                saccadeEpochs[:, 1],
+                saccadeTimestamps[:, 0],
+                saccadeTimestamps[:, 1]
+            ))
+            for l, wf, f1, f2, t1, t2 in iterable:
+
+                # Label
+                self.saccadeFeatures['label'].append(l)
+
+                # Velocity
+                v = np.diff(wf) * session.fps
+                vmax = np.interp(0.5, np.linspace(0, 1, v.size), v).item()
+                self.saccadeFeatures['velocity'].append(vmax)
+
+                # Startpoint
+                p1 = np.interp(
+                    f1,
+                    np.arange(nFramesRecorded),
+                    eyePosition[:nFramesRecorded]
+                ).item()
+                self.saccadeFeatures['startpoint'].append(p1)
+
+                # Endpoint
+                p2 = np.interp(
+                    f2,
+                    np.arange(nFramesRecorded),
+                    eyePosition[:nFramesRecorded]
+                ).item()
+                self.saccadeFeatures['endpoint'].append(p2)
+
+                # Amplitude
+                a = abs(p2 - p1)
+                self.saccadeFeatures['amplitude'].append(a)
+
+                # Duration
+                dt = t2 - t1
+                self.saccadeFeatures['duration'].append(dt)
+
+        #
+        for k in self.saccadeFeatures.keys():
+            self.saccadeFeatures[k] = np.array(self.saccadeFeatures[k])
+        for k in self.saccadeFeatures.keys():
+            self.ns[f'saccades/{k}'] = self.saccadeFeatures[k]
+
+        return
+    
+    def plotHistograms(
+        self,
+        bins=100,
+        keys=('velocity', 'amplitude', 'duration', 'startpoint', 'endpoint'),
+        ranges=[(-1500, 1500), (0, 35), (0, 0.15), (-40, 40), (-40, 40)],
+        figsize=(5, 8),
+        ):
+        """
+        """
+
+        fig, axs = plt.subplots(nrows=len(self.saccadeFeatures.keys()) - 1)
+        saccadeLabels = self.ns['saccades/label']
+        for i, k in enumerate(keys):
+            binEdges = np.linspace(ranges[i][0], ranges[i][1], bins + 1)
+            try:
+                samples = [
+                    self.ns[f'saccades/{k}'][saccadeLabels ==  0],
+                    self.ns[f'saccades/{k}'][saccadeLabels == -1],
+                    self.ns[f'saccades/{k}'][saccadeLabels ==  1]
+                ]
+                axs[i].hist(
+                    samples[0],
+                    bins=binEdges,
+                    color='0.5',
+                    alpha=0.3
+                )
+                axs[i].hist(
+                    samples[1],
+                    bins=binEdges,
+                    color='r',
+                    alpha=0.3
+                )
+                axs[i].hist(
+                    samples[2],
+                    bins=binEdges,
+                    color='b',
+                    alpha=0.3
+                )
+            except:
+                import pdb; pdb.set_trace()
+
+        #
+        xlabels = (
+            'Velocity (deg/s)',
+            'Amplitude (deg)',
+            'Duration (s)',
+            'Startpoint (deg)',
+            'Endpoint (deg)'
+        )
+        for i in range(len(axs)):
+            axs[i].set_xlabel(xlabels[i])
+            axs[i].set_ylabel('# of units')
+        axs[0].legend(['Noise', 'Temp.', 'Nasal'])
+        fig.set_figwidth(figsize[0])
+        fig.set_figheight(figsize[1])
+        fig.tight_layout()
+
+        return fig, axs
+
+    def plotScatterplots(self):
+        """
+        """
+
+        fig, axs = plt.subplots(ncols=2)
+        nasalSaccades = self.saccadeFeatures['label'] == 1
+        temporalSaccades = self.saccadeFeatures['label'] == -1
+        noiseSaccades = self.saccadeFeatures['label'] == 0
+        saccadeMasks = (
+            nasalSaccades,
+            temporalSaccades,
+        )
+        jitter = np.random.normal(loc=0, scale=0, size=noiseSaccades.sum())
+        axs[0].scatter(
+            np.full(noiseSaccades.sum(), 0) + jitter,
+            self.saccadeFeatures['velocity'][noiseSaccades],
+            marker='.',
+            s=5,
+            color='k',
+            edgecolor='none',
+            alpha=0.15
+        )
+        for m, c in zip(saccadeMasks, ['r', 'b']):
+            axs[0].scatter(
+                self.saccadeFeatures['amplitude'][m],
+                self.saccadeFeatures['velocity'][m],
+                marker='.',
+                s=5,
+                color=c,
+                edgecolor='none',
+                alpha=0.15
+            )
+            axs[1].scatter(
+                self.saccadeFeatures['startpoint'][m],
+                self.saccadeFeatures['endpoint'][m],
+                marker='.',
+                s=5,
+                color=c,
+                edgecolor='none',
+                alpha=0.15
+            )
+        axs[0].hlines(0, -2, 35, color='k', linestyle=':', lw=1)
+        axs[0].set_xlim([-2, 35])
+        axs[0].set_ylim([-1350, 1500])
+        axs[1].vlines(0, -30, 35, color='k', linestyle=':', lw=1)
+        axs[1].hlines(0, -30, 35, color='k', linestyle=':', lw=1)
+        axs[1].set_xlim([-30, 35])
+        axs[1].set_ylim([-30, 35])
+        axs[0].set_xlabel('Amplitude (deg)')
+        axs[0].set_ylabel('Peak velocity (deg/s)')
+        axs[1].set_xlabel('Startpoint (deg)')
+        axs[1].set_ylabel('Endpoint (deg)')
+        fig.tight_layout()
+
+        return fig, axs

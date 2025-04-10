@@ -221,6 +221,47 @@ class Namespace():
             'dsi/bar': None,
             'dsi/dg': None,
 
+            #
+            'rf/on/fr': None,
+            'rf/off/fr': None,
+            'rf/on/area': None,
+            'rf/off/area': None,
+            'rf/on/eccentricity': None,
+            'rf/off/eccentricity': None,
+            'rf/on/complexity': None,
+            'rf/off/complexity': None,
+            'rf/on/centroid': None,
+            'rf/off/centroid': None,
+
+            #
+            'depth': None,
+
+            #
+            'lpi': None,
+
+            #
+            'complexity': None,
+
+            #
+            'amplitude/probe': None,
+            'amplitude/saccade': None,
+
+            # Saccade features
+            'saccades/label': None,
+            'saccades/velocity': None,
+            'saccades/startpoint': None,
+            'sacccades/endpoint': None,
+            'saccades/amplitude': None,
+            'saccades/druation': None,
+
+            #
+            'miext/pref/real/low': None,
+            'miext/pref/real/medium': None,
+            'miext/pref/real/high': None,
+            'miext/null/real/low': None,
+            'miext/null/real/medium': None,
+            'miext/null/real/high': None,
+
             # Global variables
             'globals/factor': None, # Scaling factor (standard deviation of baseline firing rate for preferred direction)
             'globals/preference': None, # Preferred direction of motion

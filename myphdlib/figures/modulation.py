@@ -100,14 +100,17 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         rSaccade = list()
         rBaseline = list()
         binIndicesBaseline = np.logical_and(self.tSaccade >= baselineWindow[0], self.tSaccade <= baselineWindow[1])
-        for probeLatency, saccadeLabel in iterable:
-            saccadeDirection = 'temporal' if saccadeLabel == -1 else 'nasal'
-            fp = self.ns[f'psths/{saccadeDirection}/{saccadeType}'][self.iUnit]
-            x = t + probeLatency
-            fr = np.interp(x, self.tSaccade, fp, left=np.nan, right=np.nan)
-            rSaccade.append(fr)
-            bl = fp[binIndicesBaseline].mean()
-            rBaseline.append(bl)
+        try:
+            for probeLatency, saccadeLabel in iterable:
+                saccadeDirection = 'temporal' if saccadeLabel == -1 else 'nasal'
+                fp = self.ns[f'psths/{saccadeDirection}/{saccadeType}'][self.iUnit]
+                x = t + probeLatency
+                fr = np.interp(x, self.tSaccade, fp, left=np.nan, right=np.nan)
+                rSaccade.append(fr)
+                bl = fp[binIndicesBaseline].mean()
+                rBaseline.append(bl)
+        except:
+            import pdb; pdb.set_trace()
 
         rSaccade = np.nanmean(np.array(rSaccade) - np.array(rBaseline).reshape(-1, 1), 0)
 
@@ -133,6 +136,8 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
             returnShape=True
         )
         if self.tSaccade is None:
+            self.tSaccade = tSaccade
+        if len(self.tSaccade) != len(tSaccade):
             self.tSaccade = tSaccade
         nUnits = len(self.ukeys)
 
