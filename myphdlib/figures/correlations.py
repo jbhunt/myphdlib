@@ -5,10 +5,7 @@ from myphdlib.general.toolkit import psth2
 from myphdlib.figures.analysis import AnalysisBase
 from matplotlib import pyplot as plt
 from matplotlib.colors import LogNorm, Normalize
-from matplotlib.gridspec import GridSpec
-import scikit_posthocs
 from scipy import stats
-from statsmodels.stats.anova import AnovaRM
 import polars
 try:
     import unit_localizer as uloc
@@ -219,7 +216,7 @@ class CorrelationAnalysis(AnalysisBase):
                 centroid[1] -= y0
                 eccentricity = centroid[-1]
                 sample = np.abs(rf.flatten())
-                complexity = stats.entropy(sample / sample.sum(), base=2) / np.log2(sample.size)
+                complexity = stats.entropy(sample / sample.sum())
 
                 #
                 areas.append(totalArea)
@@ -247,7 +244,7 @@ class CorrelationAnalysis(AnalysisBase):
 
         return
     
-    def _estimateUnitCoordinates(
+    def _computeUnitDepths(
         self,
         insertionParameters,
         skullThickness=0.2
@@ -278,35 +275,42 @@ class CorrelationAnalysis(AnalysisBase):
             insertionDepth = result['Depth'].item() if (result['Depth'].len() != 0 and result['Depth'].item() is not None) else np.nan
 
             #
-            if np.isnan(np.concatenate([insertionPoint, insertionOffset, [insertionAngle], [insertionDepth]])).any():
-                transformed = None
-            else:
-                insertionPointCorrected = np.copy(insertionPoint)
-                insertionPointCorrected[:2] += insertionOffset
-                labels, points, transformed = uloc.localizeUnitsWithInsertionParameters(
-                    kilosortOutputFolder=session.home.joinpath('ephys', 'sorting', 'manual'),
-                    insertionPoint=insertionPoint,
-                    insertionDepth=insertionDepth,
-                    insertionAngle=insertionAngle,
-                    skullThickness=skullThickness
-                )
-            data[(str(session.date), session.animal)] = transformed
+            try:
+                if np.isnan(np.concatenate([insertionPoint, insertionOffset, [insertionAngle], [insertionDepth]])).any():
+                    depths = None
+
+                else:
+                    insertionPointCorrected = np.copy(insertionPoint)
+                    insertionPointCorrected[:2] += insertionOffset
+                    try:
+                        labels, points, transformed = uloc.localizeUnitsWithInsertionParameters(
+                            kilosortOutputFolder=session.home.joinpath('ephys', 'sorting', 'manual'),
+                            insertionPoint=insertionPoint,
+                            insertionDepth=insertionDepth,
+                            insertionAngle=insertionAngle,
+                            skullThickness=skullThickness
+                        )
+                    except:
+                        import pdb; pdb.set_trace()
+                depths = transformed[:, -1]
+            except:
+                import pdb; pdb.set_trace()
+            data[(str(session.date), session.animal)] = depths
 
         #
         nUnits = len(self.ukeys)
-        coordinatesByUnit = np.full([nUnits, 3], np.nan)
+        depthsByUnit = np.full(nUnits, np.nan)
         for iUnit in range(nUnits):
             self.ukey = self.ukeys[iUnit]
-            coordinates = data[(str(self.session.date), self.session.animal)]
-
-            if coordinates is None:
-                ap, ml, dv = np.nan, np.nan, np.nan
+            depths = data[(str(self.session.date), self.session.animal)]
+            if depths is None:
+                depth = np.nan
             else:
-                ap, ml, dv = coordinates[self.unit.index]
-            coordinatesByUnit[iUnit] = np.array([ap, ml, dv])
+                depth = depths[self.unit.index]
+            depthsByUnit[iUnit] = depth
 
         #
-        self.ns['coordinates'] = coordinatesByUnit
+        self.ns['depth'] = depthsByUnit
 
         return
     
@@ -385,19 +389,15 @@ class CorrelationAnalysis(AnalysisBase):
     
     def plotCorrelations(
         self,
-        figsize=(8, 15),
+        figsize=(15, 7),
         minimumAmplitude=5,
-        receptiveFieldLabels=None,
-        miRange=(-2, 2),
+        receptiveFieldLabels=None
         ):
         """
         """
 
         # 
         nUnits = len(self.ukeys)
-        nTests = 0
-        cmap = plt.get_cmap('coolwarm', 3)
-        blue, red = cmap(0), cmap(2)
 
         # Filter by response amplitude
         hasVisualResponse = list()
@@ -427,76 +427,118 @@ class CorrelationAnalysis(AnalysisBase):
             for k in ('on', 'off'):
                 hasReceptiveField[k] = np.full(nUnits, True)
 
-        # Filter by valid unit depth
+        #
         isValidDepth = list()
-        zmin = np.nanpercentile(self.ns['coordinates'][:, -1], 5)
-        zmax = np.nanpercentile(self.ns['coordinates'][:, -1], 95)
+        zmin = np.nanpercentile(self.ns['depth'], 5)
+        zmax = np.nanpercentile(self.ns['depth'], 95)
         for iUnit in range(nUnits):
-            if (self.ns['coordinates'][iUnit, -1] < zmin) or (self.ns['coordinates'][iUnit, -1] > zmax):
+            if (self.ns['depth'][iUnit] < zmin) or (self.ns['depth'][iUnit] > zmax):
                 isValidDepth.append(False)
             else:
                 isValidDepth.append(True)
         isValidDepth = np.array(isValidDepth)
 
-        # Masks used to filter units for each IV
-        masksByFeature = (
-            np.vstack([hasReceptiveField['on'], isValidDepth, hasVisualResponse]).all(0), # ON RF area
-            np.vstack([hasReceptiveField['off'], isValidDepth, hasVisualResponse]).all(0), # OFF RF area
-            np.vstack([hasReceptiveField['on'], isValidDepth, hasVisualResponse]).all(0), # ON RF complexity
-            np.vstack([hasReceptiveField['off'], isValidDepth, hasVisualResponse]).all(0), # OFF RF complexity
-            np.vstack([hasReceptiveField['on'], isValidDepth, hasVisualResponse]).all(0), # ON RF x-position
-            np.vstack([hasReceptiveField['off'], isValidDepth, hasVisualResponse]).all(0), # OFF RF x-position
-            np.vstack([hasReceptiveField['on'], isValidDepth, hasVisualResponse]).all(0), # ON RF y-position
-            np.vstack([hasReceptiveField['off'], isValidDepth, hasVisualResponse]).all(0), # OFF RF y-position
-            np.vstack([np.logical_or(hasReceptiveField['on'], hasReceptiveField['off']), isValidDepth, hasVisualResponse]).all(0), # ML coord
-            np.vstack([np.logical_or(hasReceptiveField['on'], hasReceptiveField['off']), isValidDepth, hasVisualResponse]).all(0), # DV coord
-        )
+        #
+        nFeatures = 10
+        y = np.full([nUnits, nFeatures], np.nan)
+        y[:, 0] = self.ns['rf/on/area']
+        y[np.logical_not(hasReceptiveField['on']), 0] = np.nan
+        y[:, 1] = self.ns['rf/off/area']
+        y[np.logical_not(hasReceptiveField['off']), 1] = np.nan
+        y[:, 2] = self.ns['rf/on/complexity']
+        y[np.logical_not(hasReceptiveField['on']), 2] = np.nan
+        y[:, 3] = self.ns['rf/off/complexity']
+        y[np.logical_not(hasReceptiveField['off']), 3] = np.nan
+        y[:, 4] = self.ns['rf/on/centroid'][:, 0]
+        y[np.logical_not(hasReceptiveField['on']), 4] = np.nan
+        y[:, 5] = self.ns['rf/off/centroid'][:, 0]
+        y[np.logical_not(hasReceptiveField['off']), 5] = np.nan
+        y[:, 6] = self.ns['rf/on/centroid'][:, 1]
+        y[np.logical_not(hasReceptiveField['on']), 6] = np.nan
+        y[:, 7] = self.ns['rf/off/centroid'][:, 1]
+        y[np.logical_not(hasReceptiveField['on']), 7] = np.nan
+        y[:, 8] = self.ns['depth']
+        y[np.logical_not(isValidDepth), 8] = np.nan
 
         #
-        nFeatures = len(masksByFeature)
-        ivs = np.full([nUnits, nFeatures], np.nan)
-        ivs[:, 0] = self.ns['rf/on/area']
-        ivs[:, 1] = self.ns['rf/off/area']
-        ivs[:, 2] = self.ns['rf/on/complexity']
-        ivs[:, 3] = self.ns['rf/off/complexity']
-        ivs[:, 4] = self.ns['rf/on/centroid'][:, 0]
-        ivs[:, 5] = self.ns['rf/off/centroid'][:, 0]
-        ivs[:, 6] = self.ns['rf/on/centroid'][:, 1]
-        ivs[:, 7] = self.ns['rf/off/centroid'][:, 1]
-        ivs[:, 8] = self.ns['coordinates'][:, 1]
-        ivs[:, 9] = self.ns['coordinates'][:, 2]
-
-        # Jitter AP coordinate
-        # ivs[:, 8] += np.random.normal(loc=0, scale=0.007, size=ivs.shape[0])
-
-        # Reflect ML coordinate
-        ivs[:, 8] *= -1
-
-        #
-        nRows = len(self.windows) + 2
         fig, axs = plt.subplots(
-            nrows=nRows * 2,
-            ncols=nFeatures,
-            gridspec_kw={'height_ratios': np.tile([2, 1], nRows)}
+            ncols=len(self.windows) * 2,
+            nrows=nFeatures,
+            gridspec_kw={'width_ratios': np.tile([2, 1], len(self.windows))},
         )
 
-        #
-        statistics = np.full([nRows, nFeatures, 2], np.nan)
+        # Make subplots
+        for iWin in range(self.windows.shape[0]):
 
-        # DV = Probe response complexity
-        iTop, iBottom = 0, 1
-        dv = self.ns['globals/labels']
-        for j in range(nFeatures):
+            #
+            p = np.clip(self.ns['p/pref/real'][:, iWin, 0], 0.001, 1)
+            mi = np.clip(self.ns['mi/pref/real'][:, iWin, 0], -1, 1)
+            colors = np.full(mi.size, 'k')
+            alphas = np.full(p.size, 0.3)
+            alphas = np.interp(p, [0, 0.1], [0.5, 0.0])
+
+            # Scatterplots
+            j1 = int(2 * iWin)
+            for i in range(nFeatures - 1):
+                axs[i, j1].scatter(
+                    mi,
+                    y[:, i],
+                    marker='.',
+                    s=10,
+                    edgecolor='none',
+                    alpha=alphas,
+                    color=colors
+                )
+
+                # Boxplots
+                j2 = j1 + 1
+                samples = [
+                    y[np.logical_and(mi < 0, p < 0.05), i],
+                    y[p > 0.05, i],
+                    y[np.logical_and(mi > 0, p < 0.05), i]
+                ]
+                samplesFiltered = list()
+                for sample in samples:
+                    samplesFiltered.append(np.delete(sample, np.isnan(sample)))
+                bp = axs[i, j2].boxplot(
+                    samplesFiltered,
+                    showfliers=False,
+                    medianprops={'color': 'k'},
+                    patch_artist=True,
+                    widths=0.5,
+                    notch=True
+                )
+                for patch, color in zip(bp['boxes'], ['b', 'w', 'r']):
+                    patch.set_facecolor(color)
+                    # patch.set_alpha(0.3)
+                    # patch.set_edgecolor('none')
+
+        # Special case of modulation x saccade amplitude
+        y_ = np.concatenate([
+            np.full(nUnits, 0),
+            np.full(nUnits, 1),
+            np.full(nUnits, 2)
+        ]).astype(float)
+        yOffset = np.random.normal(loc=0, scale=0.05, size=y_.size)
+        y_ += yOffset
+        for iWin in range(len(self.windows)):
+            # X = np.clip(np.hstack([
+            #     self.ns['miext/pref/real/low'][:, iWin, 0],
+            #     self.ns['miext/pref/real/medium'][:, iWin, 0],
+            #     self.ns['miext/pref/real/high'][:, iWin, 0]
+            # ]).ravel(), -1, 1)
+            j1 = int(2 * iWin)
+            # j2 = j1 + 1
             samples = [
-                ivs[np.logical_and(dv == -1, masksByFeature[0]), j],
-                ivs[np.logical_and(dv ==  1, masksByFeature[0]), j],
-                ivs[np.logical_and(dv ==  2, masksByFeature[0]), j],
-                ivs[np.logical_and(dv ==  3, masksByFeature[0]), j]    
+                np.clip(self.ns['miext/pref/real/low'][hasVisualResponse, iWin, 0], -1, 1),
+                np.clip(self.ns['miext/pref/real/medium'][hasVisualResponse, iWin, 0], -1, 1),
+                np.clip(self.ns['miext/pref/real/high'][hasVisualResponse, iWin, 0], -1, 1)
             ]
             samplesFiltered = list()
             for sample in samples:
                 samplesFiltered.append(np.delete(sample, np.isnan(sample)))
-            bp = axs[iTop, j].boxplot(
+            # axs[-1, j1].scatter(X, y_, color='k', marker='.', s=10, alpha=0.15)
+            bp = axs[-1, j1].boxplot(
                 samplesFiltered,
                 vert=False,
                 notch=True,
@@ -505,168 +547,50 @@ class CorrelationAnalysis(AnalysisBase):
                 showfliers=False,
                 widths=0.5
             )
-            for patch, color in zip(bp['boxes'], ['0.8', '0.8', '0.8', '0.8']):
+            for patch, color in zip(bp['boxes'], ['w', 'w', 'w']):
                 patch.set_facecolor(color)
-
-            # Stats
-            result = stats.kruskal(*samplesFiltered)
-            nTests += 1
-            statistics[0, j, 0] = result.statistic
-            statistics[0, j, 1] = result.pvalue
-
-        # DV = Modulation index
-        for iWin in range(self.windows.shape[0]):
-
-            #
-            p = self.ns['p/pref/real'][:, iWin, 0]
-            mi = np.clip(self.ns['mi/pref/real'][:, iWin, 0], *miRange)
-            cats = (
-                p >= 0.01,
-                np.logical_and(p >= 0.001, p < 0.05),
-                np.logical_and(p >= 0, p < 0.001),
-            )
-
-            # Scatterplots
-            iTop = int(2 * iWin) + 2
-            iBottom = iTop + 1
-            for j in range(nFeatures):
-
-                #
-                mask = masksByFeature[j]
-
-                #
-                for color, cat, alpha in zip(['0.75', '0.0', '0.0'], cats, [1, 1, 1]):
-                    axs[iTop, j].scatter(
-                        ivs[np.logical_and(mask, cat), j],
-                        mi[np.logical_and(mask, cat)],
-                        marker='.',
-                        s=5,
-                        edgecolor='none',
-                        color=color,
-                        alpha=alpha,
-                        rasterized=True
-                    )
-
-                # Boxplots
-                samples = [
-                    ivs[np.vstack([mask, mi < 0, p < 0.05]).all(0), j],
-                    ivs[np.vstack([mask, p > 0.05]).all(0),         j],
-                    ivs[np.vstack([mask, mi > 0, p < 0.05]).all(0), j]
-                ]
-                samplesFiltered = list()
-                for sample in samples:
-                    samplesFiltered.append(np.delete(sample, np.isnan(sample)))
-                bp = axs[iBottom, j].boxplot(
-                    samplesFiltered,
-                    showfliers=False,
-                    medianprops={'color': 'k'},
-                    patch_artist=True,
-                    widths=0.5,
-                    notch=True,
-                    vert=False
-                )
-                for patch, color in zip(bp['boxes'], [blue, 'w', red]):
-                    patch.set_facecolor(color)
-
-                # Stats
-                result = stats.kruskal(*samplesFiltered)
-                nTests += 1
-                statistics[iWin + 1, j, 0] = result.statistic
-                statistics[iWin + 1, j, 1] = result.pvalue
-
-        # DV = Fictive saccadic modulation
-        iTop, iBottom = -2, -1
-        dv = self.ns['mi/pref/real'][:, 5, 0] - self.ns['mi/pref/fictive'][:, 0, 0]
-        yrange = (-1 * 2 * np.max(np.abs(miRange)), 2 * np.max(np.abs(miRange)))
-        dv = np.clip(dv, *yrange)
-        p = self.ns['p/pref/real'][:, 5, 0]
-        cats = (
-            p >= 0.01,
-            np.logical_and(p >= 0.001, p < 0.05),
-            np.logical_and(p >= 0, p < 0.001),
-        )
-        for j in range(nFeatures):
-            for color, cat, alpha in zip(['0.75', '0.0', '0.0'], cats, [1, 1, 1]):
-                axs[iTop, j].scatter(
-                    ivs[np.logical_and(mask, cat), j],
-                    np.clip(dv[np.logical_and(mask, cat)], *yrange),
-                    color=color,
-                    marker='.',
-                    s=5,
-                    alpha=alpha,
-                    edgecolor='none',
-                    rasterized=True
-                )
-            pairsMask = np.logical_not(np.vstack([
-                np.isnan(dv[mask]),
-                np.isnan(ivs[mask, j])
-            ]).any(0))
-            samplesFiltered = [
-                dv[mask][pairsMask],
-                ivs[mask, j][pairsMask]
-            ]
-            result = stats.spearmanr(*samplesFiltered)
-            nTests += 1
-            statistics[-1, j, 0] = np.nan
-            statistics[-1, j, 1] = result.pvalue
-
-        #
-        xlims = (
-            None,
-            None,
-            None,
-            None,
-            (-90, 90),
-            (-90, 90),
-            (-55, 55),
-            (-55, 55),
-            None,
-            None,
-            None
-        )
-        for j in range(nFeatures):
-            if xlims[j] is not None:
-                for ax in axs[:, j]:
-                    ax.set_xlim(xlims[j])
-            else:
-                xlim = [np.inf, -np.inf]
-                for ax in axs[:, j]:
-                    if ax.has_data() == False:
-                        continue
-                    x1, x2 = ax.get_xlim()
-                    if x1 < xlim[0]:
-                        xlim[0] = x1
-                    if x2 > xlim[1]:
-                        xlim[1] = x2
-                for ax in axs[:, j]:
-                    ax.set_xlim(xlim)
-            for ax in axs[:-1, j]:
-                ax.set_xticks([])
 
         #
         for i in range(axs.shape[0]):
             ylim = [np.inf, -np.inf]
             for ax in axs[i, :]:
-                if ax.has_data() == False:
-                    continue
                 y1, y2 = ax.get_ylim()
                 if y1 < ylim[0]:
                     ylim[0] = y1
                 if y2 > ylim[1]:
                     ylim[1] = y2
-            for ax in axs[i, 1:]:
-                ax.set_yticks([])
-            if np.isfinite(ylim).sum() != 2:
-                continue
             for ax in axs[i, :]:
                 ax.set_ylim(ylim)
+            for ax in axs[i, 1:]:
+                ax.set_yticks([])
 
         #
-        for ax in axs.ravel():
-            for sp in ('top', 'right'):
-                ax.spines[sp].set_visible(False)
-        for ax in axs[1::2, 0]:
-            ax.set_yticklabels([])
+        for ax in axs[:-1, :].ravel():
+            ax.set_xticks([])
+        for ax in axs[-1, 2:]:
+            ax.set_xticks([])
+        axs[-1, 0].set_xticks([-1, 0, 1])
+        axs[-1, 1].set_xticks([1, 2, 3])
+        xlim = axs[0, 1].get_xlim()
+        axs[-1, 1].set_xticklabels(['Sup.', 'Unm.', 'Enh.'], rotation=90)
+        axs[-1, 1].set_xlim(xlim)
+        axs[-1, 0].set_xlabel('MI')
+
+        #
+        ylabels = (
+            r'$RF_{ON}$ area',
+            r'$RF_{OFF}$ area',
+            r'$RF_{ON}$ comp.',
+            r'$RF_{OFF}$ comp.',
+            r'$RF_{ON}$ center (x)',
+            r'$RF_{OFF}$ center (x)',
+            r'$RF_{ON}$ center (y)',
+            r'$RF_{OFF}$ center (y)',
+            r'Depth (mm)',
+            r'Saccade amp.'
+        )
+        for i, ylabel in enumerate(ylabels):
+            axs[i, 0].set_ylabel(ylabel, rotation=0, labelpad=40)
 
         #
         fig.set_figwidth(figsize[0])
@@ -674,208 +598,101 @@ class CorrelationAnalysis(AnalysisBase):
         fig.tight_layout()
         fig.subplots_adjust(wspace=0.3, hspace=0.3)
 
-        return fig, axs, statistics, nTests
+        return fig, axs
     
-    def plotModulationBySaccadeAmplitude(
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
+import statsmodels.api as sm
+
+class RegressionAnalysis(AnalysisBase):
+    """
+    """
+
+    def _computeWeights(
         self,
-        minimumAmplitude=5,
-        perisaccadicWindowIndices=(3, 4, 5, 6),
-        miRange=(-3, 3),
-        figsize=(8, 4)
+        modulation=-1
         ):
         """
         """
 
-        # Filter by response amplitude
-        hasVisualResponse = list()
-        for iUnit in range(len(self.ukeys)):
-            a = abs(self.ns['params/pref/real/extra'][iUnit, 0])
-            if a >= minimumAmplitude:
-                hasVisualResponse.append(True)
-            else:
-                hasVisualResponse.append(False)
-        hasVisualResponse = np.array(hasVisualResponse)
+        X = np.vstack([
+            self.ns['rf/on/area'],
+            np.abs(self.ns['rf/on/eccentricity']),
+            self.ns['rf/on/complexity'],
+            self.ns['rf/off/area'],
+            np.abs(self.ns['rf/off/eccentricity']),
+            self.ns['rf/off/complexity'],
+            self.ns['depth'],
+            self.ns['lpi'],
+            self.ns['complexity']
+        ]).T
+        W = np.full([X.shape[1], len(self.windows)], np.nan)
+        P = np.full([X.shape[1], len(self.windows)], np.nan)
+        reg = LinearRegression()
+        scaler = StandardScaler()
+        for iWin in range(self.windows.shape[0]):
+            mi = self.ns['mi/pref/real'][:, iWin, 0]
+            p = self.ns['p/pref/real'][:, iWin, 0]
+            if modulation == -1:
+                unitIndices = np.where(np.vstack([
+                    np.logical_not(np.isnan(X).any(1)),
+                    np.logical_not(np.isnan(mi)),
+                    np.logical_not(np.isnan(p)),
+                    mi < 0,
+                    p < 0.05
+                ]).all(0))[0]
+            elif modulation == 1:
+                unitIndices = np.where(np.vstack([
+                    np.logical_not(np.isnan(X).any(1)),
+                    np.logical_not(np.isnan(mi)),
+                    np.logical_not(np.isnan(p)),
+                    mi > 0,
+                    p < 0.05
+                ]).all(0))[0]
+            X2 = X[unitIndices]
+            X3 = scaler.fit_transform(X2)
+            X4 = sm.add_constant(X3)
+            y = mi[unitIndices]
+            model = sm.OLS(y, X4)
+            results = model.fit()
+            W[:, iWin] = results.params[1:]
+            P[:, iWin] = results.pvalues[1:]
 
-        #
-        mi = self.ns['mi/pref/real'][:, perisaccadicWindowIndices, 0]
-        p = self.ns['p/pref/real'][:, perisaccadicWindowIndices, 0]
-        isSuppressed = np.vstack([
-            np.logical_and(mi[:, 0] < 0, p[:, 0] < 0.05),
-            np.logical_and(mi[:, 1] < 0, p[:, 1] < 0.05),
-            np.logical_and(mi[:, 2] < 0, p[:, 2] < 0.05)
-        ]).any(0)
+        return W, P
+    
+    def plotWeights(self, figsize=(7, 5)):
+        """
+        """
 
-        #
-        isEnhanced = np.vstack([
-            np.logical_and(mi[:, 0] > 0, p[:, 0] < 0.05),
-            np.logical_and(mi[:, 1] > 0, p[:, 1] < 0.05),
-            np.logical_and(mi[:, 2] > 0, p[:, 2] < 0.05)
-        ]).any(0)
-
-        #
-        fig, axs = plt.subplots(nrows=2, ncols=10, sharex=True)
-        cmap = plt.get_cmap('coolwarm', 3)
-        colors = [cmap(0), cmap(2)]
-
-        fig2, axs2 = plt.subplots(nrows=1, ncols=2)
-
-        stats_omnibus = np.full([2, len(self.windows)], np.nan)
-        stats_posthoc = np.full([2, len(self.windows), 3, 3], np.nan)
-        for j in np.arange(len(self.windows)):
-
-            #
-            for i in range(2):
-                color = colors[i]
-                if i == 0:
-                    isModulated = isSuppressed
-                else:
-                    isModulated = isEnhanced
-                unitIndices = np.where(np.logical_and(
-                    hasVisualResponse,
-                    isModulated
-                ))[0]
-                # a = np.clip(unitIndices.size / len(self.ukeys) * 2.5, 0, 1)
-
-                #
-                samples = [
-                    self.ns['miext/pref/real/low'][unitIndices, j, 0],
-                    self.ns['miext/pref/real/medium'][unitIndices, j, 0],
-                    self.ns['miext/pref/real/high'][unitIndices, j, 0]
-                ]
-                samplesFiltered = np.delete(
-                    samples,
-                    np.isnan(samples).any(axis=0),
-                    axis=1
-                )
-                bp = axs[i, j].boxplot(
-                    samplesFiltered.T,
-                    vert=True,
-                    notch=True,
-                    patch_artist=True,
-                    medianprops={'color': 'k', 'alpha': 1.0},
-                    whiskerprops={'alpha': 1.0},
-                    capprops={'alpha': 1.0},
-                    showfliers=False,
-                    widths=0.5,
-                )
-                for patch in bp['boxes']:
-                    patch.set_facecolor(color)
-                    patch.set_alpha(1.0)
-                
-                # Run stats
-                res = stats.friedmanchisquare(*samplesFiltered)
-                if j == 5 and i == 0:
-                    print(res)
-                    print(np.median(samplesFiltered, axis=1))
-                stats_omnibus[i, j] = res.pvalue
-                res = scikit_posthocs.posthoc_nemenyi_friedman(samplesFiltered.T)
-                stats_posthoc[i, j, :] = np.array(res)
-                # res = stats.mannwhitneyu(samplesFiltered[0], samplesFiltered[2]) # Small vs large
-                # stats_posthoc[i, j, 2, 0] = res.pvalue
-                # res = stats.mannwhitneyu(samplesFiltered[1], samplesFiltered[2]) # Medium vs large
-                # stats_posthoc[i, j, 2, 1] = res.pvalue
-                # res = stats.mannwhitneyu(samplesFiltered[0], samplesFiltered[1]) # Small vs medium
-                # stats_posthoc[i, j, 1, 0] = res.pvalue
-
-                #
-                if (j == 3 and i == 1) or (j == 5 and i == 0):
-                    if i == 0:
-                        isModulated = np.logical_and(
-                            self.ns['mi/pref/real'][:, j, 0] < 0,
-                            self.ns['p/pref/real'][:, j, 0] < 0.05
-                        )
-                    elif i == 1:
-                        isModulated = np.logical_and(
-                            self.ns['mi/pref/real'][:, j, 0] > 0,
-                            self.ns['p/pref/real'][:, j, 0] < 0.05
-                        )
-                    unitIndices = np.where(np.logical_and(
-                        hasVisualResponse,
-                        isModulated
-                    ))[0]
-                    samples = [
-                        self.ns['miext/pref/real/low'][unitIndices, j, 0],
-                        self.ns['miext/pref/real/medium'][unitIndices, j, 0],
-                        self.ns['miext/pref/real/high'][unitIndices, j, 0]
-                    ]
-                    samplesFiltered = np.delete(
-                        samples,
-                        np.isnan(samples).any(axis=0),
-                        axis=1
-                    )
-                    # bp = axs2[i].boxplot(
-                    #     samplesFiltered.T,
-                    #     positions=[1 - 0.2, 2 - 0.2, 3 - 0.2],
-                    #     widths=[0.3, 0.3, 0.3],
-                    #     vert=True,
-                    #     notch=True,
-                    #     patch_artist=True,
-                    #     medianprops={'color': 'k', 'alpha': 1.0},
-                    #     whiskerprops={'alpha': 1.0},
-                    #     capprops={'alpha': 1.0},
-                    #     whis=[5, 95],
-                    #     showfliers=False,
-                    # )
-                    # for patch in bp['boxes']:
-                    #     patch.set_facecolor('none')
-                    #     patch.set_alpha(1.0)
-                    ys = list()
-                    for ii in np.arange(3):
-                        # miRange = (
-                        #     np.nanpercentile(samplesFiltered[ii], 5),
-                        #     np.nanpercentile(samplesFiltered[ii], 95)
-                        # )
-                        y = np.clip(samplesFiltered[ii], *miRange)
-                        x = np.random.normal(loc=0, scale=0.07, size=y.size) + (ii + 1)
-                        axs2[i].scatter(x, y, marker='.', s=3, color='0.8')
-                        q1, q2, q3 = (
-                            np.nanpercentile(samplesFiltered[ii], 25),
-                            np.nanpercentile(samplesFiltered[ii], 50),
-                            np.nanpercentile(samplesFiltered[ii], 75)
-                        )
-                        axs2[i].vlines(ii + 1, q1, q3, color='k')
-                        # axs2[i].hlines(q2, ii + 1 - 0.15, ii + 1 + 0.15, color='k')
-                        axs2[i].scatter(ii + 1, q2, marker='o', edgecolor='none', color='k', s=25)
-                        ys.append(q2)
-                    axs2[i].plot([1, 2, 3], ys, color='k')
-
-            
-            #
-            # samplesFiltered = np.array(samplesFiltered)
-            # for y in samplesFiltered.T:
-            #     ax.plot(
-            #         np.arange(3) + 1,
-            #         y,
-            #         color='k',
-            #         alpha=0.25,
-            #        lw=0.5,
-            #         # zorder=-1
-            #     )
-            #     # ax.scatter(np.arange(3) + 1 + 0.15, y, marker='.', color='k', alpha=0.15, s=20, edgecolor='none')
-
-        for ax in axs[:, 1:].ravel():
-            ax.set_yticklabels([])
-            for sp in ('top', 'right', 'left'):
-                ax.spines[sp].set_visible(False)
-        for ax in axs[:, 0]:
-            for sp in ('top', 'right'):
-                ax.spines[sp].set_visible(False)
-        axs[0, 0].set_xticks([1, 2, 3])
-        for ax in axs[1, :]:
-            ax.set_xticklabels([])
-        ylim = [np.inf, -np.inf]
-        for ax in axs.ravel():
-            y1, y2 = ax.get_ylim()
-            if y1 < ylim[0]:
-                ylim[0] = y1
-            if y2 > ylim[1]:
-                ylim[1] = y2
-        for ax in axs.ravel():
-            ax.set_ylim(ylim)
-        for ax in axs[:, 1:].ravel():
-            ax.set_yticks([])
+        wSup, pSup = self._computeWeights(modulation=-1)
+        wEnh, pEnh = self._computeWeights(modulation=1)
+        fig, axs = plt.subplots(nrows=2, ncols=2, sharex=True, sharey=True)
+        X = self.windows.mean(1)
+        Y = np.arange(wSup.shape[0])[::-1]
+        mesh = axs[0, 0].pcolor(X, Y, wSup, vmin=-1, vmax=1, cmap='binary_r')
+        axs[1, 0].pcolor(X, Y, pSup, vmin=0, vmax=0.05, cmap='binary_r')
+        axs[0, 1].pcolor(X, Y, wEnh, vmin=-1, vmax=1, cmap='binary_r')
+        axs[1, 1].pcolor(X, Y, pEnh, vmin=0, vmax=0.05, cmap='binary_r')
+        # cax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+        # fig.colorbar(mesh, cax=cax)
+        yticklabels = (
+            r'$RF_{ON}$ area',
+            r'$RF_{ON}$ ecc.',
+            r'$RF_{ON}$ comp.',
+            r'$RF_{OFF}$ area',
+            r'$RF_{OFF}$ ecc.',
+            r'$RF_{OFF}$ comp.',
+            r'Depth',
+            r'LPI',
+            r'# components',
+        )
+        axs[0, 0].set_yticks(Y)
+        axs[0, 0].set_yticklabels(yticklabels)
+        axs[1, 0].set_xlabel('Time from saccade (s)')
+        axs[0, 0].set_title('Suppression', fontsize=10)
+        axs[0, 1].set_title('Enhancement', fontsize=10)
         fig.set_figwidth(figsize[0])
         fig.set_figheight(figsize[1])
         fig.tight_layout()
 
-        return fig, axs, stats_omnibus, stats_posthoc
+        return fig, axs

@@ -736,12 +736,6 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
         for label, ax in zip(labels, axs):
 
             #
-            if label == 1:
-                color = 'xkcd:orange'
-            else:
-                color = 'xkcd:blue'
-
-            #
             mask = np.vstack([
                 u == label,
                 np.invert(np.isnan(self.ns['mi/pref/fictive'][:, 0, componentIndex])),
@@ -799,23 +793,21 @@ class FictiveSaccadesAnalysis(BootstrappedSaccadicModulationAnalysis):
             ])
 
             #
-            axs[0].scatter(
+            ax.scatter(
                 x[mask][order],
                 y[mask][order],
                 marker='.',
                 s=40,
                 edgecolor='none',
-                # c=C[order],
-                alpha=0.3,
-                color=color,
+                c=C[order],
                 clip_on=False,
-                rasterized=False
+                rasterized=True
             )
 
             # Indicate examples
             for i, iUnit in enumerate(np.where(mask)[0]):
                 if self._matchUnitKey(self.ukeys[iUnit], self.examples):
-                    axs[0].scatter(
+                    ax.scatter(
                         x[iUnit],
                         y[iUnit],
                         color='k',

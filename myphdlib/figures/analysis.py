@@ -234,7 +234,7 @@ class Namespace():
             'rf/off/centroid': None,
 
             #
-            'coordinates': None,
+            'depth': None,
 
             #
             'lpi': None,
@@ -247,20 +247,12 @@ class Namespace():
             'amplitude/saccade': None,
 
             # Saccade features
-            'saccades/left/label': None,
-            'saccades/left/velocity': None,
-            'saccades/left/startpoint': None,
-            'saccades/left/endpoint': None,
-            'saccades/left/amplitude': None,
-            'saccades/left/duration': None,
-            'saccades/left/sids': None,
-            'saccades/right/label': None,
-            'saccades/right/velocity': None,
-            'saccades/right/startpoint': None,
-            'saccades/right/endpoint': None,
-            'saccades/right/amplitude': None,
-            'saccades/right/duration': None,
-            'saccades/right/sids': None,
+            'saccades/label': None,
+            'saccades/velocity': None,
+            'saccades/startpoint': None,
+            'sacccades/endpoint': None,
+            'saccades/amplitude': None,
+            'saccades/druation': None,
 
             #
             'miext/pref/real/low': None,
@@ -302,6 +294,7 @@ class Namespace():
 class AnalysisBase():
     """
     """
+
     def __init__(
         self, 
         ukey=None,
@@ -311,6 +304,7 @@ class AnalysisBase():
         ):
         """
         """
+
 
         self._ukeys = None
         self._ukey = None
@@ -352,6 +346,7 @@ class AnalysisBase():
         self.filter = None
         self.labels = None
         self.preference = None
+
         return
 
     def loadNamespace(
@@ -381,7 +376,7 @@ class AnalysisBase():
                             self.tSaccade = ds.attrs['t']
             
                     # Assign global variables to attributes
-                    if 'globals' in pl.Path(path).parts or path.startswith('saccades'):
+                    if 'globals' in pl.Path(path).parts:
                         name = path.split('/')[-1]
                         self.__setattr__(name, data)
                         self.ns[path] = data
@@ -421,7 +416,7 @@ class AnalysisBase():
                     del stream[path]
 
                 #
-                if 'globals' in pl.Path(path).parts or path.startswith('saccades'):
+                if 'globals' in pl.Path(path).parts:
                     
                     #
                     ds = stream.create_dataset(
@@ -527,7 +522,6 @@ class AnalysisBase():
         """
 
         self._sessions = self._factory.produce(**kwargs)
-        print(self._sessions)
 
         return
     
@@ -539,6 +533,7 @@ class AnalysisBase():
         ):
         """
         """
+
         if self.hdf is not None:
             with h5py.File(self.hdf, 'r') as stream:
                 dates = np.array(stream['ukeys/date'])
