@@ -10,6 +10,7 @@ from myphdlib.interface.muscimol import MuscimolSession
 from myphdlib.interface.dreadds import DreaddsSession
 from myphdlib.interface.mlati import MlatiSession
 from myphdlib.interface.dreadds2 import Dreadds2Session
+from myphdlib.interface.nope import NOPESession
 
 class SessionFactory(object):
     """
@@ -157,6 +158,8 @@ class SessionFactory(object):
                         session = MlatiSession(folder, eye=eye)
                     elif experiment_ == 'NPDreadd':
                         session = Dreadds2Session(folder, eye=eye)
+                    elif experiment_ == 'NOPETangential':
+                        session = NOPESession(folder, eye=eye)
                     else:
                         continue
                     sessions.append(session)
