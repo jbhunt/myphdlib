@@ -399,6 +399,9 @@ class SessionBase():
             file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.ProbeA-AP', 'TTL', 'sample_numbers.npy')
         elif self.experiment == 'Dreadds':
             file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.0', 'TTL_1', 'timestamps.npy')
+        elif self.experiment == 'NOPETangential':
+            file = self.folders.ephys.joinpath('events', 'Neuropix-PXI-100.ProbeA-AP', 'TTL', 'sample_numbers.npy')
+
         if file.exists() == False: 
             raise Exception('Could not locate ephys event timestamps file')
         
@@ -417,6 +420,9 @@ class SessionBase():
                 file = self.folders.ephys.joinpath('continuous', 'Neuropix-PXI-100.ProbeA-AP', 'sample_numbers.npy')
             elif self.experiment == 'Dreadds':
                 file = self.folders.ephys.joinpath('continuous', 'Neuropix-PXI-100.0', 'timestamps.npy')
+            elif self.experiment == 'NOPETangential':
+                file = self.folders.ephys.joinpath('continuous', 'Neuropix-PXI-100.ProbeA-AP', 'sample_numbers.npy')
+
             if file.exists() == False:
                 self._tRange = 0, np.inf
             else:
@@ -446,12 +452,16 @@ class SessionBase():
                     pattern = '@.*30000.*Hz:.*\d*'
                 elif self.experiment == 'Dreadds':
                     pattern = 'start time:.*@'
+                elif self.experiment == 'NOPETangential':
+                    pattern = '@.*30000.*Hz:.*\d*'
                 result = re.findall(pattern, line)
                 if len(result) == 1:
                     if self.experiment == 'Mlati':
                         referenceSampleNumber = int(result.pop().rstrip('\n').split(': ')[-1])
                     elif self.experiment == 'Dreadds':
                         referenceSampleNumber = int(result.pop().rstrip('@').split('start time: ')[1])
+                    elif self.experiment == 'NOPETangential':
+                        referenceSampleNumber = int(result.pop().rstrip('\n').split(': ')[-1])
                     break
         
         #
