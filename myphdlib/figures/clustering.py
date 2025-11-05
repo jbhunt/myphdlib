@@ -212,10 +212,10 @@ class GaussianMixturesFittingAnalysis(AnalysisBase):
         #
         nUnits = len(self.ukeys)
 
+
         #
         for motionDirection in ('pref', 'null'):
             self.ns[f'params/{motionDirection}/{saccadeType}/{probeCondition}'] = np.full([nUnits, int(3 * kmax + 1)], np.nan)
-
         #
         for iUnit in range(nUnits):
 

@@ -10,6 +10,7 @@ from myphdlib.interface.muscimol import MuscimolSession
 from myphdlib.interface.dreadds import DreaddsSession
 from myphdlib.interface.mlati import MlatiSession
 from myphdlib.interface.dreadds2 import Dreadds2Session
+from myphdlib.interface.nope import NOPESession
 
 class SessionFactory(object):
     """
@@ -142,7 +143,6 @@ class SessionFactory(object):
                             date_
                         )
                         keys.append(entry)
-
         # Create session objects
         sessions = list()
         for experiment_, animal_, date_ in keys:
@@ -157,10 +157,12 @@ class SessionFactory(object):
                         session = MlatiSession(folder, eye=eye)
                     elif experiment_ == 'NPDreadd':
                         session = Dreadds2Session(folder, eye=eye)
+                    elif experiment_ == 'NOPETangential':
+                        session = NOPESession(folder, eye=eye)
                     else:
                         continue
                     sessions.append(session)
-
+                    
         #
         filtered = list()
         for session in sessions:
@@ -170,5 +172,4 @@ class SessionFactory(object):
                 if session.cohort != cohort:
                     continue
                 filtered.append(session)
-
         return filtered

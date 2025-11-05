@@ -1218,6 +1218,32 @@ class BasicSaccadicModulationAnalysis(GaussianMixturesFittingAnalysis):
         fig.tight_layout()
 
         return fig, ax
+    
+    def boxplotModulationByResponseType(
+        self,
+        windowIndex=5,
+
+        ):
+        """
+        """
+
+        mi = self.ns['mi/pref/real'][:, windowIndex, 0]
+        p = self.ns['p/pref/real'][:, windowIndex, 0]
+        utypes = self.ns['globals/labels']
+        samples = list()
+        for u in np.unique(utypes):
+            mask = np.vstack([
+                utypes == u,
+                mi < 0,
+                p < 0.05
+            ]).all(0)
+            samples.append(mi[mask])
+
+        #
+        fig, axs = plt.subplots()
+        axs.boxplot(samples)
+
+        return fig, axs
 
 import pickle
 
